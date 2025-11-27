@@ -1,0 +1,46 @@
+{
+  "name": "@anthropic-security/sensitive-zod",
+  "version": "0.1.0",
+  "description": "Zod integration for SensitiveString - parse input directly into sensitive types",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "zod",
+    "validation",
+    "security",
+    "sensitive-data",
+    "typescript"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "peerDependencies": {
+    "zod": "^3.22.0"
+  },
+  "dependencies": {
+    "@anthropic-security/sensitive-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0",
+    "zod": "^3.23.8"
+  }
+}
