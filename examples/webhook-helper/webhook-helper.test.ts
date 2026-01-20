@@ -89,9 +89,8 @@ describe('parseAndProtectWebhook', () => {
     expect(json).not.toContain('10.0.0.1');
 
     // Should contain redaction markers
-    expect(json).toContain('[REDACTED:secret]');
-    expect(json).toContain('[REDACTED:pii_generic]');
-    expect(json).toContain('[REDACTED:token]');
+    expect(json).toContain('[REDACTED:credential]');
+    expect(json).toContain('[REDACTED:sensitive]');
 
     // Non-sensitive data should be present
     expect(json).toContain('AUTHORIZED');
@@ -122,10 +121,8 @@ describe('auto-redaction without safeLog', () => {
     expect(json).not.toContain('gw_ref_789');
 
     // Should contain redaction markers
-    expect(json).toContain('[REDACTED:secret]');
-    expect(json).toContain('[REDACTED:pii_generic]');
-    expect(json).toContain('[REDACTED:pii_email]');
-    expect(json).toContain('[REDACTED:token]');
+    expect(json).toContain('[REDACTED:credential]');
+    expect(json).toContain('[REDACTED:sensitive]');
 
     // Non-sensitive data should still be present
     expect(json).toContain('AUTHORIZED');
@@ -152,10 +149,8 @@ describe('auto-redaction without safeLog', () => {
     expect(inspected).not.toContain('gw_ref_789');
 
     // Should show SensitiveString wrapper with redacted value
-    expect(inspected).toContain('SensitiveString<secret>');
-    expect(inspected).toContain('SensitiveString<pii_generic>');
-    expect(inspected).toContain('SensitiveString<pii_email>');
-    expect(inspected).toContain('SensitiveString<token>');
+    expect(inspected).toContain('SensitiveString<credential>');
+    expect(inspected).toContain('SensitiveString<sensitive>');
     expect(inspected).toContain('[REDACTED:');
 
     // Non-sensitive data should still be present
@@ -173,12 +168,12 @@ describe('auto-redaction without safeLog', () => {
     // Direct toString() on a sensitive field
     const cardStr = String(result.notification.metadata.cardLastFour);
     expect(cardStr).not.toContain('4242');
-    expect(cardStr).toBe('[REDACTED:pii_generic]');
+    expect(cardStr).toBe('[REDACTED:sensitive]');
 
     // Template literal interpolation
     const message = `Card ending in ${String(result.notification.metadata.cardLastFour)}`;
     expect(message).not.toContain('4242');
-    expect(message).toBe('Card ending in [REDACTED:pii_generic]');
+    expect(message).toBe('Card ending in [REDACTED:sensitive]');
   });
 
   it('should auto-redact in nested JSON.stringify', () => {
@@ -247,9 +242,9 @@ describe('unprotectWebhook', () => {
     );
 
     // Should have audited reveals for sensitive fields
-    expect(reveals).toContain('secret');
-    expect(reveals).toContain('pii_generic');
-    expect(reveals).toContain('token');
+    expect(reveals).toContain('credential');
+    expect(reveals).toContain('sensitive');
+    expect(reveals).toContain('credential');
   });
 });
 

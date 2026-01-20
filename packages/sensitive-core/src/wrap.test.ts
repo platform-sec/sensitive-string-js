@@ -55,32 +55,32 @@ const PSP_AUTHORIZATION_WEBHOOK = {
  */
 const PSP_SENSITIVE_FIELDS: SensitiveFieldConfig = {
   // Secrets
-  'notification.metadata.webhookSignature': 'secret',
+  'notification.metadata.webhookSignature': 'credential',
 
   // PII - Card data
-  'notification.metadata.cardLastFour': 'pii_generic',
-  'notification.metadata.cardBinPrefix': 'pii_generic',
-  'notification.metadata.cardExpiry': 'pii_generic',
-  'notification.metadata.cardholderName': 'pii_generic',
+  'notification.metadata.cardLastFour': 'sensitive',
+  'notification.metadata.cardBinPrefix': 'sensitive',
+  'notification.metadata.cardExpiry': 'sensitive',
+  'notification.metadata.cardholderName': 'sensitive',
 
   // PII - Customer data
-  'notification.metadata.customerIpAddress': 'pii_generic',
+  'notification.metadata.customerIpAddress': 'sensitive',
 
   // Tokens
-  'notification.metadata.paymentTokenAlias': 'token',
-  'notification.metadata.networkReference': 'token',
-  'notification.transaction.gatewayReference': 'token',
+  'notification.metadata.paymentTokenAlias': 'credential',
+  'notification.metadata.networkReference': 'credential',
+  'notification.transaction.gatewayReference': 'credential',
 
   // Composite sensitive field (contains card info)
-  'notification.transaction.authorizationDetails': 'pii_generic',
+  'notification.transaction.authorizationDetails': 'sensitive',
 };
 
 describe('wrapSensitiveByPath', () => {
   describe('basic functionality', () => {
     it('should wrap specified fields as SensitiveString', () => {
       const config: SensitiveFieldConfig = {
-        'user.email': 'pii_email',
-        'user.identifier': 'pii_generic',
+        'user.email': 'sensitive',
+        'user.identifier': 'sensitive',
       };
 
       const input = {
@@ -101,12 +101,12 @@ describe('wrapSensitiveByPath', () => {
       expect(result.user.identifier).toBeInstanceOf(SensitiveString);
 
       // Verify classes
-      expect((result.user.email as unknown as SensitiveString).klass).toBe('pii_email');
-      expect((result.user.identifier as unknown as SensitiveString).klass).toBe('pii_generic');
+      expect((result.user.email as unknown as SensitiveString).klass).toBe('sensitive');
+      expect((result.user.identifier as unknown as SensitiveString).klass).toBe('sensitive');
     });
 
     it('should not mutate the original object', () => {
-      const config: SensitiveFieldConfig = { email: 'pii_email' };
+      const config: SensitiveFieldConfig = { email: 'sensitive' };
       const original = { email: 'original@test.local', name: 'Test' };
       const originalEmail = original.email;
 
@@ -118,8 +118,8 @@ describe('wrapSensitiveByPath', () => {
 
     it('should handle missing paths gracefully', () => {
       const config: SensitiveFieldConfig = {
-        'user.email': 'pii_email',
-        'user.phone': 'pii_generic', // doesn't exist
+        'user.email': 'sensitive',
+        'user.phone': 'sensitive', // doesn't exist
       };
 
       const input = { user: { email: 'user@test.local' } };
@@ -131,8 +131,8 @@ describe('wrapSensitiveByPath', () => {
 
     it('should preserve non-string values', () => {
       const config: SensitiveFieldConfig = {
-        'data.count': 'pii_generic', // number, not string
-        'data.active': 'pii_generic', // boolean, not string
+        'data.count': 'sensitive', // number, not string
+        'data.active': 'sensitive', // boolean, not string
       };
 
       const input = {
@@ -152,7 +152,7 @@ describe('wrapSensitiveByPath', () => {
 
     it('should handle arrays in the object', () => {
       const config: SensitiveFieldConfig = {
-        'user.email': 'pii_email',
+        'user.email': 'sensitive',
       };
 
       const input = {
@@ -169,7 +169,7 @@ describe('wrapSensitiveByPath', () => {
     });
 
     it('should preserve Date objects', () => {
-      const config: SensitiveFieldConfig = { secret: 'secret' };
+      const config: SensitiveFieldConfig = { secret: 'credential' };
       const date = new Date('2025-01-01');
       const input = { secret: 'value', createdAt: date };
 
@@ -189,7 +189,7 @@ describe('wrapSensitiveByPath', () => {
 
       // Secret fields
       expect(metadata.webhookSignature).toBeInstanceOf(SensitiveString);
-      expect((metadata.webhookSignature as unknown as SensitiveString).klass).toBe('secret');
+      expect((metadata.webhookSignature as unknown as SensitiveString).klass).toBe('credential');
 
       // PII fields
       expect(metadata.cardLastFour).toBeInstanceOf(SensitiveString);
@@ -221,12 +221,12 @@ describe('wrapSensitiveByPath', () => {
       const transaction = parsed.notification.transaction;
 
       // Sensitive fields should be redacted
-      expect(metadata.webhookSignature).toBe('[REDACTED:secret]');
-      expect(metadata.cardLastFour).toBe('[REDACTED:pii_generic]');
-      expect(metadata.cardBinPrefix).toBe('[REDACTED:pii_generic]');
-      expect(metadata.customerIpAddress).toBe('[REDACTED:pii_generic]');
-      expect(transaction.gatewayReference).toBe('[REDACTED:token]');
-      expect(transaction.authorizationDetails).toBe('[REDACTED:pii_generic]');
+      expect(metadata.webhookSignature).toBe('[REDACTED:credential]');
+      expect(metadata.cardLastFour).toBe('[REDACTED:sensitive]');
+      expect(metadata.cardBinPrefix).toBe('[REDACTED:sensitive]');
+      expect(metadata.customerIpAddress).toBe('[REDACTED:sensitive]');
+      expect(transaction.gatewayReference).toBe('[REDACTED:credential]');
+      expect(transaction.authorizationDetails).toBe('[REDACTED:sensitive]');
 
       // Non-sensitive fields should be present
       expect(transaction.status).toBe('AUTHORIZED');
@@ -251,7 +251,7 @@ describe('wrapSensitiveByPath', () => {
         }
       );
 
-      expect(reveals).toContain('secret');
+      expect(reveals).toContain('credential');
     });
   });
 });
@@ -259,15 +259,15 @@ describe('wrapSensitiveByPath', () => {
 describe('unwrapSensitiveByPath', () => {
   it('should unwrap SensitiveString fields back to raw strings', () => {
     const config: SensitiveFieldConfig = {
-      'user.email': 'pii_email',
-      'user.token': 'token',
+      'user.email': 'sensitive',
+      'user.token': 'credential',
     };
 
     const input = {
       user: {
         name: 'TestUser',
-        email: new SensitiveString('user@test.local', 'pii_email'),
-        token: new SensitiveString('tok_test_123', 'token'),
+        email: new SensitiveString('user@test.local', 'sensitive'),
+        token: new SensitiveString('tok_test_123', 'credential'),
       },
     };
 
@@ -279,8 +279,8 @@ describe('unwrapSensitiveByPath', () => {
   });
 
   it('should not mutate the original object', () => {
-    const config: SensitiveFieldConfig = { email: 'pii_email' };
-    const sensitive = new SensitiveString('test@test.local', 'pii_email');
+    const config: SensitiveFieldConfig = { email: 'sensitive' };
+    const sensitive = new SensitiveString('test@test.local', 'sensitive');
     const original = { email: sensitive };
 
     unwrapSensitiveByPath(original, config);
@@ -291,14 +291,14 @@ describe('unwrapSensitiveByPath', () => {
 
     it('should audit reveals when context is provided', () => {
       const config: SensitiveFieldConfig = {
-        'credentials.apiKey': 'secret',
-        'credentials.token': 'token',
+        'credentials.apiKey': 'credential',
+        'credentials.token': 'credential',
       };
 
     const wrapped = {
       credentials: {
-        apiKey: new SensitiveString('key_test_12345', 'secret'),
-        token: new SensitiveString('tok_test_abc', 'token'),
+        apiKey: new SensitiveString('key_test_12345', 'credential'),
+        token: new SensitiveString('tok_test_abc', 'credential'),
       },
     };
 
@@ -317,8 +317,8 @@ describe('unwrapSensitiveByPath', () => {
       }
     );
 
-    expect(reveals).toContain('secret');
-    expect(reveals).toContain('token');
+    expect(reveals).toContain('credential');
+    expect(reveals).toContain('credential');
   });
 
   it('should round-trip wrap and unwrap correctly', () => {
@@ -334,8 +334,8 @@ describe('unwrapSensitiveByPath', () => {
     };
 
     const config: SensitiveFieldConfig = {
-      'user.email': 'pii_email',
-      'metadata.ip': 'pii_generic',
+      'user.email': 'sensitive',
+      'metadata.ip': 'sensitive',
     };
 
     const wrapped = wrapSensitiveByPath(original, config);
@@ -355,8 +355,8 @@ describe('unwrapSensitiveByPath', () => {
 describe('validateSensitiveFieldConfig', () => {
   it('should validate all paths exist', () => {
     const config: SensitiveFieldConfig = {
-      'user.email': 'pii_email',
-      'user.name': 'pii_generic',
+      'user.email': 'sensitive',
+      'user.name': 'sensitive',
     };
 
     const sample = {
@@ -371,9 +371,9 @@ describe('validateSensitiveFieldConfig', () => {
 
   it('should report missing paths', () => {
     const config: SensitiveFieldConfig = {
-      'user.email': 'pii_email',
-      'user.phone': 'pii_generic', // doesn't exist
-      'credentials.apiKey': 'secret', // doesn't exist
+      'user.email': 'sensitive',
+      'user.phone': 'sensitive', // doesn't exist
+      'credentials.apiKey': 'credential', // doesn't exist
     };
 
     const sample = {
@@ -398,14 +398,14 @@ describe('validateSensitiveFieldConfig', () => {
 describe('checkSensitiveFieldsWrapped', () => {
   it('should detect unwrapped sensitive fields', () => {
     const config: SensitiveFieldConfig = {
-      'user.email': 'pii_email',
-      'user.token': 'token',
+      'user.email': 'sensitive',
+      'user.token': 'credential',
     };
 
     const partiallyWrapped = {
       user: {
         email: 'raw@test.local', // not wrapped!
-        token: new SensitiveString('tok_123', 'token'),
+        token: new SensitiveString('tok_123', 'credential'),
       },
     };
 
@@ -418,14 +418,14 @@ describe('checkSensitiveFieldsWrapped', () => {
 
   it('should pass when all fields are wrapped', () => {
     const config: SensitiveFieldConfig = {
-      'user.email': 'pii_email',
-      'user.token': 'token',
+      'user.email': 'sensitive',
+      'user.token': 'credential',
     };
 
     const fullyWrapped = {
       user: {
-        email: new SensitiveString('user@test.local', 'pii_email'),
-        token: new SensitiveString('tok_123', 'token'),
+        email: new SensitiveString('user@test.local', 'sensitive'),
+        token: new SensitiveString('tok_123', 'credential'),
       },
     };
 
@@ -463,7 +463,7 @@ describe('edge cases', () => {
   });
 
   it('should handle empty object', () => {
-    const config: SensitiveFieldConfig = { 'user.email': 'pii_email' };
+    const config: SensitiveFieldConfig = { 'user.email': 'sensitive' };
     const result = wrapSensitiveByPath({}, config);
 
     expect(result).toEqual({});
@@ -471,7 +471,7 @@ describe('edge cases', () => {
 
   it('should handle deeply nested paths', () => {
     const config: SensitiveFieldConfig = {
-      'a.b.c.d.e.secret': 'secret',
+      'a.b.c.d.e.secret': 'credential',
     };
 
     const input = {
@@ -502,7 +502,7 @@ describe('edge cases', () => {
     // For such cases, a different accessor syntax would be needed.
 
     const config: SensitiveFieldConfig = {
-      'data.nested.value': 'secret',
+      'data.nested.value': 'credential',
     };
 
     const input = {
@@ -519,10 +519,10 @@ describe('edge cases', () => {
 
   it('should preserve already-wrapped SensitiveString values', () => {
     const config: SensitiveFieldConfig = {
-      secret: 'secret',
+      secret: 'credential',
     };
 
-    const existingSensitive = new SensitiveString('already-wrapped', 'token');
+    const existingSensitive = new SensitiveString('already-wrapped', 'credential');
     const input = {
       secret: existingSensitive,
     };
@@ -531,6 +531,6 @@ describe('edge cases', () => {
 
     // Should preserve the existing SensitiveString, not double-wrap
     expect(result.secret).toBe(existingSensitive);
-    expect((result.secret as unknown as SensitiveString).klass).toBe('token');
+    expect((result.secret as unknown as SensitiveString).klass).toBe('credential');
   });
 });

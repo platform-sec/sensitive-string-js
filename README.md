@@ -6,6 +6,8 @@
 
 Enterprise-grade library for handling sensitive string data in Node.js with **automatic redaction**, **type-safe classification**, and **audit-ready reveal patterns**.
 
+The best libraries are opinionated about defaults and flexible about overrides.
+
 ## Why SensitiveString?
 
 In typical Node.js services, sensitive data (tokens, PII, secrets) spreads as plain `string` values, making it trivial to accidentally:
@@ -23,10 +25,10 @@ In typical Node.js services, sensitive data (tokens, PII, secrets) spreads as pl
 ```typescript
 import { SensitiveString } from '@anthropic-security/sensitive-core';
 
-const apiKey = new SensitiveString(process.env.API_KEY!, 'secret');
+const apiKey = new SensitiveString(process.env.API_KEY!, 'credential', 'api_key');
 
-console.log(apiKey);                  // SensitiveString<secret> { [REDACTED:secret] }
-console.log(JSON.stringify({apiKey})); // {"apiKey":"[REDACTED:secret]"}
+console.log(apiKey);                   // SensitiveString<credential:api_key> { [REDACTED:credential] }
+console.log(JSON.stringify({ apiKey })); // {"apiKey":"[REDACTED:credential]"}
 
 // Explicit access when needed
 const raw = apiKey.reveal({ name: 'api-call', reason: 'authenticating' });
@@ -52,12 +54,12 @@ pnpm add @anthropic-security/sensitive-core @anthropic-security/sensitive-zod zo
 import { SensitiveString, safeLog } from '@anthropic-security/sensitive-core';
 
 // Create sensitive values
-const token = new SensitiveString('sk-abc123secret', 'token');
-const email = new SensitiveString('user@example.com', 'pii_email');
+const token = new SensitiveString('sk-abc123secret', 'credential', 'session_token');
+const email = new SensitiveString('user@example.com', 'sensitive', 'email');
 
 // Safe for logging - automatically redacted
 console.log('User:', safeLog({ token, email }));
-// Output: User: { token: '[REDACTED:token]', email: '[REDACTED:pii_email]' }
+// Output: User: { token: '[REDACTED:credential]', email: '[REDACTED:sensitive]' }
 
 // Explicit reveal when needed
 const rawToken = token.reveal();
@@ -68,19 +70,19 @@ await callExternalAPI(rawToken);
 
 ```typescript
 import { z } from 'zod';
-import { zSensitive, zSensitiveEmail } from '@anthropic-security/sensitive-zod';
+import { zCredential, zSensitiveWithValidation } from '@anthropic-security/sensitive-zod';
 
 const WebhookSchema = z.object({
-  token: zSensitive('token'),
-  email: zSensitiveEmail(),
+  token: zCredential('session_token'),
+  email: zSensitiveWithValidation('sensitive', z.string().email(), 'email'),
   note: z.string().optional(),
 });
 
 // Parse input directly into SensitiveString instances
 const webhook = WebhookSchema.parse(req.body);
 
-// Type-safe: webhook.token is SensitiveString<'token'>
-// Type-safe: webhook.email is SensitiveString<'pii_email'>
+// Type-safe: webhook.token is SensitiveString<'credential'>
+// Type-safe: webhook.email is SensitiveString<'sensitive'>
 
 // JSON serialization is safe
 res.json(webhook); // Sensitive fields automatically redacted
@@ -96,25 +98,24 @@ Data is classified by sensitivity level:
 
 | Class | Use Case | Constant-Time Comparison |
 |-------|----------|-------------------------|
-| `generic` | Basic sensitive data | No |
-| `secret` | Passwords, API keys | Yes |
-| `token` | Session/auth tokens | Yes |
-| `pii_email` | Email addresses | No |
-| `pii_generic` | Other PII (names, addresses) | No |
+| `sensitive` | PII, business data | No |
+| `credential` | Passwords, API keys, auth tokens | Yes |
+
+Use the optional `label` to categorize within a class (e.g., `email`, `session_token`).
 
 ### Automatic Redaction
 
 `SensitiveString` overrides all serialization methods:
 
 ```typescript
-const secret = new SensitiveString('my-secret', 'secret');
+const secret = new SensitiveString('my-secret', 'credential', 'api_key');
 
 // All of these are safe:
-secret.toString()           // "[REDACTED:secret]"
-JSON.stringify(secret)      // "\"[REDACTED:secret]\""
-util.inspect(secret)        // "SensitiveString<secret> { [REDACTED:secret] }"
-console.log(secret)         // SensitiveString<secret> { [REDACTED:secret] }
-`Value: ${secret}`          // "Value: [REDACTED:secret]"
+secret.toString()           // "[REDACTED:credential]"
+JSON.stringify(secret)      // "\"[REDACTED:credential]\""
+util.inspect(secret)        // "SensitiveString<credential:api_key> { [REDACTED:credential] }"
+console.log(secret)         // SensitiveString<credential:api_key> { [REDACTED:credential] }
+`Value: ${secret}`          // "Value: [REDACTED:credential]"
 ```
 
 ### Explicit Reveal
@@ -161,10 +162,11 @@ app.post('/payment', async (req, res) => {
 ### SensitiveString Class
 
 ```typescript
-class SensitiveString<C extends SensitivityClass = 'generic'> {
-  constructor(value: string, klass: C);
+class SensitiveString<C extends SensitivityClass = 'sensitive'> {
+  constructor(value: string, klass: C, label?: string);
   
   readonly klass: C;
+  readonly label?: string;
   readonly length: number;
   
   // Serialization (always redacted)
@@ -183,7 +185,11 @@ class SensitiveString<C extends SensitivityClass = 'generic'> {
   map(fn: (value: string) => string, ctx?: RevealContext): SensitiveString<C>;
   
   // Classification
-  reclassify<D extends SensitivityClass>(newKlass: D, ctx?: RevealContext): SensitiveString<D>;
+  reclassify<D extends SensitivityClass>(
+    newKlass: D,
+    newLabel?: string,
+    ctx?: RevealContext
+  ): SensitiveString<D>;
   isEmpty(): boolean;
   
   // Service-to-service transmission
@@ -197,21 +203,19 @@ class SensitiveString<C extends SensitivityClass = 'generic'> {
 
 ```typescript
 // Basic sensitive string
-zSensitive<C extends SensitivityClass>(klass: C)
+zSensitiveString<C extends SensitivityClass>(klass: C, label?: string)
 
-// Email with validation
-zSensitiveEmail()
+// Sensitive (PII, business data)
+zSensitive(label?)
 
-// Convenience shortcuts
-zSensitivePII()     // → SensitiveString<'pii_generic'>
-zSensitiveSecret()  // → SensitiveString<'secret'>
-zSensitiveToken()   // → SensitiveString<'token'>
+// Credential (passwords, API keys, tokens)
+zCredential(label?)
 
 // With custom validation
-zSensitiveWithValidation(klass, zodStringSchema)
+zSensitiveWithValidation(klass, zodStringSchema, label?)
 
 // Optional values (returns null for missing)
-zSensitiveOptional(klass)
+zSensitiveOptional(klass, label?)
 
 // Parse from envelope format
 zSensitiveFromEnvelope(expectedKlass?)
@@ -275,12 +279,12 @@ defaultCombineClasses(a: SensitivityClass, b: SensitivityClass): SensitivityClas
 import { registerPolicy } from '@anthropic-security/sensitive-core';
 
 registerPolicy({
-  name: 'secret',
+  name: 'credential',
   redact: (value) => `***${value.length} chars***`,
   requireConstantTimeEquals: true,
   checkRevealAllowed: (ctx) => {
     if (!ctx) {
-      throw new Error('Context required for secret access');
+      throw new Error('Context required for credential access');
     }
   },
   advisory: {
@@ -312,11 +316,11 @@ import { zSensitiveFromEnvelope } from '@anthropic-security/sensitive-zod';
 
 const PayloadSchema = z.object({
   userId: z.string(),
-  token: zSensitiveFromEnvelope('token'),
+  token: zSensitiveFromEnvelope('credential'),
 });
 
 const { token } = PayloadSchema.parse(req.body);
-// token is SensitiveString<'token'>
+// token is SensitiveString<'credential'>
 ```
 
 > ⚠️ **Security Note**: Envelopes contain plaintext. Use mTLS, encrypted message buses, or VPC-internal communication.
@@ -375,7 +379,7 @@ logger.info({ payload: { token: sensitiveToken } }, 'Processing request');
 | Casual inspection | Private fields (`#value`) inaccessible via reflection |
 | JSON serialization | `toJSON()` returns redacted value |
 | Template literals | `toString()` called, returns redacted value |
-| Timing attacks | Constant-time comparison for `secret` and `token` classes |
+| Timing attacks | Constant-time comparison for `credential` class |
 
 ### Out of Scope (Documented Limitations)
 

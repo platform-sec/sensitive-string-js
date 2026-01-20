@@ -7,18 +7,18 @@
  * @example
  * ```ts
  * import { z } from 'zod';
- * import { zSensitive, zSensitiveEmail } from '@anthropic-security/sensitive-zod';
+ * import { zSensitive, zCredential } from '@anthropic-security/sensitive-zod';
  *
  * const WebhookSchema = z.object({
- *   token: zSensitive('token'),
- *   email: zSensitiveEmail(),
+ *   token: zCredential('session_token'),
+ *   email: zSensitive('email'),
  *   note: z.string().max(1024).optional(),
  * });
  *
  * // Type inference works correctly
  * type Webhook = z.infer<typeof WebhookSchema>;
- * // Webhook['token'] is SensitiveString<'token'>
- * // Webhook['email'] is SensitiveString<'pii_email'>
+ * // Webhook['token'] is SensitiveString<'credential'>
+ * // Webhook['email'] is SensitiveString<'sensitive'>
  * ```
  *
  * @packageDocumentation
@@ -35,125 +35,76 @@ import {
  *
  * @typeParam C - The sensitivity class for the resulting SensitiveString
  * @param klass - The sensitivity classification to apply
+ * @param label - Optional label for audit/compliance categorization
  * @returns A Zod schema that transforms strings to SensitiveString<C>
  *
  * @example
  * ```ts
  * const schema = z.object({
- *   apiKey: zSensitive('secret'),
- *   sessionToken: zSensitive('token'),
+ *   apiKey: zSensitiveString('credential', 'api_key'),
+ *   email: zSensitiveString('sensitive', 'email'),
  * });
  *
  * const result = schema.parse({
  *   apiKey: 'sk-xxx',
- *   sessionToken: 'sess-yyy',
+ *   email: 'user@example.com',
  * });
  *
- * console.log(result.apiKey);  // SensitiveString<secret> { [REDACTED:secret] }
+ * console.log(result.apiKey);  // SensitiveString<credential:api_key> { [REDACTED:credential] }
  * ```
  */
-export function zSensitive<C extends SensitivityClass>(
-  klass: C
+export function zSensitiveString<C extends SensitivityClass>(
+  klass: C,
+  label?: string
 ): z.ZodEffects<z.ZodString, SensitiveString<C>, string> {
   return z.string().transform((value): SensitiveString<C> => {
-    return new SensitiveString(value, klass);
+    return new SensitiveString(value, klass, label);
   });
 }
 
 /**
- * Create a Zod schema for email addresses that parses into SensitiveString<'pii_email'>.
- * Validates email format before wrapping.
+ * Create a Zod schema for sensitive data (PII, business data, etc.).
+ * Shorthand for zSensitiveString('sensitive', label).
  *
- * @returns A Zod schema that validates and transforms email strings
+ * @param label - Optional label for audit/compliance (e.g., 'email', 'phone', 'address')
+ * @returns A Zod schema that transforms strings to SensitiveString<'sensitive'>
  *
  * @example
  * ```ts
  * const schema = z.object({
- *   email: zSensitiveEmail(),
+ *   email: zSensitive('email'),
+ *   phone: zSensitive('phone'),
+ *   name: zSensitive('name'),
  * });
- *
- * // Invalid email throws validation error
- * schema.parse({ email: 'not-an-email' }); // throws
- *
- * // Valid email returns SensitiveString
- * const result = schema.parse({ email: 'user@example.com' });
- * console.log(result.email); // SensitiveString<pii_email> { [REDACTED:pii_email] }
  * ```
  */
-export function zSensitiveEmail(): z.ZodEffects<
-  z.ZodString,
-  SensitiveString<'pii_email'>,
-  string
-> {
-  return z
-    .string()
-    .email('Invalid email address')
-    .transform((value): SensitiveString<'pii_email'> => {
-      return new SensitiveString(value, 'pii_email');
-    });
+export function zSensitive(
+  label?: string
+): z.ZodEffects<z.ZodString, SensitiveString<'sensitive'>, string> {
+  return zSensitiveString('sensitive', label);
 }
 
 /**
- * Create a Zod schema for generic PII strings.
+ * Create a Zod schema for credential data (passwords, API keys, tokens).
+ * Shorthand for zSensitiveString('credential', label).
+ * Values will use constant-time comparison to prevent timing attacks.
  *
- * @returns A Zod schema that transforms strings to SensitiveString<'pii_generic'>
- *
- * @example
- * ```ts
- * const schema = z.object({
- *   fullName: zSensitivePII(),
- *   phoneNumber: zSensitivePII(),
- * });
- * ```
- */
-export function zSensitivePII(): z.ZodEffects<
-  z.ZodString,
-  SensitiveString<'pii_generic'>,
-  string
-> {
-  return zSensitive('pii_generic');
-}
-
-/**
- * Create a Zod schema for secret values (passwords, API keys, etc.).
- *
- * @returns A Zod schema that transforms strings to SensitiveString<'secret'>
+ * @param label - Optional label for audit/compliance (e.g., 'api_key', 'password', 'session_token')
+ * @returns A Zod schema that transforms strings to SensitiveString<'credential'>
  *
  * @example
  * ```ts
  * const schema = z.object({
- *   password: zSensitiveSecret(),
- *   apiKey: zSensitiveSecret(),
+ *   password: zCredential('password'),
+ *   apiKey: zCredential('api_key'),
+ *   sessionToken: zCredential('session_token'),
  * });
  * ```
  */
-export function zSensitiveSecret(): z.ZodEffects<
-  z.ZodString,
-  SensitiveString<'secret'>,
-  string
-> {
-  return zSensitive('secret');
-}
-
-/**
- * Create a Zod schema for token values (session tokens, auth tokens, etc.).
- *
- * @returns A Zod schema that transforms strings to SensitiveString<'token'>
- *
- * @example
- * ```ts
- * const schema = z.object({
- *   sessionToken: zSensitiveToken(),
- *   refreshToken: zSensitiveToken(),
- * });
- * ```
- */
-export function zSensitiveToken(): z.ZodEffects<
-  z.ZodString,
-  SensitiveString<'token'>,
-  string
-> {
-  return zSensitive('token');
+export function zCredential(
+  label?: string
+): z.ZodEffects<z.ZodString, SensitiveString<'credential'>, string> {
+  return zSensitiveString('credential', label);
 }
 
 /**
@@ -162,32 +113,36 @@ export function zSensitiveToken(): z.ZodEffects<
  * @typeParam C - The sensitivity class for the resulting SensitiveString
  * @param klass - The sensitivity classification to apply
  * @param schema - A Zod string schema with validations
+ * @param label - Optional label for audit/compliance
  * @returns A Zod schema that validates then transforms to SensitiveString<C>
  *
  * @example
  * ```ts
  * // API key must be at least 32 characters
  * const apiKeySchema = zSensitiveWithValidation(
- *   'secret',
- *   z.string().min(32, 'API key too short')
+ *   'credential',
+ *   z.string().min(32, 'API key too short'),
+ *   'api_key'
  * );
  *
  * // Password with complexity requirements
  * const passwordSchema = zSensitiveWithValidation(
- *   'secret',
+ *   'credential',
  *   z.string()
  *     .min(8, 'Password must be at least 8 characters')
  *     .regex(/[A-Z]/, 'Password must contain uppercase')
- *     .regex(/[0-9]/, 'Password must contain a number')
+ *     .regex(/[0-9]/, 'Password must contain a number'),
+ *   'password'
  * );
  * ```
  */
 export function zSensitiveWithValidation<C extends SensitivityClass>(
   klass: C,
-  schema: z.ZodString
+  schema: z.ZodString,
+  label?: string
 ): z.ZodEffects<z.ZodString, SensitiveString<C>, string> {
   return schema.transform((value): SensitiveString<C> => {
-    return new SensitiveString(value, klass);
+    return new SensitiveString(value, klass, label);
   });
 }
 
@@ -197,20 +152,22 @@ export function zSensitiveWithValidation<C extends SensitivityClass>(
  *
  * @typeParam C - The sensitivity class for the resulting SensitiveString
  * @param klass - The sensitivity classification to apply
+ * @param label - Optional label for audit/compliance
  * @returns A Zod schema that transforms optional strings
  *
  * @example
  * ```ts
  * const schema = z.object({
- *   apiKey: zSensitiveOptional('secret'),
+ *   apiKey: zSensitiveOptional('credential', 'api_key'),
  * });
  *
  * schema.parse({ apiKey: undefined }); // { apiKey: null }
- * schema.parse({ apiKey: 'sk-xxx' });  // { apiKey: SensitiveString<secret> }
+ * schema.parse({ apiKey: 'sk-xxx' });  // { apiKey: SensitiveString<credential> }
  * ```
  */
 export function zSensitiveOptional<C extends SensitivityClass>(
-  klass: C
+  klass: C,
+  label?: string
 ): z.ZodEffects<
   z.ZodOptional<z.ZodNullable<z.ZodString>>,
   SensitiveString<C> | null,
@@ -224,7 +181,7 @@ export function zSensitiveOptional<C extends SensitivityClass>(
       if (value == null || value === '') {
         return null;
       }
-      return new SensitiveString(value, klass);
+      return new SensitiveString(value, klass, label);
     });
 }
 
@@ -241,12 +198,12 @@ export function zSensitiveOptional<C extends SensitivityClass>(
  * @example
  * ```ts
  * const schema = z.object({
- *   token: zSensitiveFromEnvelope('token'),
+ *   token: zSensitiveFromEnvelope('credential'),
  * });
  *
  * // Validates envelope structure and reconstructs
  * const result = schema.parse({
- *   token: { __sensitive: true, klass: 'token', value: 'secret-value' }
+ *   token: { __sensitive: true, klass: 'credential', value: 'secret-value', label: 'api_key' }
  * });
  * ```
  */
@@ -257,12 +214,14 @@ export function zSensitiveFromEnvelope<C extends SensitivityClass>(
     __sensitive: z.ZodLiteral<true>;
     klass: z.ZodString;
     value: z.ZodString;
+    label: z.ZodOptional<z.ZodString>;
   }>,
   SensitiveString<C>,
   {
     __sensitive: true;
     klass: string;
     value: string;
+    label?: string | undefined;
   }
 > {
   return z
@@ -270,6 +229,7 @@ export function zSensitiveFromEnvelope<C extends SensitivityClass>(
       __sensitive: z.literal(true),
       klass: z.string(),
       value: z.string(),
+      label: z.string().optional(),
     })
     .transform((envelope): SensitiveString<C> => {
       if (expectedKlass && envelope.klass !== expectedKlass) {
@@ -277,7 +237,7 @@ export function zSensitiveFromEnvelope<C extends SensitivityClass>(
           `Expected sensitivity class '${expectedKlass}', got '${envelope.klass}'`
         );
       }
-      return new SensitiveString(envelope.value, envelope.klass as C);
+      return new SensitiveString(envelope.value, envelope.klass as C, envelope.label);
     });
 }
 

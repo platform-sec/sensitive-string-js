@@ -9,10 +9,10 @@ import { getCurrentRevealContext } from './context.js';
  * @example
  * ```ts
  * const config: SensitiveFieldConfig = {
- *   'user.email': 'pii_email',
- *   'user.ssn': 'pii_generic',
- *   'credentials.apiKey': 'secret',
- *   'session.token': 'token',
+ *   'user.email': 'sensitive',
+ *   'user.ssn': 'sensitive',
+ *   'credentials.apiKey': 'credential',
+ *   'session.token': 'credential',
  * };
  * ```
  */
@@ -42,6 +42,9 @@ function getByPath(obj: unknown, path: string): unknown {
   let current: unknown = obj;
 
   for (const part of parts) {
+    if (part === '__proto__' || part === 'constructor' || part === 'prototype') {
+      return undefined;
+    }
     if (current === null || current === undefined) {
       return undefined;
     }
@@ -69,6 +72,9 @@ function setByPath(obj: Record<string, unknown>, path: string, value: unknown): 
   for (let i = 0; i < parts.length - 1; i++) {
     const part = parts[i];
     if (part === undefined) continue;
+    if (part === '__proto__' || part === 'constructor' || part === 'prototype') {
+      return;
+    }
     if (!(part in current) || typeof current[part] !== 'object' || current[part] === null) {
       current[part] = {};
     }
@@ -77,6 +83,9 @@ function setByPath(obj: Record<string, unknown>, path: string, value: unknown): 
 
   const lastPart = parts[parts.length - 1];
   if (lastPart !== undefined) {
+    if (lastPart === '__proto__' || lastPart === 'constructor' || lastPart === 'prototype') {
+      return;
+    }
     current[lastPart] = value;
   }
 }
@@ -131,18 +140,18 @@ function deepClone<T>(obj: T): T {
  * @example
  * ```ts
  * const PSP_SENSITIVE_FIELDS = {
- *   'additionalData.hmacSignature': 'secret',
- *   'additionalData.cardSummary': 'pii_generic',
- *   'additionalData.cardBin': 'pii_generic',
- *   'additionalData.shopperIP': 'pii_generic',
- *   'reason': 'pii_generic',
+ *   'additionalData.hmacSignature': 'credential',
+ *   'additionalData.cardSummary': 'sensitive',
+ *   'additionalData.cardBin': 'sensitive',
+ *   'additionalData.shopperIP': 'sensitive',
+ *   'reason': 'sensitive',
  * } as const;
  *
  * const rawWebhook = JSON.parse(body);
  * const safeWebhook = wrapSensitiveByPath(rawWebhook, PSP_SENSITIVE_FIELDS);
  *
  * console.log(safeWebhook.additionalData.cardSummary);
- * // SensitiveString<pii_generic> { [REDACTED:pii_generic] }
+ * // SensitiveString<sensitive> { [REDACTED:sensitive] }
  * ```
  */
 export function wrapSensitiveByPath<T extends object>(

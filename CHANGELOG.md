@@ -12,9 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### @anthropic-security/sensitive-core
 - `SensitiveString` class with ES2022 `#private` fields for true encapsulation
 - Automatic redaction in `toString()`, `toJSON()`, and `util.inspect()`
-- Sensitivity classification system: `generic`, `secret`, `token`, `pii_email`, `pii_generic`
+- Sensitivity classification system: `sensitive` and `credential` (with optional labels)
 - Policy registry with customizable redaction and security behaviors
-- Constant-time comparison for `secret` and `token` classes
+- Constant-time comparison for the `credential` class
 - `RevealContext` for audit-ready reveal operations
 - `withRevealContext()` for AsyncLocalStorage-based context propagation
 - `redactInStructure()` and `safeLog()` for safe logging of nested structures
@@ -22,15 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Utility methods: `concat()`, `substring()`, `map()`, `reclassify()`, `isEmpty()`
 
 #### @anthropic-security/sensitive-zod
-- `zSensitive()` for parsing strings into `SensitiveString` instances
-- `zSensitiveEmail()` with email format validation
-- Convenience functions: `zSensitivePII()`, `zSensitiveSecret()`, `zSensitiveToken()`
+- `zSensitiveString()` for parsing strings into `SensitiveString` instances
+- `zSensitive()` and `zCredential()` convenience helpers
 - `zSensitiveWithValidation()` for custom string validation
 - `zSensitiveOptional()` for nullable sensitive fields
 - `zSensitiveFromEnvelope()` for parsing envelope format
 
 ### Security
 - All serialization methods redact by default
-- Timing-safe comparison for secrets and tokens
+- Timing-safe comparison for credentials
 - Private fields inaccessible via reflection or type coercion
 - Comprehensive test suite with canary leak detection

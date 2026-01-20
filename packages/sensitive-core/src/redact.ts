@@ -18,17 +18,17 @@ import { SensitiveString } from './sensitive-string.js';
  * ```ts
  * const data = {
  *   user: 'alice',
- *   token: new SensitiveString('secret123', 'token'),
+ *   token: new SensitiveString('secret123', 'credential', 'token'),
  *   nested: {
- *     email: new SensitiveString('alice@example.com', 'pii_email')
+ *     email: new SensitiveString('alice@example.com', 'sensitive', 'email')
  *   }
  * };
  *
  * const safe = redactInStructure(data);
  * // {
  * //   user: 'alice',
- * //   token: '[REDACTED:token]',
- * //   nested: { email: '[REDACTED:pii_email]' }
+ * //   token: '[REDACTED:credential]',
+ * //   nested: { email: '[REDACTED:sensitive]' }
  * // }
  * ```
  */
@@ -144,9 +144,9 @@ export interface SafeStringifyOptions {
  * ```ts
  * const json = safeStringify({
  *   user: 'alice',
- *   token: new SensitiveString('secret', 'token')
+ *   token: new SensitiveString('secret', 'credential', 'token')
  * });
- * // '{"user":"alice","token":"[REDACTED:token]"}'
+ * // '{"user":"alice","token":"[REDACTED:credential]"}'
  * ```
  */
 export function safeStringify(obj: unknown, options: SafeStringifyOptions = {}): string {

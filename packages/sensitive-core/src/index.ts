@@ -7,7 +7,7 @@
  * - Automatic redaction in logging, serialization, and display
  * - Type-safe sensitivity classification
  * - Explicit reveal with audit hooks
- * - Constant-time comparison for secrets
+ * - Constant-time comparison for credentials
  * - AsyncLocalStorage context propagation
  *
  * @example
@@ -15,11 +15,11 @@
  * import { SensitiveString, safeLog, withRevealContext } from '@anthropic-security/sensitive-core';
  *
  * // Create a sensitive value
- * const apiKey = new SensitiveString(process.env.API_KEY!, 'secret');
+ * const apiKey = new SensitiveString(process.env.API_KEY!, 'credential', 'api_key');
  *
  * // Safe for logging
  * console.log('Authenticating with', apiKey);
- * // Output: Authenticating with SensitiveString<secret> { [REDACTED:secret] }
+ * // Output: Authenticating with SensitiveString<credential:api_key> { [REDACTED:credential] }
  *
  * // Explicit reveal with audit
  * await withRevealContext({ name: 'api-call', reason: 'authenticate' }, async () => {

@@ -1,11 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import {
+  zSensitiveString,
   zSensitive,
-  zSensitiveEmail,
-  zSensitivePII,
-  zSensitiveSecret,
-  zSensitiveToken,
+  zCredential,
   zSensitiveWithValidation,
   zSensitiveOptional,
   zSensitiveFromEnvelope,
@@ -15,34 +13,35 @@ import {
 const CANARY = 'CANARY-SECRET-VALUE-12345';
 
 describe('Zod Integration', () => {
-  describe('zSensitive', () => {
-    it('test_zSensitive_parses_to_SensitiveString', () => {
+  describe('zSensitiveString', () => {
+    it('test_zSensitiveString_parses_to_SensitiveString', () => {
       const schema = z.object({
-        token: zSensitive('token'),
+        token: zSensitiveString('credential', 'session_token'),
       });
 
       const result = schema.parse({ token: CANARY });
 
       expect(result.token).toBeInstanceOf(SensitiveString);
-      expect(result.token.klass).toBe('token');
+      expect(result.token.klass).toBe('credential');
+      expect(result.token.label).toBe('session_token');
       expect(result.token.reveal()).toBe(CANARY);
     });
 
-    it('test_zSensitive_redacts_in_json', () => {
+    it('test_zSensitiveString_redacts_in_json', () => {
       const schema = z.object({
-        secret: zSensitive('secret'),
+        secret: zSensitiveString('credential', 'api_key'),
       });
 
       const result = schema.parse({ secret: CANARY });
       const json = JSON.stringify(result);
 
       expect(json).not.toContain(CANARY);
-      expect(json).toContain('[REDACTED:secret]');
+      expect(json).toContain('[REDACTED:credential]');
     });
 
-    it('test_zSensitive_rejects_non_string', () => {
+    it('test_zSensitiveString_rejects_non_string', () => {
       const schema = z.object({
-        token: zSensitive('token'),
+        token: zSensitiveString('credential'),
       });
 
       expect(() => schema.parse({ token: 123 })).toThrow();
@@ -50,11 +49,10 @@ describe('Zod Integration', () => {
       expect(() => schema.parse({ token: undefined })).toThrow();
     });
 
-    it('test_zSensitive_type_inference', () => {
+    it('test_zSensitiveString_type_inference', () => {
       const schema = z.object({
-        token: zSensitive('token'),
-        secret: zSensitive('secret'),
-        email: zSensitive('pii_email'),
+        token: zSensitiveString('credential', 'token'),
+        email: zSensitiveString('sensitive', 'email'),
       });
 
       type SchemaType = z.infer<typeof schema>;
@@ -62,80 +60,71 @@ describe('Zod Integration', () => {
       // Type assertions - these would fail at compile time if types were wrong
       const result: SchemaType = schema.parse({
         token: 'tok',
-        secret: 'sec',
-        email: 'email',
+        email: 'email@example.com',
       });
 
-      expect(result.token.klass).toBe('token');
-      expect(result.secret.klass).toBe('secret');
-      expect(result.email.klass).toBe('pii_email');
+      expect(result.token.klass).toBe('credential');
+      expect(result.email.klass).toBe('sensitive');
     });
   });
 
-  describe('zSensitiveEmail', () => {
-    it('test_zSensitiveEmail_validates_email_format', () => {
+  describe('zSensitive', () => {
+    it('test_zSensitive_creates_sensitive_class', () => {
       const schema = z.object({
-        email: zSensitiveEmail(),
-      });
-
-      // Invalid email should throw
-      expect(() => schema.parse({ email: 'not-an-email' })).toThrow();
-      expect(() => schema.parse({ email: 'missing@domain' })).toThrow();
-    });
-
-    it('test_zSensitiveEmail_parses_valid_email', () => {
-      const schema = z.object({
-        email: zSensitiveEmail(),
+        email: zSensitive('email'),
       });
 
       const result = schema.parse({ email: 'user@example.com' });
 
       expect(result.email).toBeInstanceOf(SensitiveString);
-      expect(result.email.klass).toBe('pii_email');
-      expect(result.email.reveal()).toBe('user@example.com');
+      expect(result.email.klass).toBe('sensitive');
+      expect(result.email.label).toBe('email');
     });
 
-    it('test_zSensitiveEmail_redacts_output', () => {
+    it('test_zSensitive_without_label', () => {
       const schema = z.object({
-        email: zSensitiveEmail(),
+        data: zSensitive(),
+      });
+
+      const result = schema.parse({ data: 'some-data' });
+
+      expect(result.data.klass).toBe('sensitive');
+      expect(result.data.label).toBeUndefined();
+    });
+
+    it('test_zSensitive_redacts_output', () => {
+      const schema = z.object({
+        email: zSensitive('email'),
       });
 
       const result = schema.parse({ email: 'secret@example.com' });
 
       expect(result.email.toString()).not.toContain('secret@example.com');
-      expect(result.email.toString()).toBe('[REDACTED:pii_email]');
+      expect(result.email.toString()).toBe('[REDACTED:sensitive]');
     });
   });
 
-  describe('Convenience functions', () => {
-    it('test_zSensitivePII', () => {
+  describe('zCredential', () => {
+    it('test_zCredential_creates_credential_class', () => {
       const schema = z.object({
-        name: zSensitivePII(),
-      });
-
-      const result = schema.parse({ name: 'John Doe' });
-
-      expect(result.name.klass).toBe('pii_generic');
-    });
-
-    it('test_zSensitiveSecret', () => {
-      const schema = z.object({
-        password: zSensitiveSecret(),
+        password: zCredential('password'),
       });
 
       const result = schema.parse({ password: 'hunter2' });
 
-      expect(result.password.klass).toBe('secret');
+      expect(result.password.klass).toBe('credential');
+      expect(result.password.label).toBe('password');
     });
 
-    it('test_zSensitiveToken', () => {
+    it('test_zCredential_without_label', () => {
       const schema = z.object({
-        session: zSensitiveToken(),
+        token: zCredential(),
       });
 
-      const result = schema.parse({ session: 'sess_abc123' });
+      const result = schema.parse({ token: 'sess_abc123' });
 
-      expect(result.session.klass).toBe('token');
+      expect(result.token.klass).toBe('credential');
+      expect(result.token.label).toBeUndefined();
     });
   });
 
@@ -143,8 +132,9 @@ describe('Zod Integration', () => {
     it('test_validation_chain_min_length', () => {
       const schema = z.object({
         apiKey: zSensitiveWithValidation(
-          'secret',
-          z.string().min(32, 'API key must be at least 32 characters')
+          'credential',
+          z.string().min(32, 'API key must be at least 32 characters'),
+          'api_key'
         ),
       });
 
@@ -157,17 +147,19 @@ describe('Zod Integration', () => {
       const validKey = 'a'.repeat(32);
       const result = schema.parse({ apiKey: validKey });
       expect(result.apiKey.reveal()).toBe(validKey);
+      expect(result.apiKey.label).toBe('api_key');
     });
 
     it('test_validation_chain_regex', () => {
       const schema = z.object({
         password: zSensitiveWithValidation(
-          'secret',
+          'credential',
           z
             .string()
             .min(8)
             .regex(/[A-Z]/, 'Must contain uppercase')
-            .regex(/[0-9]/, 'Must contain number')
+            .regex(/[0-9]/, 'Must contain number'),
+          'password'
         ),
       });
 
@@ -183,25 +175,26 @@ describe('Zod Integration', () => {
 
       // Valid
       const result = schema.parse({ password: 'Password123' });
-      expect(result.password.klass).toBe('secret');
+      expect(result.password.klass).toBe('credential');
     });
   });
 
   describe('zSensitiveOptional', () => {
     it('test_optional_with_value', () => {
       const schema = z.object({
-        apiKey: zSensitiveOptional('secret'),
+        apiKey: zSensitiveOptional('credential', 'api_key'),
       });
 
       const result = schema.parse({ apiKey: 'sk-xxx' });
 
       expect(result.apiKey).toBeInstanceOf(SensitiveString);
       expect(result.apiKey?.reveal()).toBe('sk-xxx');
+      expect(result.apiKey?.label).toBe('api_key');
     });
 
     it('test_optional_with_undefined', () => {
       const schema = z.object({
-        apiKey: zSensitiveOptional('secret'),
+        apiKey: zSensitiveOptional('credential'),
       });
 
       const result = schema.parse({ apiKey: undefined });
@@ -211,7 +204,7 @@ describe('Zod Integration', () => {
 
     it('test_optional_with_null', () => {
       const schema = z.object({
-        apiKey: zSensitiveOptional('secret'),
+        apiKey: zSensitiveOptional('credential'),
       });
 
       const result = schema.parse({ apiKey: null });
@@ -221,7 +214,7 @@ describe('Zod Integration', () => {
 
     it('test_optional_with_empty_string', () => {
       const schema = z.object({
-        apiKey: zSensitiveOptional('secret'),
+        apiKey: zSensitiveOptional('credential'),
       });
 
       const result = schema.parse({ apiKey: '' });
@@ -231,7 +224,7 @@ describe('Zod Integration', () => {
 
     it('test_optional_missing_field', () => {
       const schema = z.object({
-        apiKey: zSensitiveOptional('secret'),
+        apiKey: zSensitiveOptional('credential'),
       });
 
       const result = schema.parse({});
@@ -243,20 +236,37 @@ describe('Zod Integration', () => {
   describe('zSensitiveFromEnvelope', () => {
     it('test_envelope_parsing', () => {
       const schema = z.object({
-        token: zSensitiveFromEnvelope('token'),
+        token: zSensitiveFromEnvelope('credential'),
       });
 
       const result = schema.parse({
         token: {
           __sensitive: true,
-          klass: 'token',
+          klass: 'credential',
           value: CANARY,
         },
       });
 
       expect(result.token).toBeInstanceOf(SensitiveString);
       expect(result.token.reveal()).toBe(CANARY);
-      expect(result.token.klass).toBe('token');
+      expect(result.token.klass).toBe('credential');
+    });
+
+    it('test_envelope_with_label', () => {
+      const schema = z.object({
+        token: zSensitiveFromEnvelope('credential'),
+      });
+
+      const result = schema.parse({
+        token: {
+          __sensitive: true,
+          klass: 'credential',
+          value: CANARY,
+          label: 'api_key',
+        },
+      });
+
+      expect(result.token.label).toBe('api_key');
     });
 
     it('test_envelope_validates_marker', () => {
@@ -268,7 +278,7 @@ describe('Zod Integration', () => {
         schema.parse({
           token: {
             __sensitive: false,
-            klass: 'token',
+            klass: 'credential',
             value: 'test',
           },
         })
@@ -277,18 +287,18 @@ describe('Zod Integration', () => {
 
     it('test_envelope_validates_class', () => {
       const schema = z.object({
-        token: zSensitiveFromEnvelope('token'),
+        token: zSensitiveFromEnvelope('credential'),
       });
 
       expect(() =>
         schema.parse({
           token: {
             __sensitive: true,
-            klass: 'secret', // Wrong class
+            klass: 'sensitive', // Wrong class
             value: 'test',
           },
         })
-      ).toThrow("Expected sensitivity class 'token', got 'secret'");
+      ).toThrow("Expected sensitivity class 'credential', got 'sensitive'");
     });
 
     it('test_envelope_accepts_any_class_when_not_specified', () => {
@@ -299,20 +309,20 @@ describe('Zod Integration', () => {
       const result = schema.parse({
         data: {
           __sensitive: true,
-          klass: 'secret',
+          klass: 'sensitive',
           value: 'test',
         },
       });
 
-      expect(result.data.klass).toBe('secret');
+      expect(result.data.klass).toBe('sensitive');
     });
   });
 
   describe('Complex Schema Examples', () => {
     it('test_webhook_schema', () => {
       const WebhookSchema = z.object({
-        token: zSensitive('token'),
-        email: zSensitiveEmail(),
+        token: zCredential('session_token'),
+        email: zSensitive('email'),
         note: z.string().max(1024).optional(),
       });
 
@@ -328,20 +338,21 @@ describe('Zod Integration', () => {
       const json = JSON.stringify(webhook);
       expect(json).not.toContain('tok_abc123');
       expect(json).not.toContain('user@example.com');
-      expect(json).toContain('[REDACTED:token]');
-      expect(json).toContain('[REDACTED:pii_email]');
+      expect(json).toContain('[REDACTED:credential]');
+      expect(json).toContain('[REDACTED:sensitive]');
       expect(json).toContain('Test webhook');
     });
 
     it('test_user_registration_schema', () => {
       const RegistrationSchema = z.object({
-        email: zSensitiveEmail(),
+        email: zSensitive('email'),
         password: zSensitiveWithValidation(
-          'secret',
-          z.string().min(8)
+          'credential',
+          z.string().min(8),
+          'password'
         ),
-        fullName: zSensitivePII(),
-        phone: zSensitiveOptional('pii_generic'),
+        fullName: zSensitive('name'),
+        phone: zSensitiveOptional('sensitive', 'phone'),
       });
 
       const result = RegistrationSchema.parse({
@@ -350,9 +361,12 @@ describe('Zod Integration', () => {
         fullName: 'Jane Doe',
       });
 
-      expect(result.email.klass).toBe('pii_email');
-      expect(result.password.klass).toBe('secret');
-      expect(result.fullName.klass).toBe('pii_generic');
+      expect(result.email.klass).toBe('sensitive');
+      expect(result.email.label).toBe('email');
+      expect(result.password.klass).toBe('credential');
+      expect(result.password.label).toBe('password');
+      expect(result.fullName.klass).toBe('sensitive');
+      expect(result.fullName.label).toBe('name');
       expect(result.phone).toBeNull();
     });
 
@@ -360,11 +374,11 @@ describe('Zod Integration', () => {
       const NestedSchema = z.object({
         user: z.object({
           credentials: z.object({
-            token: zSensitiveToken(),
-            apiKey: zSensitiveSecret(),
+            token: zCredential('session_token'),
+            apiKey: zCredential('api_key'),
           }),
           profile: z.object({
-            email: zSensitiveEmail(),
+            email: zSensitive('email'),
             displayName: z.string(),
           }),
         }),
@@ -392,7 +406,7 @@ describe('Zod Integration', () => {
 
     it('test_array_of_sensitive', () => {
       const ArraySchema = z.object({
-        tokens: z.array(zSensitiveToken()),
+        tokens: z.array(zCredential('token')),
       });
 
       const result = ArraySchema.parse({
@@ -404,7 +418,7 @@ describe('Zod Integration', () => {
 
       const json = JSON.stringify(result);
       expect(json).not.toContain('tok1');
-      expect(json).toContain('[REDACTED:token]');
+      expect(json).toContain('[REDACTED:credential]');
     });
   });
 });

@@ -1,24 +1,22 @@
 /**
  * Sensitivity classification for data protection.
- * Domain-agnostic - suitable for any vertical (payments, healthcare, internal tools, etc.)
+ *
+ * Simplified to two classes based on the only behavioral difference that matters:
+ * - `credential`: Requires constant-time comparison (passwords, API keys, tokens)
+ * - `sensitive`: Everything else that shouldn't leak (PII, business-sensitive data)
+ *
+ * For finer-grained categorization (compliance, audit logs), use the optional `label` field.
  */
-export type SensitivityClass =
-  | 'generic' // basic sensitive data
-  | 'secret' // secrets, passwords, tokens
-  | 'token' // auth tokens, session tokens
-  | 'pii_email' // email addresses
-  | 'pii_generic'; // other PII
+export type SensitivityClass = 'credential' | 'sensitive';
 
 /**
  * Precedence ordering for combining sensitivity classes.
  * Higher index = more restrictive.
+ * credential > sensitive (credentials require constant-time comparison)
  */
 export const SENSITIVITY_PRECEDENCE: readonly SensitivityClass[] = [
-  'generic',
-  'pii_generic',
-  'pii_email',
-  'token',
-  'secret',
+  'sensitive',
+  'credential',
 ] as const;
 
 /**
@@ -47,6 +45,8 @@ export interface SensitivityAdvisory {
  */
 export interface ISensitiveString {
   readonly klass: SensitivityClass;
+  /** Optional label for audit/compliance categorization (e.g., 'api_key', 'email', 'ssn') */
+  readonly label: string | undefined;
   toString(): string;
   reveal(ctx?: RevealContext): string;
 }
@@ -110,4 +110,6 @@ export interface SensitiveEnvelope {
   klass: SensitivityClass;
   /** The raw (unredacted) value */
   value: string;
+  /** Optional label for audit/compliance categorization */
+  label?: string;
 }

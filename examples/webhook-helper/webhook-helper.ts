@@ -124,21 +124,21 @@ export function createWebhookHandler<T extends object>(
 export type PspWebhookPayload = {
   notification: {
     metadata: {
-      webhookSignature: string | SensitiveString<'secret'>;
-      cardLastFour: string | SensitiveString<'pii_generic'>;
-      cardBinPrefix: string | SensitiveString<'pii_generic'>;
-      cardExpiry: string | SensitiveString<'pii_generic'>;
-      cardholderName: string | SensitiveString<'pii_generic'>;
-      customerIpAddress: string | SensitiveString<'pii_generic'>;
-      customerEmail: string | SensitiveString<'pii_email'>;
-      paymentTokenAlias: string | SensitiveString<'token'>;
-      networkReference: string | SensitiveString<'token'>;
+      webhookSignature: string | SensitiveString<'credential'>;
+      cardLastFour: string | SensitiveString<'sensitive'>;
+      cardBinPrefix: string | SensitiveString<'sensitive'>;
+      cardExpiry: string | SensitiveString<'sensitive'>;
+      cardholderName: string | SensitiveString<'sensitive'>;
+      customerIpAddress: string | SensitiveString<'sensitive'>;
+      customerEmail: string | SensitiveString<'sensitive'>;
+      paymentTokenAlias: string | SensitiveString<'credential'>;
+      networkReference: string | SensitiveString<'credential'>;
       riskScore: string;
       fraudCheckPassed: string;
     };
     transaction: {
-      gatewayReference: string | SensitiveString<'token'>;
-      authorizationDetails: string | SensitiveString<'pii_generic'>;
+      gatewayReference: string | SensitiveString<'credential'>;
+      authorizationDetails: string | SensitiveString<'sensitive'>;
       status: string;
       amount: {
         currency: string;
@@ -167,25 +167,25 @@ export const parsePspWebhookPayload = (body: string): PspWebhookPayload =>
  */
 export const PSP_SENSITIVE_FIELDS: SensitiveFieldConfig = {
   // Secrets - used for verification, never log
-  'notification.metadata.webhookSignature': 'secret',
+  'notification.metadata.webhookSignature': 'credential',
 
   // PII - Card data
-  'notification.metadata.cardLastFour': 'pii_generic',
-  'notification.metadata.cardBinPrefix': 'pii_generic',
-  'notification.metadata.cardExpiry': 'pii_generic',
-  'notification.metadata.cardholderName': 'pii_generic',
+  'notification.metadata.cardLastFour': 'sensitive',
+  'notification.metadata.cardBinPrefix': 'sensitive',
+  'notification.metadata.cardExpiry': 'sensitive',
+  'notification.metadata.cardholderName': 'sensitive',
 
   // PII - Customer data
-  'notification.metadata.customerIpAddress': 'pii_generic',
-  'notification.metadata.customerEmail': 'pii_email',
+  'notification.metadata.customerIpAddress': 'sensitive',
+  'notification.metadata.customerEmail': 'sensitive',
 
   // Tokens - Reference IDs that could be used for lookups
-  'notification.metadata.paymentTokenAlias': 'token',
-  'notification.metadata.networkReference': 'token',
-  'notification.transaction.gatewayReference': 'token',
+  'notification.metadata.paymentTokenAlias': 'credential',
+  'notification.metadata.networkReference': 'credential',
+  'notification.transaction.gatewayReference': 'credential',
 
   // Composite fields that may contain sensitive data
-  'notification.transaction.authorizationDetails': 'pii_generic',
+  'notification.transaction.authorizationDetails': 'sensitive',
 };
 
 /**
@@ -221,11 +221,11 @@ export const PROVIDER_CONFIGS = {
    * Paths would match that provider's webhook structure.
    */
   alternateProvider: {
-    'data.object.payment_method_details.card.last4': 'pii_generic',
-    'data.object.payment_method_details.card.fingerprint': 'token',
-    'data.object.billing_details.email': 'pii_email',
-    'data.object.billing_details.name': 'pii_generic',
-    'data.object.billing_details.address.line1': 'pii_generic',
-    'data.object.receipt_email': 'pii_email',
+    'data.object.payment_method_details.card.last4': 'sensitive',
+    'data.object.payment_method_details.card.fingerprint': 'credential',
+    'data.object.billing_details.email': 'sensitive',
+    'data.object.billing_details.name': 'sensitive',
+    'data.object.billing_details.address.line1': 'sensitive',
+    'data.object.receipt_email': 'sensitive',
   } satisfies SensitiveFieldConfig,
 } as const;

@@ -18,12 +18,12 @@ pnpm add @anthropic-security/sensitive-zod zod
 
 ```typescript
 import { z } from 'zod';
-import { zSensitive, zSensitiveEmail } from '@anthropic-security/sensitive-zod';
+import { zCredential, zSensitiveWithValidation } from '@anthropic-security/sensitive-zod';
 
 // Define schema with sensitive fields
 const WebhookSchema = z.object({
-  token: zSensitive('token'),
-  email: zSensitiveEmail(),
+  token: zCredential('session_token'),
+  email: zSensitiveWithValidation('sensitive', z.string().email(), 'email'),
   note: z.string().optional(),
 });
 
@@ -31,8 +31,8 @@ const WebhookSchema = z.object({
 const webhook = WebhookSchema.parse(req.body);
 
 // Type inference works correctly
-// webhook.token is SensitiveString<'token'>
-// webhook.email is SensitiveString<'pii_email'>
+// webhook.token is SensitiveString<'credential'>
+// webhook.email is SensitiveString<'sensitive'>
 
 // Safe to serialize
 res.json(webhook); // Sensitive fields automatically redacted
@@ -41,27 +41,22 @@ res.json(webhook); // Sensitive fields automatically redacted
 ## Available Schemas
 
 ```typescript
-// Generic sensitive string with specified class
-zSensitive('token')        // → SensitiveString<'token'>
-zSensitive('secret')       // → SensitiveString<'secret'>
-zSensitive('pii_email')    // → SensitiveString<'pii_email'>
-
-// Email with format validation
-zSensitiveEmail()          // → SensitiveString<'pii_email'>
+// Generic sensitive string with specified class + label
+zSensitiveString('sensitive', 'email')   // → SensitiveString<'sensitive'>
+zSensitiveString('credential', 'token') // → SensitiveString<'credential'>
 
 // Convenience shortcuts
-zSensitivePII()            // → SensitiveString<'pii_generic'>
-zSensitiveSecret()         // → SensitiveString<'secret'>
-zSensitiveToken()          // → SensitiveString<'token'>
+zSensitive('email')        // → SensitiveString<'sensitive'>
+zCredential('session_token') // → SensitiveString<'credential'>
 
 // With custom validation
-zSensitiveWithValidation('secret', z.string().min(32))
+zSensitiveWithValidation('credential', z.string().min(32), 'api_key')
 
 // Optional (returns null for missing)
-zSensitiveOptional('secret')
+zSensitiveOptional('sensitive', 'phone')
 
 // Parse from envelope format
-zSensitiveFromEnvelope('token')
+zSensitiveFromEnvelope('credential')
 ```
 
 ## Examples
@@ -70,16 +65,17 @@ zSensitiveFromEnvelope('token')
 
 ```typescript
 const RegistrationSchema = z.object({
-  email: zSensitiveEmail(),
+  email: zSensitiveWithValidation('sensitive', z.string().email(), 'email'),
   password: zSensitiveWithValidation(
-    'secret',
+    'credential',
     z.string()
       .min(8, 'Password must be at least 8 characters')
       .regex(/[A-Z]/, 'Must contain uppercase')
-      .regex(/[0-9]/, 'Must contain number')
+      .regex(/[0-9]/, 'Must contain number'),
+    'password'
   ),
-  fullName: zSensitivePII(),
-  phone: zSensitiveOptional('pii_generic'),
+  fullName: zSensitive('name'),
+  phone: zSensitiveOptional('sensitive', 'phone'),
 });
 ```
 
@@ -87,7 +83,7 @@ const RegistrationSchema = z.object({
 
 ```typescript
 const AuthHeaderSchema = z.object({
-  authorization: zSensitive('token'),
+  authorization: zCredential('auth_header'),
 });
 
 const headers = AuthHeaderSchema.parse(req.headers);
@@ -99,11 +95,11 @@ const headers = AuthHeaderSchema.parse(req.headers);
 // Receiving service
 const PayloadSchema = z.object({
   userId: z.string(),
-  token: zSensitiveFromEnvelope('token'),
+  token: zSensitiveFromEnvelope('credential'),
 });
 
 const { token } = PayloadSchema.parse(req.body);
-// token is SensitiveString<'token'>, reconstructed from envelope
+// token is SensitiveString<'credential'>, reconstructed from envelope
 ```
 
 ## Re-exports

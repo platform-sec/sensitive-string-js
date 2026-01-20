@@ -63,7 +63,7 @@ describe('Feature', () => {
   });
   
   it('should not leak sensitive values', () => {
-    const s = new SensitiveString(CANARY, 'secret');
+    const s = new SensitiveString(CANARY, 'credential');
     const output = someOperation(s);
     expect(output).not.toContain(CANARY); // Canary check
   });

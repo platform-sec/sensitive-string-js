@@ -27,38 +27,47 @@ describe('SensitiveString', () => {
 
   describe('Redaction Tests', () => {
     it('test_toString_is_redacted', () => {
-      const s = new SensitiveString(CANARY, 'token');
+      const s = new SensitiveString(CANARY, 'credential');
       const result = s.toString();
 
       expect(result).not.toContain(CANARY);
-      expect(result).toBe('[REDACTED:token]');
+      expect(result).toBe('[REDACTED:credential]');
     });
 
     it('test_toJSON_is_redacted', () => {
-      const s = new SensitiveString(CANARY, 'token');
+      const s = new SensitiveString(CANARY, 'credential');
       const result = JSON.stringify({ s });
 
       expect(result).not.toContain(CANARY);
-      expect(result).toContain('[REDACTED:token]');
+      expect(result).toContain('[REDACTED:credential]');
     });
 
     it('test_util_inspect_is_redacted', () => {
-      const s = new SensitiveString(CANARY, 'secret');
+      const s = new SensitiveString(CANARY, 'credential');
       const result = util.inspect(s);
 
       expect(result).not.toContain(CANARY);
-      expect(result).toContain('SensitiveString<secret>');
-      expect(result).toContain('[REDACTED:secret]');
+      expect(result).toContain('SensitiveString<credential>');
+      expect(result).toContain('[REDACTED:credential]');
+    });
+
+    it('test_util_inspect_shows_label', () => {
+      const s = new SensitiveString(CANARY, 'credential', 'api_key');
+      const result = util.inspect(s);
+
+      expect(result).not.toContain(CANARY);
+      expect(result).toContain('SensitiveString<credential:api_key>');
+      expect(result).toContain('[REDACTED:credential]');
     });
 
     it('test_console_log_is_redacted', () => {
-      const s = new SensitiveString(CANARY, 'pii_email');
+      const s = new SensitiveString(CANARY, 'sensitive', 'email');
 
       // Capture console output
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-      consoleSpy(s);
+      console.log(s);
 
-      const output = consoleSpy.mock.calls[0]?.[0] as SensitiveString<'pii_email'> | undefined;
+      const output = consoleSpy.mock.calls[0]?.[0] as SensitiveString<'sensitive'> | undefined;
 
       // The actual string passed to console.log will be the object
       // When stringified/inspected, it should not contain CANARY
@@ -68,35 +77,35 @@ describe('SensitiveString', () => {
     });
 
     it('test_string_coercion_is_redacted', () => {
-      const s = new SensitiveString(CANARY, 'generic');
+      const s = new SensitiveString(CANARY, 'sensitive');
 
       // String concatenation triggers toString()
       const result = String(s);
 
       expect(result).not.toContain(CANARY);
-      expect(result).toBe('[REDACTED:generic]');
+      expect(result).toBe('[REDACTED:sensitive]');
     });
 
     it('test_template_literal_is_redacted', () => {
-      const s = new SensitiveString(CANARY, 'secret');
+      const s = new SensitiveString(CANARY, 'credential');
 
       const result = `Value is: ${String(s)}`;
 
       expect(result).not.toContain(CANARY);
-      expect(result).toBe('Value is: [REDACTED:secret]');
+      expect(result).toBe('Value is: [REDACTED:credential]');
     });
   });
 
   describe('Reveal Tests', () => {
     it('test_reveal_returns_raw_value', () => {
-      const s = new SensitiveString(CANARY, 'token');
+      const s = new SensitiveString(CANARY, 'credential');
       const result = s.reveal();
 
       expect(result).toBe(CANARY);
     });
 
     it('test_reveal_with_explicit_context', () => {
-      const s = new SensitiveString(CANARY, 'secret');
+      const s = new SensitiveString(CANARY, 'credential');
       const auditSpy = vi.fn();
 
       const ctx: RevealContext = {
@@ -113,7 +122,7 @@ describe('SensitiveString', () => {
     });
 
     it('test_reveal_with_als_context', () => {
-      const s = new SensitiveString(CANARY, 'token');
+      const s = new SensitiveString(CANARY, 'credential');
       const auditSpy = vi.fn();
 
       const ctx: RevealContext = {
@@ -130,7 +139,7 @@ describe('SensitiveString', () => {
     });
 
     it('test_reveal_with_als_context_async', async () => {
-      const s = new SensitiveString(CANARY, 'token');
+      const s = new SensitiveString(CANARY, 'credential');
       const auditSpy = vi.fn();
 
       const ctx: RevealContext = {
@@ -149,21 +158,21 @@ describe('SensitiveString', () => {
     it('test_checkRevealAllowed_is_respected', () => {
       registerPolicy(
         {
-          name: 'secret',
-          redact: () => '[REDACTED:secret]',
+          name: 'credential',
+          redact: () => '[REDACTED:credential]',
           checkRevealAllowed: (ctx) => {
             if (!ctx) {
-              throw new Error('Context required for secret reveal');
+              throw new Error('Context required for credential reveal');
             }
           },
         },
         { overwrite: true }
       );
 
-      const s = new SensitiveString(CANARY, 'secret');
+      const s = new SensitiveString(CANARY, 'credential');
 
       // Without context - should throw
-      expect(() => s.reveal()).toThrow('Context required for secret reveal');
+      expect(() => s.reveal()).toThrow('Context required for credential reveal');
 
       // With context - should succeed
       const ctx: RevealContext = { name: 'authorized' };
@@ -171,7 +180,7 @@ describe('SensitiveString', () => {
     });
 
     it('test_explicit_context_overrides_als_context', () => {
-      const s = new SensitiveString(CANARY, 'token');
+      const s = new SensitiveString(CANARY, 'credential');
       const alsSpy = vi.fn();
       const explicitSpy = vi.fn();
 
@@ -196,47 +205,39 @@ describe('SensitiveString', () => {
 
   describe('Equality Tests', () => {
     it('test_equals_with_matching_string', () => {
-      const s = new SensitiveString(CANARY, 'generic');
+      const s = new SensitiveString(CANARY, 'sensitive');
       expect(s.equals(CANARY)).toBe(true);
     });
 
     it('test_equals_with_matching_sensitive', () => {
-      const s1 = new SensitiveString(CANARY, 'token');
-      const s2 = new SensitiveString(CANARY, 'token');
+      const s1 = new SensitiveString(CANARY, 'credential');
+      const s2 = new SensitiveString(CANARY, 'credential');
 
       expect(s1.equals(s2)).toBe(true);
     });
 
     it('test_equals_with_non_matching', () => {
-      const s = new SensitiveString(CANARY, 'secret');
+      const s = new SensitiveString(CANARY, 'credential');
       expect(s.equals('wrong-value')).toBe(false);
     });
 
     it('test_equals_with_different_lengths', () => {
-      const s = new SensitiveString('short', 'secret');
+      const s = new SensitiveString('short', 'credential');
       expect(s.equals('much-longer-string')).toBe(false);
     });
 
-    it('test_equals_uses_constant_time_for_secret_class', () => {
-      const s = new SensitiveString(CANARY, 'secret');
-      const policy = getPolicy('secret');
+    it('test_equals_uses_constant_time_for_credential_class', () => {
+      const s = new SensitiveString(CANARY, 'credential');
+      const policy = getPolicy('credential');
 
       expect(policy.requireConstantTimeEquals).toBe(true);
       // Actual timing verification would require more sophisticated testing
       expect(s.equals(CANARY)).toBe(true);
     });
 
-    it('test_equals_uses_constant_time_for_token_class', () => {
-      const s = new SensitiveString(CANARY, 'token');
-      const policy = getPolicy('token');
-
-      expect(policy.requireConstantTimeEquals).toBe(true);
-      expect(s.equals(CANARY)).toBe(true);
-    });
-
-    it('test_equals_uses_regular_comparison_for_generic', () => {
-      const s = new SensitiveString(CANARY, 'generic');
-      const policy = getPolicy('generic');
+    it('test_equals_uses_regular_comparison_for_sensitive', () => {
+      const s = new SensitiveString(CANARY, 'sensitive');
+      const policy = getPolicy('sensitive');
 
       expect(policy.requireConstantTimeEquals).toBe(false);
       expect(s.equals(CANARY)).toBe(true);
@@ -245,63 +246,94 @@ describe('SensitiveString', () => {
 
   describe('Concat Tests', () => {
     it('test_concat_with_string', () => {
-      const s = new SensitiveString('hello-', 'generic');
+      const s = new SensitiveString('hello-', 'sensitive');
       const result = s.concat('world');
 
       expect(result.reveal()).toBe('hello-world');
-      expect(result.klass).toBe('generic');
+      expect(result.klass).toBe('sensitive');
     });
 
     it('test_concat_preserves_most_restrictive_class', () => {
-      const generic = new SensitiveString('a', 'generic');
-      const secret = new SensitiveString('b', 'secret');
+      const sensitive = new SensitiveString('a', 'sensitive');
+      const credential = new SensitiveString('b', 'credential');
 
-      const result = generic.concat(secret);
+      const result = sensitive.concat(credential);
 
       expect(result.reveal()).toBe('ab');
-      expect(result.klass).toBe('secret');
+      expect(result.klass).toBe('credential');
     });
 
     it('test_concat_with_same_class', () => {
-      const s1 = new SensitiveString('hello-', 'pii_email');
-      const s2 = new SensitiveString('world', 'pii_email');
+      const s1 = new SensitiveString('hello-', 'sensitive');
+      const s2 = new SensitiveString('world', 'sensitive');
 
       const result = s1.concat(s2);
 
       expect(result.reveal()).toBe('hello-world');
-      expect(result.klass).toBe('pii_email');
+      expect(result.klass).toBe('sensitive');
     });
 
     it('test_concat_chain', () => {
-      const s = new SensitiveString('a', 'generic');
-      const result = s.concat('b').concat(new SensitiveString('c', 'token')).concat('d');
+      const s = new SensitiveString('a', 'sensitive');
+      const result = s.concat('b').concat(new SensitiveString('c', 'credential')).concat('d');
 
       expect(result.reveal()).toBe('abcd');
-      expect(result.klass).toBe('token'); // Most restrictive
+      expect(result.klass).toBe('credential'); // Most restrictive
+    });
+
+    it('test_concat_preserves_labels', () => {
+      const s1 = new SensitiveString('a', 'sensitive', 'email');
+      const s2 = new SensitiveString('b', 'credential', 'token');
+
+      const result = s1.concat(s2);
+
+      expect(result.label).toBe('email/token');
+    });
+
+    it('test_concat_with_single_label', () => {
+      const s1 = new SensitiveString('a', 'sensitive', 'email');
+      const result = s1.concat('b');
+
+      expect(result.label).toBe('email');
     });
   });
 
   describe('Envelope Tests', () => {
     it('test_toEnvelope_contains_raw_value', () => {
-      const s = new SensitiveString(CANARY, 'token');
+      const s = new SensitiveString(CANARY, 'credential');
       const envelope = s.toEnvelope();
 
       expect(envelope.value).toBe(CANARY);
       expect(envelope.__sensitive).toBe(true);
-      expect(envelope.klass).toBe('token');
+      expect(envelope.klass).toBe('credential');
+    });
+
+    it('test_toEnvelope_includes_label', () => {
+      const s = new SensitiveString(CANARY, 'credential', 'api_key');
+      const envelope = s.toEnvelope();
+
+      expect(envelope.label).toBe('api_key');
     });
 
     it('test_fromEnvelope_reconstructs', () => {
-      const original = new SensitiveString(CANARY, 'secret');
+      const original = new SensitiveString(CANARY, 'credential');
       const envelope = original.toEnvelope();
       const reconstructed = SensitiveString.fromEnvelope(envelope);
 
       expect(reconstructed.reveal()).toBe(CANARY);
-      expect(reconstructed.klass).toBe('secret');
+      expect(reconstructed.klass).toBe('credential');
+    });
+
+    it('test_fromEnvelope_preserves_label', () => {
+      const original = new SensitiveString(CANARY, 'credential', 'api_key');
+      const envelope = original.toEnvelope();
+      const reconstructed = SensitiveString.fromEnvelope(envelope);
+
+      expect(reconstructed.label).toBe('api_key');
     });
 
     it('test_fromEnvelope_rejects_invalid', () => {
-      const invalid: Partial<SensitiveEnvelope> = { value: 'test', klass: 'generic' };
+      const invalid: Partial<SensitiveEnvelope> = { value: 'test', klass: 'sensitive' };
 
       expect(() =>
         SensitiveString.fromEnvelope(invalid as SensitiveEnvelope)
@@ -309,7 +341,7 @@ describe('SensitiveString', () => {
     });
 
     it('test_toEnvelope_calls_audit', () => {
-      const s = new SensitiveString(CANARY, 'token');
+      const s = new SensitiveString(CANARY, 'credential');
       const auditSpy = vi.fn();
 
       s.toEnvelope({ name: 'envelope-test', auditReveal: auditSpy });
@@ -320,7 +352,7 @@ describe('SensitiveString', () => {
 
   describe('Security Boundary Tests', () => {
     it('test_object_keys_does_not_expose_value', () => {
-      const s = new SensitiveString(CANARY, 'secret');
+      const s = new SensitiveString(CANARY, 'credential');
       const keys = Object.keys(s);
 
       // Private fields should not appear in keys
@@ -330,14 +362,14 @@ describe('SensitiveString', () => {
     });
 
     it('test_object_values_does_not_expose_value', () => {
-      const s = new SensitiveString(CANARY, 'secret');
+      const s = new SensitiveString(CANARY, 'credential');
       const values = Object.values(s);
 
       expect(values.join('')).not.toContain(CANARY);
     });
 
     it('test_spread_operator_does_not_expose_value', () => {
-      const s = new SensitiveString(CANARY, 'secret');
+      const s = new SensitiveString(CANARY, 'credential');
       const spread = { ...s };
 
       expect(JSON.stringify(spread)).not.toContain(CANARY);
@@ -345,18 +377,18 @@ describe('SensitiveString', () => {
     });
 
     it('test_json_parse_roundtrip_loses_protection', () => {
-      const s = new SensitiveString(CANARY, 'token');
+      const s = new SensitiveString(CANARY, 'credential');
       const serialized = JSON.stringify({ token: s });
       const parsed = JSON.parse(serialized) as { token: string };
 
       // After round-trip, it's just a plain string with redacted value
-      expect(parsed.token).toBe('[REDACTED:token]');
+      expect(parsed.token).toBe('[REDACTED:credential]');
       expect(parsed.token).not.toBe(CANARY);
       expect(parsed.token).not.toBeInstanceOf(SensitiveString);
     });
 
     it('test_getOwnPropertyNames_does_not_expose_value', () => {
-      const s = new SensitiveString(CANARY, 'secret');
+      const s = new SensitiveString(CANARY, 'credential');
       const propNames = Object.getOwnPropertyNames(s);
 
       expect(propNames.join('')).not.toContain(CANARY);
@@ -364,7 +396,7 @@ describe('SensitiveString', () => {
     });
 
     it('test_reflect_does_not_expose_value', () => {
-      const s = new SensitiveString(CANARY, 'secret');
+      const s = new SensitiveString(CANARY, 'credential');
       const keys = Reflect.ownKeys(s);
 
       for (const key of keys) {
@@ -382,8 +414,8 @@ describe('SensitiveString', () => {
       // This tests that even with a bad policy, the library doesn't leak
       registerPolicy(
         {
-          name: 'secret',
-          redact: () => '[REDACTED:secret]',
+          name: 'credential',
+          redact: () => '[REDACTED:credential]',
           checkRevealAllowed: (_ctx) => {
             // Intentionally buggy: throws without including value
             throw new Error('Reveal not allowed');
@@ -392,7 +424,7 @@ describe('SensitiveString', () => {
         { overwrite: true }
       );
 
-      const s = new SensitiveString(CANARY, 'secret');
+      const s = new SensitiveString(CANARY, 'credential');
 
       try {
         s.reveal();
@@ -403,7 +435,7 @@ describe('SensitiveString', () => {
     });
 
     it('test_type_coercion_attack', () => {
-      const s = new SensitiveString(CANARY, 'secret');
+      const s = new SensitiveString(CANARY, 'credential');
 
       // Various coercion attempts
       const stringified = String(s);
@@ -420,56 +452,101 @@ describe('SensitiveString', () => {
 
   describe('Utility Method Tests', () => {
     it('test_length_returns_correct_value', () => {
-      const s = new SensitiveString('hello', 'generic');
+      const s = new SensitiveString('hello', 'sensitive');
       expect(s.length).toBe(5);
     });
 
     it('test_isEmpty', () => {
-      const empty = new SensitiveString('', 'generic');
-      const notEmpty = new SensitiveString('x', 'generic');
+      const empty = new SensitiveString('', 'sensitive');
+      const notEmpty = new SensitiveString('x', 'sensitive');
 
       expect(empty.isEmpty()).toBe(true);
       expect(notEmpty.isEmpty()).toBe(false);
     });
 
     it('test_substring', () => {
-      const s = new SensitiveString('hello-world', 'secret');
+      const s = new SensitiveString('hello-world', 'credential');
       const sub = s.substring(0, 5);
 
       expect(sub.reveal()).toBe('hello');
-      expect(sub.klass).toBe('secret');
+      expect(sub.klass).toBe('credential');
+    });
+
+    it('test_substring_preserves_label', () => {
+      const s = new SensitiveString('hello-world', 'credential', 'token');
+      const sub = s.substring(0, 5);
+
+      expect(sub.label).toBe('token');
     });
 
     it('test_map', () => {
-      const s = new SensitiveString('hello', 'generic');
+      const s = new SensitiveString('hello', 'sensitive');
       const mapped = s.map((v) => v.toUpperCase());
 
       expect(mapped.reveal()).toBe('HELLO');
-      expect(mapped.klass).toBe('generic');
+      expect(mapped.klass).toBe('sensitive');
+    });
+
+    it('test_map_preserves_label', () => {
+      const s = new SensitiveString('hello', 'sensitive', 'name');
+      const mapped = s.map((v) => v.toUpperCase());
+
+      expect(mapped.label).toBe('name');
     });
 
     it('test_reclassify', () => {
-      const s = new SensitiveString('value', 'generic');
-      const reclassified = s.reclassify('secret');
+      const s = new SensitiveString('value', 'sensitive');
+      const reclassified = s.reclassify('credential');
 
       expect(reclassified.reveal()).toBe('value');
-      expect(reclassified.klass).toBe('secret');
+      expect(reclassified.klass).toBe('credential');
+    });
+
+    it('test_reclassify_with_new_label', () => {
+      const s = new SensitiveString('value', 'sensitive', 'old_label');
+      const reclassified = s.reclassify('credential', 'new_label');
+
+      expect(reclassified.label).toBe('new_label');
+    });
+
+    it('test_reclassify_preserves_label_if_not_specified', () => {
+      const s = new SensitiveString('value', 'sensitive', 'old_label');
+      const reclassified = s.reclassify('credential');
+
+      expect(reclassified.label).toBe('old_label');
     });
 
     it('test_fromOptional_with_value', () => {
-      const result = SensitiveString.fromOptional('value', 'token');
+      const result = SensitiveString.fromOptional('value', 'credential');
       expect(result).not.toBeNull();
       expect(result?.reveal()).toBe('value');
     });
 
+    it('test_fromOptional_with_label', () => {
+      const result = SensitiveString.fromOptional('value', 'credential', 'api_key');
+      expect(result?.label).toBe('api_key');
+    });
+
     it('test_fromOptional_with_null', () => {
-      const result = SensitiveString.fromOptional(null, 'token');
+      const result = SensitiveString.fromOptional(null, 'credential');
       expect(result).toBeNull();
     });
 
     it('test_fromOptional_with_empty_string', () => {
-      const result = SensitiveString.fromOptional('', 'token');
+      const result = SensitiveString.fromOptional('', 'credential');
       expect(result).toBeNull();
+    });
+  });
+
+  describe('Label Tests', () => {
+    it('test_label_is_accessible', () => {
+      const s = new SensitiveString('value', 'credential', 'api_key');
+      expect(s.label).toBe('api_key');
+    });
+
+    it('test_label_is_undefined_when_not_provided', () => {
+      const s = new SensitiveString('value', 'credential');
+      expect(s.label).toBeUndefined();
     });
   });
 });
@@ -480,13 +557,7 @@ describe('Policy Registry', () => {
   });
 
   it('test_default_policies_exist', () => {
-    const classes: SensitivityClass[] = [
-      'generic',
-      'secret',
-      'token',
-      'pii_email',
-      'pii_generic',
-    ];
+    const classes: SensitivityClass[] = ['credential', 'sensitive'];
 
     for (const klass of classes) {
       expect(() => getPolicy(klass)).not.toThrow();
@@ -495,30 +566,29 @@ describe('Policy Registry', () => {
 
   it('test_register_custom_policy', () => {
     registerPolicy({
-      name: 'generic',
+      name: 'sensitive',
       redact: (value) => `***${value.length}***`,
     }, { overwrite: true });
 
-    const s = new SensitiveString('hello', 'generic');
+    const s = new SensitiveString('hello', 'sensitive');
     expect(s.toString()).toBe('***5***');
   });
 
   it('test_register_without_overwrite_throws', () => {
     expect(() =>
       registerPolicy({
-        name: 'generic',
+        name: 'sensitive',
         redact: () => 'test',
       })
-    ).toThrow("Policy 'generic' already registered");
+    ).toThrow("Policy 'sensitive' already registered");
   });
 
   it('test_defaultCombineClasses', () => {
-    // Most to least restrictive: secret > token > pii_email > pii_generic > generic
-    expect(defaultCombineClasses('generic', 'secret')).toBe('secret');
-    expect(defaultCombineClasses('secret', 'generic')).toBe('secret');
-    expect(defaultCombineClasses('token', 'pii_email')).toBe('token');
-    expect(defaultCombineClasses('pii_generic', 'pii_email')).toBe('pii_email');
-    expect(defaultCombineClasses('generic', 'generic')).toBe('generic');
+    // credential > sensitive
+    expect(defaultCombineClasses('sensitive', 'credential')).toBe('credential');
+    expect(defaultCombineClasses('credential', 'sensitive')).toBe('credential');
+    expect(defaultCombineClasses('sensitive', 'sensitive')).toBe('sensitive');
+    expect(defaultCombineClasses('credential', 'credential')).toBe('credential');
   });
 });
 
@@ -574,7 +644,7 @@ describe('Redaction Helpers', () => {
   it('test_redactInStructure_handles_nested_sensitive', () => {
     const data = {
       a: {
-        b: new SensitiveString(CANARY, 'token'),
+        b: new SensitiveString(CANARY, 'credential'),
       },
     };
 
@@ -582,28 +652,28 @@ describe('Redaction Helpers', () => {
 
     expect(JSON.stringify(result)).not.toContain(CANARY);
     const typedResult = result as { a: { b: string } };
-    expect(typedResult.a.b).toBe('[REDACTED:token]');
+    expect(typedResult.a.b).toBe('[REDACTED:credential]');
   });
 
   it('test_redactInStructure_handles_arrays', () => {
     const data = [
-      new SensitiveString(CANARY, 'secret'),
-      new SensitiveString('other-secret', 'secret'),
+      new SensitiveString(CANARY, 'credential'),
+      new SensitiveString('other-secret', 'credential'),
     ];
 
     const result = redactInStructure(data);
 
     expect(JSON.stringify(result)).not.toContain(CANARY);
     expect(JSON.stringify(result)).not.toContain('other-secret');
-    expect((result as string[])[0]).toBe('[REDACTED:secret]');
+    expect((result as string[])[0]).toBe('[REDACTED:credential]');
   });
 
   it('test_redactInStructure_handles_circular_references', () => {
     interface CircularNode {
-      value: SensitiveString<'token'>;
+      value: SensitiveString<'credential'>;
       self?: CircularNode;
     }
-    const obj: CircularNode = { value: new SensitiveString(CANARY, 'token') };
+    const obj: CircularNode = { value: new SensitiveString(CANARY, 'credential') };
     obj.self = obj;
 
     // Should not throw stack overflow
@@ -639,7 +709,7 @@ describe('Redaction Helpers', () => {
 
   it('test_safeLog_output', () => {
     const data = {
-      token: new SensitiveString(CANARY, 'token'),
+      token: new SensitiveString(CANARY, 'credential'),
       user: 'alice',
     };
 
@@ -648,19 +718,19 @@ describe('Redaction Helpers', () => {
     expect(JSON.stringify(safe)).not.toContain(CANARY);
     const safeResult = safe as { user: string; token: string };
     expect(safeResult.user).toBe('alice');
-    expect(safeResult.token).toBe('[REDACTED:token]');
+    expect(safeResult.token).toBe('[REDACTED:credential]');
   });
 
   it('test_safeStringify', () => {
     const data = {
-      secret: new SensitiveString(CANARY, 'secret'),
+      secret: new SensitiveString(CANARY, 'credential'),
       public: 'visible',
     };
 
     const json = safeStringify(data);
 
     expect(json).not.toContain(CANARY);
-    expect(json).toContain('[REDACTED:secret]');
+    expect(json).toContain('[REDACTED:credential]');
     expect(json).toContain('visible');
   });
 
@@ -675,7 +745,7 @@ describe('Redaction Helpers', () => {
   it('test_containsSensitive', () => {
     const withSensitive = {
       nested: {
-        token: new SensitiveString('secret', 'token'),
+        token: new SensitiveString('secret', 'credential'),
       },
     };
 
@@ -692,7 +762,7 @@ describe('Redaction Helpers', () => {
   });
 
   it('test_containsSensitive_with_array', () => {
-    const data = [1, 2, new SensitiveString('x', 'generic')];
+    const data = [1, 2, new SensitiveString('x', 'sensitive')];
     expect(containsSensitive(data)).toBe(true);
   });
 });

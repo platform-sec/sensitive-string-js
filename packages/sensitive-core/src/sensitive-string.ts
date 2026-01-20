@@ -20,23 +20,28 @@ const NODE_INSPECT_SYMBOL = Symbol.for('nodejs.util.inspect.custom');
  * - True runtime encapsulation via ES2022 #private fields
  * - Automatic redaction in toString(), toJSON(), and util.inspect()
  * - Explicit reveal() for raw value access with audit hooks
- * - Constant-time comparison for secrets and tokens
+ * - Constant-time comparison for credentials (timing attack prevention)
  * - Policy-based behavior per sensitivity class
+ * - Optional label for finer-grained audit/compliance categorization
  *
  * @typeParam C - The sensitivity class for this instance
  *
  * @example
  * ```ts
- * const apiKey = new SensitiveString(process.env.API_KEY!, 'secret');
+ * // Basic usage - credential (API key, password, token)
+ * const apiKey = new SensitiveString(process.env.API_KEY!, 'credential', 'api_key');
  *
- * console.log(apiKey);           // SensitiveString<secret> { [REDACTED:secret] }
- * JSON.stringify({ key: apiKey }); // {"key":"[REDACTED:secret]"}
+ * // Sensitive data (PII, business data)
+ * const email = new SensitiveString(user.email, 'sensitive', 'email');
+ *
+ * console.log(apiKey);           // SensitiveString<credential:api_key> { [REDACTED:credential] }
+ * JSON.stringify({ key: apiKey }); // {"key":"[REDACTED:credential]"}
  *
  * // Explicit access with audit context
  * const raw = apiKey.reveal({ name: 'api-call', reason: 'authenticating' });
  * ```
  */
-export class SensitiveString<C extends SensitivityClass = 'generic'> {
+export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   /**
    * The raw value. Using ES2022 #private for true runtime encapsulation.
    * This field is inaccessible outside the class, even via reflection or type coercion.
@@ -49,14 +54,22 @@ export class SensitiveString<C extends SensitivityClass = 'generic'> {
   readonly klass: C;
 
   /**
+   * Optional label for audit/compliance categorization.
+   * Examples: 'api_key', 'email', 'ssn', 'session_token'
+   */
+  readonly label: string | undefined;
+
+  /**
    * Create a new SensitiveString.
    *
    * @param value - The raw string value to protect
-   * @param klass - The sensitivity classification
+   * @param klass - The sensitivity classification ('credential' or 'sensitive')
+   * @param label - Optional label for audit/compliance (e.g., 'api_key', 'email')
    */
-  constructor(value: string, klass: C) {
+  constructor(value: string, klass: C, label?: string) {
     this.#value = value;
     this.klass = klass;
+    this.label = label;
   }
 
   /**
@@ -84,10 +97,11 @@ export class SensitiveString<C extends SensitivityClass = 'generic'> {
 
   /**
    * Custom inspect for Node.js util.inspect() and console.log().
-   * Displays the class and redacted value.
+   * Displays the class, optional label, and redacted value.
    */
   [NODE_INSPECT_SYMBOL](): string {
-    return `SensitiveString<${this.klass}> { ${this.toString()} }`;
+    const klassLabel = this.label ? `${this.klass}:${this.label}` : this.klass;
+    return `SensitiveString<${klassLabel}> { ${this.toString()} }`;
   }
 
   /**
@@ -116,7 +130,7 @@ export class SensitiveString<C extends SensitivityClass = 'generic'> {
   /**
    * Compare this value with another string or SensitiveString.
    *
-   * For 'secret' and 'token' classes, uses constant-time comparison
+   * For the 'credential' class, uses constant-time comparison
    * to prevent timing attacks.
    *
    * @param other - The value to compare against
@@ -149,6 +163,7 @@ export class SensitiveString<C extends SensitivityClass = 'generic'> {
    * Concatenate this value with another string or SensitiveString.
    *
    * The result inherits the most restrictive sensitivity class.
+   * Labels are combined with '/' separator if both exist.
    *
    * @param other - The value to append
    * @param ctx - Optional reveal context (needed if other is a SensitiveString)
@@ -161,13 +176,21 @@ export class SensitiveString<C extends SensitivityClass = 'generic'> {
     const rawOther =
       other instanceof SensitiveString ? other.reveal(ctx) : other;
     const otherClass: SensitivityClass =
-      other instanceof SensitiveString ? other.klass : 'generic';
+      other instanceof SensitiveString ? other.klass : 'sensitive';
+    const otherLabel =
+      other instanceof SensitiveString ? other.label : undefined;
 
     const combinedClass = this.policy.combineClasses
       ? this.policy.combineClasses(this.klass, otherClass)
       : defaultCombineClasses(this.klass, otherClass);
 
-    return new SensitiveString(this.#value + rawOther, combinedClass);
+    // Combine labels if both exist
+    const combinedLabel =
+      this.label && otherLabel
+        ? `${this.label}/${otherLabel}`
+        : this.label ?? otherLabel;
+
+    return new SensitiveString(this.#value + rawOther, combinedClass, combinedLabel);
   }
 
   /**
@@ -191,14 +214,14 @@ export class SensitiveString<C extends SensitivityClass = 'generic'> {
    * @param start - Start index
    * @param end - End index (optional)
    * @param ctx - Reveal context for audit
-   * @returns A new SensitiveString with the same class
+   * @returns A new SensitiveString with the same class and label
    */
   substring(start: number, end?: number, ctx?: RevealContext): SensitiveString<C> {
     // Audit this operation as it involves the raw value
     const effectiveCtx = ctx ?? getCurrentRevealContext();
     effectiveCtx?.auditReveal?.(this);
 
-    return new SensitiveString(this.#value.substring(start, end), this.klass);
+    return new SensitiveString(this.#value.substring(start, end), this.klass, this.label);
   }
 
   /**
@@ -215,11 +238,15 @@ export class SensitiveString<C extends SensitivityClass = 'generic'> {
    * This is separate from toJSON() which always redacts.
    */
   toEnvelope(ctx?: RevealContext): SensitiveEnvelope {
-    return {
+    const envelope: SensitiveEnvelope = {
       __sensitive: true as const,
       klass: this.klass,
       value: this.reveal(ctx),
     };
+    if (this.label !== undefined) {
+      envelope.label = this.label;
+    }
+    return envelope;
   }
 
   /**
@@ -241,7 +268,7 @@ export class SensitiveString<C extends SensitivityClass = 'generic'> {
     if (!envelope.__sensitive) {
       throw new Error('Invalid SensitiveEnvelope: missing __sensitive marker');
     }
-    return new SensitiveString(envelope.value, envelope.klass as C);
+    return new SensitiveString(envelope.value, envelope.klass as C, envelope.label);
   }
 
   /**
@@ -250,12 +277,13 @@ export class SensitiveString<C extends SensitivityClass = 'generic'> {
    */
   static fromOptional<C extends SensitivityClass>(
     value: string | null | undefined,
-    klass: C
+    klass: C,
+    label?: string
   ): SensitiveString<C> | null {
     if (value == null || value === '') {
       return null;
     }
-    return new SensitiveString(value, klass);
+    return new SensitiveString(value, klass, label);
   }
 
   /**
@@ -264,20 +292,21 @@ export class SensitiveString<C extends SensitivityClass = 'generic'> {
    *
    * @param fn - Transformation function
    * @param ctx - Reveal context for audit
-   * @returns A new SensitiveString with the transformed value
+   * @returns A new SensitiveString with the transformed value, preserving class and label
    */
   map(fn: (value: string) => string, ctx?: RevealContext): SensitiveString<C> {
     const effectiveCtx = ctx ?? getCurrentRevealContext();
     effectiveCtx?.auditReveal?.(this);
 
-    return new SensitiveString(fn(this.#value), this.klass);
+    return new SensitiveString(fn(this.#value), this.klass, this.label);
   }
 
   /**
-   * Reclassify this value with a different sensitivity class.
-   * Creates a new SensitiveString with the same value but different class.
+   * Reclassify this value with a different sensitivity class and/or label.
+   * Creates a new SensitiveString with the same value but different class/label.
    *
    * @param newKlass - The new sensitivity class
+   * @param newLabel - Optional new label (if undefined, preserves existing label)
    * @param ctx - Reveal context for audit
    * @returns A new SensitiveString with the new class
    *
@@ -286,11 +315,12 @@ export class SensitiveString<C extends SensitivityClass = 'generic'> {
    */
   reclassify<D extends SensitivityClass>(
     newKlass: D,
+    newLabel?: string,
     ctx?: RevealContext
   ): SensitiveString<D> {
     const effectiveCtx = ctx ?? getCurrentRevealContext();
     effectiveCtx?.auditReveal?.(this);
 
-    return new SensitiveString(this.#value, newKlass);
+    return new SensitiveString(this.#value, newKlass, newLabel ?? this.label);
   }
 }

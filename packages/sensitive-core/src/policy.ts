@@ -31,44 +31,15 @@ function createDefaultRedact(klass: SensitivityClass): (value: string) => string
 }
 
 /**
- * Default policies for MVP.
- * All policies redact to [REDACTED:<class>] format.
+ * Default policies.
+ * Two classes based on the only behavioral difference that matters:
+ * - credential: constant-time comparison (for timing attack prevention)
+ * - sensitive: regular comparison (for everything else)
  */
 const DEFAULT_POLICIES: SensitivityPolicy[] = [
   {
-    name: 'generic',
-    redact: createDefaultRedact('generic'),
-    requireConstantTimeEquals: false,
-    advisory: {
-      allowPersistPlain: false,
-      allowSendToLog: true,
-      criticality: 'low',
-    },
-  },
-  {
-    name: 'secret',
-    redact: createDefaultRedact('secret'),
-    requireConstantTimeEquals: true,
-    advisory: {
-      allowPersistPlain: false,
-      allowSendToLog: true,
-      allowHash: true, // secrets can typically be hashed for comparison
-      criticality: 'high',
-    },
-  },
-  {
-    name: 'token',
-    redact: createDefaultRedact('token'),
-    requireConstantTimeEquals: true,
-    advisory: {
-      allowPersistPlain: false,
-      allowSendToLog: true,
-      criticality: 'high',
-    },
-  },
-  {
-    name: 'pii_email',
-    redact: createDefaultRedact('pii_email'),
+    name: 'sensitive',
+    redact: createDefaultRedact('sensitive'),
     requireConstantTimeEquals: false,
     advisory: {
       allowPersistPlain: false,
@@ -78,14 +49,14 @@ const DEFAULT_POLICIES: SensitivityPolicy[] = [
     },
   },
   {
-    name: 'pii_generic',
-    redact: createDefaultRedact('pii_generic'),
-    requireConstantTimeEquals: false,
+    name: 'credential',
+    redact: createDefaultRedact('credential'),
+    requireConstantTimeEquals: true,
     advisory: {
       allowPersistPlain: false,
-      allowPersistEncrypted: true,
       allowSendToLog: true,
-      criticality: 'medium',
+      allowHash: true, // credentials can typically be hashed for comparison
+      criticality: 'high',
     },
   },
 ];
@@ -134,10 +105,10 @@ export function getPolicy(name: SensitivityClass): SensitivityPolicy {
 }
 
 /**
- * Get the default policy (for 'generic' class).
+ * Get the default policy (for 'sensitive' class).
  */
 export function getDefaultPolicy(): SensitivityPolicy {
-  return getPolicy('generic');
+  return getPolicy('sensitive');
 }
 
 /**

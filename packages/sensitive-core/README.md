@@ -23,15 +23,15 @@ import {
 } from '@anthropic-security/sensitive-core';
 
 // Create a sensitive value
-const apiKey = new SensitiveString(process.env.API_KEY!, 'secret');
+const apiKey = new SensitiveString(process.env.API_KEY!, 'credential', 'api_key');
 
 // Safe for logging - automatically redacted
 console.log('Using API key:', apiKey);
-// Output: Using API key: SensitiveString<secret> { [REDACTED:secret] }
+// Output: Using API key: SensitiveString<credential:api_key> { [REDACTED:credential] }
 
 // JSON serialization is safe
 console.log(JSON.stringify({ key: apiKey }));
-// Output: {"key":"[REDACTED:secret]"}
+// Output: {"key":"[REDACTED:credential]"}
 
 // Explicit reveal when needed
 const raw = apiKey.reveal({ name: 'api-call', reason: 'authenticating' });
@@ -41,8 +41,8 @@ const raw = apiKey.reveal({ name: 'api-call', reason: 'authenticating' });
 
 - **Automatic Redaction**: `toString()`, `toJSON()`, `util.inspect()` all return redacted values
 - **True Private Fields**: Uses ES2022 `#private` for runtime encapsulation
-- **Sensitivity Classification**: `generic`, `secret`, `token`, `pii_email`, `pii_generic`
-- **Constant-Time Comparison**: Timing-safe equality for secrets and tokens
+- **Sensitivity Classification**: `sensitive` and `credential` (use labels for finer categorization)
+- **Constant-Time Comparison**: Timing-safe equality for credentials
 - **Audit Context**: AsyncLocalStorage-based context propagation
 - **Path-Based Wrapping**: Wrap sensitive fields in complex objects by path
 - **Zero External Dependencies**: Only uses Node.js built-ins
@@ -59,10 +59,10 @@ import {
 
 // 1. Define which fields are sensitive
 const WEBHOOK_SENSITIVE_FIELDS: SensitiveFieldConfig = {
-  'notification.metadata.webhookSignature': 'secret',
-  'notification.metadata.cardLastFour': 'pii_generic',
-  'notification.metadata.customerIpAddress': 'pii_generic',
-  'notification.transaction.gatewayReference': 'token',
+  'notification.metadata.webhookSignature': 'credential',
+  'notification.metadata.cardLastFour': 'sensitive',
+  'notification.metadata.customerIpAddress': 'sensitive',
+  'notification.transaction.gatewayReference': 'credential',
 };
 
 // 2. Create a helper that atomically parses + protects
