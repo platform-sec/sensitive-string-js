@@ -100,8 +100,10 @@ export interface SensitivityPolicy {
 }
 
 /**
- * Envelope format for service-to-service transmission.
- * Contains the raw value and must be explicitly created via toEnvelope().
+ * Envelope format for secure service-to-service transmission.
+ *
+ * ⚠️ Contains RAW (UNREDACTED) value.
+ * Created via `toEnvelope()`.
  */
 export interface SensitiveEnvelope {
   /** Marker to identify this as a sensitive envelope */

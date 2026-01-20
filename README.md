@@ -90,6 +90,27 @@ res.json(webhook); // Sensitive fields automatically redacted
 
 ---
 
+## ⚠️ Important Security Concepts
+
+Please read this section carefully to ensure secure usage.
+
+### 1. `toEnvelope` Exposes Raw Data
+The `toEnvelope()` method is designed for **secure transmission boundaries** (e.g., mTLS between internal services). It returns an object containing the **RAW, UNREDACTED** value.
+*   **DO NOT** log the output of `toEnvelope()`.
+*   **DO NOT** return the output of `toEnvelope()` to untrusted clients.
+*   **ONLY** use this when you explicitly intend to send the secret to another trusted system that will reconstruct it using `SensitiveString.fromEnvelope()`.
+
+### 2. `reveal()` is the Danger Zone
+Calling `.reveal()` strips all protection. The returned value is a plain JavaScript string.
+*   Once revealed, the value attacks accidental logging protections.
+*   Always limit the scope of the revealed variable (e.g., inside a small block).
+*   Avoid passing the revealed value to other functions if possible; pass the `SensitiveString` instead.
+
+### 3. Runtime Safety, Not Memory Isolation
+This library prevents *accidental* exposure (logs, errors, JSON). It does **not** protect against malicious code running in the same Node.js process. Any code with access to the `SensitiveString` instance can call `.reveal()`.
+
+---
+
 ## Core Concepts
 
 ### Sensitivity Classes
@@ -323,7 +344,7 @@ const { token } = PayloadSchema.parse(req.body);
 // token is SensitiveString<'credential'>
 ```
 
-> ⚠️ **Security Note**: Envelopes contain plaintext. Use mTLS, encrypted message buses, or VPC-internal communication.
+> ⚠️ **Security Note**: Envelopes contain the **RAW UNREDACTED STRING**. Never log envelopes. Only use this method when transmitting data over secure channels (mTLS, encrypted message buses, or VPC-internal communication) to another trusted service.
 
 ### NestJS Integration (Example)
 

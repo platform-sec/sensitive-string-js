@@ -14,28 +14,20 @@ import { getCurrentRevealContext } from './context.js';
 const NODE_INSPECT_SYMBOL = Symbol.for('nodejs.util.inspect.custom');
 
 /**
- * SensitiveString - A secure wrapper for sensitive string data.
+ * Secure wrapper for sensitive string data.
  *
  * Features:
- * - True runtime encapsulation via ES2022 #private fields
- * - Automatic redaction in toString(), toJSON(), and util.inspect()
- * - Explicit reveal() for raw value access with audit hooks
- * - Constant-time comparison for credentials (timing attack prevention)
- * - Policy-based behavior per sensitivity class
- * - Optional label for finer-grained audit/compliance categorization
+ * - Runtime encapsulation via ES2022 #private fields.
+ * - Automatic redaction in `toString()`, `toJSON()`, and `util.inspect()`.
+ * - Constant-time comparison for credentials.
+ * - Audit hooks on access via `reveal()`.
  *
- * @typeParam C - The sensitivity class for this instance
+ * @typeParam C - Sensitivity class ('sensitive' | 'credential').
  *
  * @example
  * ```ts
- * // Basic usage - credential (API key, password, token)
  * const apiKey = new SensitiveString(process.env.API_KEY!, 'credential', 'api_key');
- *
- * // Sensitive data (PII, business data)
- * const email = new SensitiveString(user.email, 'sensitive', 'email');
- *
- * console.log(apiKey);           // SensitiveString<credential:api_key> { [REDACTED:credential] }
- * JSON.stringify({ key: apiKey }); // {"key":"[REDACTED:credential]"}
+ * console.log(apiKey); // SensitiveString<credential:api_key> { [REDACTED:credential] }
  *
  * // Explicit access with audit context
  * const raw = apiKey.reveal({ name: 'api-call', reason: 'authenticating' });
@@ -105,15 +97,12 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   }
 
   /**
-   * Reveal the raw value.
+   * Returns the raw (unredacted) value.
    *
-   * @param ctx - Optional explicit reveal context. If not provided, uses AsyncLocalStorage context.
-   * @returns The raw (unredacted) string value
-   * @throws If policy.checkRevealAllowed() rejects the context
+   * Triggers audit logging if a RevealContext is active.
    *
-   * @remarks
-   * If a RevealContext is active (via withRevealContext() or explicit parameter),
-   * its auditReveal callback will be invoked.
+   * @param ctx - Optional explicit reveal context.
+   * @throws If policy checking fails.
    */
   reveal(ctx?: RevealContext): string {
     const effectiveCtx = ctx ?? getCurrentRevealContext();
@@ -160,14 +149,13 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   }
 
   /**
-   * Concatenate this value with another string or SensitiveString.
+   * Concatenate with another string or SensitiveString.
    *
-   * The result inherits the most restrictive sensitivity class.
-   * Labels are combined with '/' separator if both exist.
+   * Inherits the most restrictive sensitivity class.
+   * Labels are combined with '/' separator.
    *
-   * @param other - The value to append
-   * @param ctx - Optional reveal context (needed if other is a SensitiveString)
-   * @returns A new SensitiveString with the concatenated value
+   * @param other - The value to append.
+   * @param ctx - Audit context if `other` is sensitive.
    */
   concat<D extends SensitivityClass>(
     other: string | SensitiveString<D>,
@@ -209,12 +197,11 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   }
 
   /**
-   * Create a substring of this value.
+   * Create a substring, preserving sensitivity class and label.
    *
-   * @param start - Start index
-   * @param end - End index (optional)
-   * @param ctx - Reveal context for audit
-   * @returns A new SensitiveString with the same class and label
+   * @param start - Start index.
+   * @param end - Optional end index.
+   * @param ctx - Audit context.
    */
   substring(start: number, end?: number, ctx?: RevealContext): SensitiveString<C> {
     // Audit this operation as it involves the raw value
@@ -225,17 +212,13 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   }
 
   /**
-   * Serialize for service-to-service transmission.
+   * Serialize for secure service boundary transmission.
    *
-   * The envelope contains the raw (unredacted) value and must be
-   * transmitted over secure channels (mTLS, encrypted message buses, etc.).
+   * ⚠️ RETURNS RAW VALUE - DO NOT LOG ⚠️
    *
-   * @param ctx - Reveal context for audit
-   * @returns A SensitiveEnvelope containing the raw value
+   * Intended for mTLS/encrypted transmission only.
    *
-   * @remarks
-   * Use SensitiveString.fromEnvelope() on the receiving service to reconstruct.
-   * This is separate from toJSON() which always redacts.
+   * @param ctx - Optional context for audit/permission checks
    */
   toEnvelope(ctx?: RevealContext): SensitiveEnvelope {
     const envelope: SensitiveEnvelope = {
@@ -250,17 +233,10 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   }
 
   /**
-   * Reconstruct a SensitiveString from an envelope.
+   * Reconstruct a SensitiveString from a secure envelope.
    *
-   * @param envelope - The envelope to parse
-   * @returns A new SensitiveString
-   * @throws If the envelope is invalid (missing __sensitive marker)
-   *
-   * @example
-   * ```ts
-   * // Receiving service
-   * const token = SensitiveString.fromEnvelope(payload.token);
-   * ```
+   * @param envelope - The envelope validating the sensitive marker.
+   * @throws If the envelope is missing the `__sensitive` marker.
    */
   static fromEnvelope<C extends SensitivityClass>(
     envelope: SensitiveEnvelope
