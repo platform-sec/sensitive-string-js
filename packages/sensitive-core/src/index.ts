@@ -75,3 +75,12 @@ export {
   containsSensitive,
 } from './redact.js';
 export type { SafeStringifyOptions } from './redact.js';
+
+// Path-based wrapping utilities
+export {
+  wrapSensitiveByPath,
+  unwrapSensitiveByPath,
+  validateSensitiveFieldConfig,
+  checkSensitiveFieldsWrapped,
+} from './wrap.js';
+export type { SensitiveFieldConfig, WrappedResult } from './wrap.js';
