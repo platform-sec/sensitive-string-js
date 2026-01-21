@@ -126,7 +126,7 @@ describe('wrapSensitiveByPath', () => {
       const result = wrapSensitiveByPath(input, config);
 
       expect(result.user.email).toBeInstanceOf(SensitiveString);
-      expect((result.user as Record<string, unknown>).phone).toBeUndefined();
+      expect((result.user as Record<string, unknown>)['phone']).toBeUndefined();
     });
 
     it('should preserve non-string values', () => {
