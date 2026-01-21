@@ -209,6 +209,8 @@ jobs:
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
+        # Skip in act (local runner) - artifact upload requires GitHub infrastructure
+        if: ${{ !env.ACT }}
         with:
           name: release-packages-${{ github.sha }}
           path: |

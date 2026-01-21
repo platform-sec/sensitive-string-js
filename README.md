@@ -1,15 +1,13 @@
 # SensitiveString
 
-[![Node.js 20+](https://img.shields.io/badge/node-20%2B-brightgreen)](https://nodejs.org)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.4%2B-blue)](https://www.typescriptlang.org/)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Supply Chain Security](<https://img.shields.io/badge/supply_chain-protected-blue>)](.github/SUPPLY_CHAIN_SECURITY.md)
-
-Enterprise-grade library for handling sensitive string data in Node.js with **automatic redaction**, **type-safe classification**, and **audit-ready reveal patterns**.
+Enterprise-grade library for handling sensitive string data in Node.js with:
+- **Automatic redaction**
+- **Type-safe classification**
+- **Audit-ready reveal patterns**
 
 ## Why SensitiveString?
 
-In typical Node.js services, sensitive data (tokens, PII, secrets) spreads as plain `string` values, making it trivial to accidentally:
+In typical system, sensitive data (tokens, PII, secrets) spreads as plain `string` values, making it trivial to accidentally:
 
 - Log them to console/files
 - Serialize them in JSON responses
@@ -174,6 +172,29 @@ app.post('/payment', async (req, res) => {
   });
 });
 ```
+---
+
+## Threat Model
+
+### In Scope (Defended Against)
+
+| Threat | Defense |
+|--------|---------|
+| Accidental logging | Automatic redaction in `toString()`, `toJSON()`, `inspect()` |
+| Casual inspection | Private fields (`#value`) inaccessible via reflection |
+| JSON serialization | `toJSON()` returns redacted value |
+| Template literals | `toString()` called, returns redacted value |
+| Timing attacks | Constant-time comparison for `credential` class |
+
+### Out of Scope (Documented Limitations)
+
+| Limitation | Reason | Mitigation |
+|------------|--------|------------|
+| Memory dumps | JavaScript lacks secure memory primitives | Use `crypto.subtle` for encryption keys |
+| Malicious code | Attacker with code execution can extract values | This is defense-in-depth, not a security boundary |
+| Worker threads | AsyncLocalStorage doesn't propagate to workers | Explicit context passing required |
+| V8 heap persistence | Raw values may persist until GC | Consider WASM-based secure memory for highest sensitivity |
+
 
 ---
 
@@ -613,39 +634,19 @@ For high-throughput scenarios, this overhead may matter.
 
 ---
 
-## Threat Model
-
-### In Scope (Defended Against)
-
-| Threat | Defense |
-|--------|---------|
-| Accidental logging | Automatic redaction in `toString()`, `toJSON()`, `inspect()` |
-| Casual inspection | Private fields (`#value`) inaccessible via reflection |
-| JSON serialization | `toJSON()` returns redacted value |
-| Template literals | `toString()` called, returns redacted value |
-| Timing attacks | Constant-time comparison for `credential` class |
-
-### Out of Scope (Documented Limitations)
-
-| Limitation | Reason | Mitigation |
-|------------|--------|------------|
-| Memory dumps | JavaScript lacks secure memory primitives | Use `crypto.subtle` for encryption keys |
-| Malicious code | Attacker with code execution can extract values | This is defense-in-depth, not a security boundary |
-| Worker threads | AsyncLocalStorage doesn't propagate to workers | Explicit context passing required |
-| V8 heap persistence | Raw values may persist until GC | Consider WASM-based secure memory for highest sensitivity |
-
----
-
 ## Security
 
 ### Supply Chain Protection
 
 This project implements comprehensive supply chain security measures:
 
+- **Protected Branches**: Main branch requires signed commits, PR reviews, and status checks
+- **Hardened Runners**: GitHub Actions run on hardened, ephemeral environments
 - **Dependency Review**: Automated scanning for vulnerable and malicious dependencies
-- **CodeQL Analysis**: Weekly security scanning for vulnerabilities
+- **CodeQL Analysis**: Automated scanning for code vulnerabilities
 - **SBOM Generation**: Software Bill of Materials for transparency
-- **Vulnerability Audits**: Continuous monitoring with `pnpm audit`
+- **SLSA Provenance**: Build attestations at SLSA Level 3
+- **Cosign Signatures**: All release artifacts signed and verifiable via Sigstore
 - **License Compliance**: Enforced permissive licensing (MIT, Apache-2.0, BSD, ISC)
 
 See [Supply Chain Security Documentation](.github/SUPPLY_CHAIN_SECURITY.md) for details.
@@ -654,76 +655,8 @@ See [Supply Chain Security Documentation](.github/SUPPLY_CHAIN_SECURITY.md) for 
 
 If you discover a security vulnerability, please file a [GitHub Security Advisory](../../security/advisories/new) rather than opening a public issue.
 
-## Development
-
-### Building
-
-```bash
-# Install dependencies
-pnpm install
-
-# Build all packages
-pnpm build
-
-# Run tests
-pnpm test
-
-# Run tests with coverage
-pnpm test:coverage
-```
-
-### Project Structure
-
-```
-sensitive-string-lib/
-├── packages/
-│   ├── sensitive-core/     # Core library (no external deps)
-│   │   └── src/
-│   │       ├── types.ts        # Type definitions
-│   │       ├── policy.ts       # Policy registry
-│   │       ├── context.ts      # AsyncLocalStorage context
-│   │       ├── sensitive-string.ts  # Main class
-│   │       ├── redact.ts       # Redaction helpers
-│   │       └── index.ts        # Exports
-│   └── sensitive-zod/      # Zod integration
-│       └── src/
-│           └── index.ts        # Zod schemas
-├── package.json            # Root workspace config
-├── pnpm-workspace.yaml
-└── tsconfig.base.json
-```
-
----
-
-## Roadmap
-
-### Near-term
-- [ ] NestJS package with pipes, interceptors, and guards
-- [ ] Pino/Winston integration with custom serializers
-- [ ] Worker thread support for context propagation
-
-### Medium-term
-- [ ] Domain-specific policy modules (PCI-DSS, HIPAA)
-- [ ] Encrypted serialized payload for transmission (KMS integration)
-- [ ] Prisma integration for database columns
-
-### Long-term
-- [ ] ESLint plugin to flag `.reveal()` calls
-- [ ] LLM integration helpers (scrub before prompt construction)
-
 ---
 
 ## License
 
-MIT © Anthropic
-
----
-
-## Contributing
-
-Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting PRs.
-
-Key principles:
-- All new code must maintain redaction guarantees
-- Tests must include "canary" leak detection
-- Security-impacting changes require additional review
+Apache 2.0 © Anton Abashkin

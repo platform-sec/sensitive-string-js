@@ -1,5 +1,7 @@
 name: Dependency Review
 
+# Note: This workflow requires GitHub's Dependency Graph API and cannot run locally with act
+
 on:
   pull_request:
     branches: [main]
@@ -21,10 +23,8 @@ jobs:
         with:
           # Fail on critical and high vulnerabilities
           fail-on-severity: moderate
-          # Deny GPL, LGPL, and other copyleft licenses
-          deny-licenses: GPL-2.0, GPL-3.0, LGPL-2.0, LGPL-2.1, LGPL-3.0, AGPL-3.0
-          # Allow common permissive licenses
-          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD
+          # Allow only permissive licenses (denies GPL, LGPL, AGPL, etc.)
+          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0
           # Fail on packages with no license
           fail-on-scopes: runtime, development
           comment-summary-in-pr: always

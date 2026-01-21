@@ -1,5 +1,8 @@
 name: SLSA Provenance
 
+# Note: SLSA provenance generation requires GitHub's infrastructure and won't work in act
+# The build job can run locally, but provenance generation uses reusable workflows
+
 on:
   push:
     branches: [main]
@@ -78,6 +81,8 @@ jobs:
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
+        # Skip in act (local runner) - artifact upload requires GitHub infrastructure
+        if: ${{ !env.ACT }}
         with:
           name: npm-packages-slsa
           path: dist-tarballs/*.tgz

@@ -63,14 +63,15 @@ jobs:
         uses: github/codeql-action/analyze@v3
         with:
           category: "/language:${{ matrix.language }}"
-          # Upload SARIF results even if analysis fails
-          upload: true
+          # Upload SARIF results even if analysis fails (skip in act - local runner)
+          upload: ${{ !env.ACT }}
           # Generate detailed security report
           output: sarif-results
 
       - name: Upload CodeQL results as artifact
         uses: actions/upload-artifact@v4
-        if: always()
+        # Skip in act (local runner) - artifact upload requires GitHub infrastructure
+        if: ${{ always() && !env.ACT }}
         continue-on-error: true
         with:
           name: codeql-results

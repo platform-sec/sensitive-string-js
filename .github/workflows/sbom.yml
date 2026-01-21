@@ -1,5 +1,8 @@
 name: SBOM Generation
 
+# Note: cyclonedx-npm has compatibility issues with pnpm workspaces in act
+# The workflow works on GitHub Actions with proper npm/pnpm configuration
+
 on:
   push:
     branches: [main]
@@ -49,13 +52,11 @@ jobs:
             cyclonedx-npm \
               --output-format JSON \
               --output-file "../../sbom-${pkg_name}.json" \
-              --package-lock-only false \
               --omit dev
 
             cyclonedx-npm \
               --output-format XML \
               --output-file "../../sbom-${pkg_name}.xml" \
-              --package-lock-only false \
               --omit dev
 
             cd ../..
@@ -64,13 +65,11 @@ jobs:
           # Generate monorepo-wide SBOM
           cyclonedx-npm \
             --output-format JSON \
-            --output-file sbom-full.json \
-            --package-lock-only false
+            --output-file sbom-full.json
 
           cyclonedx-npm \
             --output-format XML \
-            --output-file sbom-full.xml \
-            --package-lock-only false
+            --output-file sbom-full.xml
 
       - name: Generate SPDX SBOM
         run: |
@@ -99,6 +98,8 @@ jobs:
 
       - name: Upload SBOM artifacts
         uses: actions/upload-artifact@v4
+        # Skip in act (local runner) - artifact upload requires GitHub infrastructure
+        if: ${{ !env.ACT }}
         with:
           name: sbom-${{ github.sha }}
           path: |
@@ -134,6 +135,9 @@ jobs:
     steps:
       - name: Download SBOM
         uses: actions/download-artifact@v4
+        # Skip in act (local runner) - artifacts not available
+        if: ${{ !env.ACT }}
+        continue-on-error: true
         with:
           name: sbom-${{ github.sha }}
 
