@@ -30,10 +30,7 @@ const revealContextStorage = new AsyncLocalStorage<RevealContext>();
  * Context does NOT propagate to Worker threads.
  * If your application uses workers, you must explicitly pass context.
  */
-export function withRevealContext<T>(
-  ctx: RevealContext,
-  fn: () => T
-): T {
+export function withRevealContext<T>(ctx: RevealContext, fn: () => T): T {
   return revealContextStorage.run(ctx, fn);
 }
 

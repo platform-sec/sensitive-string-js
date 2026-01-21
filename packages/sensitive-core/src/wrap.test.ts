@@ -235,7 +235,8 @@ describe('wrapSensitiveByPath', () => {
 
     it('should allow reveal with proper context', () => {
       const wrapped = wrapSensitiveByPath(PSP_AUTHORIZATION_WEBHOOK, PSP_SENSITIVE_FIELDS);
-      const signature = wrapped.notification.metadata.webhookSignature as unknown as SensitiveString;
+      const signature = wrapped.notification.metadata
+        .webhookSignature as unknown as SensitiveString;
 
       const reveals: string[] = [];
 
@@ -289,11 +290,11 @@ describe('unwrapSensitiveByPath', () => {
     expect(original.email).toBeInstanceOf(SensitiveString);
   });
 
-    it('should audit reveals when context is provided', () => {
-      const config: SensitiveFieldConfig = {
-        'credentials.apiKey': 'credential',
-        'credentials.token': 'credential',
-      };
+  it('should audit reveals when context is provided', () => {
+    const config: SensitiveFieldConfig = {
+      'credentials.apiKey': 'credential',
+      'credentials.token': 'credential',
+    };
 
     const wrapped = {
       credentials: {

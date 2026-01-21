@@ -1,8 +1,4 @@
-import {
-  SensitivityClass,
-  SensitivityPolicy,
-  SENSITIVITY_PRECEDENCE,
-} from './types.js';
+import { SensitivityClass, SensitivityPolicy, SENSITIVITY_PRECEDENCE } from './types.js';
 
 /**
  * Internal registry of sensitivity policies.
@@ -14,10 +10,7 @@ const policyRegistry = new Map<SensitivityClass, SensitivityPolicy>();
  * Determine the more restrictive class when combining two sensitive values.
  * Uses SENSITIVITY_PRECEDENCE ordering (higher index = more restrictive).
  */
-export function defaultCombineClasses(
-  a: SensitivityClass,
-  b: SensitivityClass
-): SensitivityClass {
+export function defaultCombineClasses(a: SensitivityClass, b: SensitivityClass): SensitivityClass {
   const indexA = SENSITIVITY_PRECEDENCE.indexOf(a);
   const indexB = SENSITIVITY_PRECEDENCE.indexOf(b);
   return indexA >= indexB ? a : b;
@@ -79,10 +72,7 @@ export interface RegisterPolicyOptions {
  *
  * @throws Error if policy already exists and overwrite is not set
  */
-export function registerPolicy(
-  policy: SensitivityPolicy,
-  opts: RegisterPolicyOptions = {}
-): void {
+export function registerPolicy(policy: SensitivityPolicy, opts: RegisterPolicyOptions = {}): void {
   if (policyRegistry.has(policy.name) && !opts.overwrite) {
     throw new Error(
       `Policy '${policy.name}' already registered. Use { overwrite: true } to replace.`

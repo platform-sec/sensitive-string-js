@@ -100,13 +100,13 @@ export interface SensitivityPolicy {
 }
 
 /**
- * Envelope format for secure service-to-service transmission.
+ * Serialized format for secure service-to-service transmission.
  *
  * ⚠️ Contains RAW (UNREDACTED) value.
- * Created via `toEnvelope()`.
+ * Created via `serialize()`.
  */
-export interface SensitiveEnvelope {
-  /** Marker to identify this as a sensitive envelope */
+export interface SerializedSensitiveString {
+  /** Marker to identify this as a serialized sensitive string */
   __sensitive: true;
   /** The sensitivity classification */
   klass: SensitivityClass;

@@ -26,9 +26,7 @@ export type SensitiveFieldConfig = Record<string, SensitivityClass>;
  * the exact return type is complex. In practice, the wrapped object maintains
  * the same shape but with specified string fields converted to SensitiveString.
  */
-export type WrappedResult<T> = T extends object
-  ? { [K in keyof T]: WrappedResult<T[K]> }
-  : T;
+export type WrappedResult<T> = T extends object ? { [K in keyof T]: WrappedResult<T[K]> } : T;
 
 /**
  * Get a value from an object by dot-notation path.
@@ -154,10 +152,7 @@ function deepClone<T>(obj: T): T {
  * // SensitiveString<sensitive> { [REDACTED:sensitive] }
  * ```
  */
-export function wrapSensitiveByPath<T extends object>(
-  obj: T,
-  config: SensitiveFieldConfig
-): T {
+export function wrapSensitiveByPath<T extends object>(obj: T, config: SensitiveFieldConfig): T {
   // Deep clone to avoid mutating the original
   const result = deepClone(obj) as Record<string, unknown>;
 

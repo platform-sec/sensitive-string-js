@@ -6,7 +6,7 @@ import {
   zCredential,
   zSensitiveWithValidation,
   zSensitiveOptional,
-  zSensitiveFromEnvelope,
+  zSensitiveDeserialize,
   SensitiveString,
 } from './index.js';
 
@@ -164,14 +164,10 @@ describe('Zod Integration', () => {
       });
 
       // Missing uppercase
-      expect(() => schema.parse({ password: 'password123' })).toThrow(
-        'Must contain uppercase'
-      );
+      expect(() => schema.parse({ password: 'password123' })).toThrow('Must contain uppercase');
 
       // Missing number
-      expect(() => schema.parse({ password: 'PasswordABC' })).toThrow(
-        'Must contain number'
-      );
+      expect(() => schema.parse({ password: 'PasswordABC' })).toThrow('Must contain number');
 
       // Valid
       const result = schema.parse({ password: 'Password123' });
@@ -233,10 +229,10 @@ describe('Zod Integration', () => {
     });
   });
 
-  describe('zSensitiveFromEnvelope', () => {
-    it('test_envelope_parsing', () => {
+  describe('zSensitiveDeserialize', () => {
+    it('test_serialized_parsing', () => {
       const schema = z.object({
-        token: zSensitiveFromEnvelope('credential'),
+        token: zSensitiveDeserialize('credential'),
       });
 
       const result = schema.parse({
@@ -252,9 +248,9 @@ describe('Zod Integration', () => {
       expect(result.token.klass).toBe('credential');
     });
 
-    it('test_envelope_with_label', () => {
+    it('test_serialized_with_label', () => {
       const schema = z.object({
-        token: zSensitiveFromEnvelope('credential'),
+        token: zSensitiveDeserialize('credential'),
       });
 
       const result = schema.parse({
@@ -269,9 +265,9 @@ describe('Zod Integration', () => {
       expect(result.token.label).toBe('api_key');
     });
 
-    it('test_envelope_validates_marker', () => {
+    it('test_serialized_validates_marker', () => {
       const schema = z.object({
-        token: zSensitiveFromEnvelope(),
+        token: zSensitiveDeserialize(),
       });
 
       expect(() =>
@@ -285,9 +281,9 @@ describe('Zod Integration', () => {
       ).toThrow();
     });
 
-    it('test_envelope_validates_class', () => {
+    it('test_serialized_validates_class', () => {
       const schema = z.object({
-        token: zSensitiveFromEnvelope('credential'),
+        token: zSensitiveDeserialize('credential'),
       });
 
       expect(() =>
@@ -301,9 +297,9 @@ describe('Zod Integration', () => {
       ).toThrow("Expected sensitivity class 'credential', got 'sensitive'");
     });
 
-    it('test_envelope_accepts_any_class_when_not_specified', () => {
+    it('test_serialized_accepts_any_class_when_not_specified', () => {
       const schema = z.object({
-        data: zSensitiveFromEnvelope(), // No expected class
+        data: zSensitiveDeserialize(), // No expected class
       });
 
       const result = schema.parse({
@@ -346,11 +342,7 @@ describe('Zod Integration', () => {
     it('test_user_registration_schema', () => {
       const RegistrationSchema = z.object({
         email: zSensitive('email'),
-        password: zSensitiveWithValidation(
-          'credential',
-          z.string().min(8),
-          'password'
-        ),
+        password: zSensitiveWithValidation('credential', z.string().min(8), 'password'),
         fullName: zSensitive('name'),
         phone: zSensitiveOptional('sensitive', 'phone'),
       });

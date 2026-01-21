@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `RevealContext` for audit-ready reveal operations
 - `withRevealContext()` for AsyncLocalStorage-based context propagation
 - `redactInStructure()` and `safeLog()` for safe logging of nested structures
-- `SensitiveEnvelope` for service-to-service transmission
+- `SerializedSensitiveString` for service-to-service transmission
 - Utility methods: `concat()`, `substring()`, `map()`, `reclassify()`, `isEmpty()`
 
 #### @anthropic-security/sensitive-zod
@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `zSensitive()` and `zCredential()` convenience helpers
 - `zSensitiveWithValidation()` for custom string validation
 - `zSensitiveOptional()` for nullable sensitive fields
-- `zSensitiveFromEnvelope()` for parsing envelope format
+- `zSensitiveDeserialize()` for parsing serialized format
 
 ### Security
 - All serialization methods redact by default

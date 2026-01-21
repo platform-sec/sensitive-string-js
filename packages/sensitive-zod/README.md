@@ -55,8 +55,8 @@ zSensitiveWithValidation('credential', z.string().min(32), 'api_key')
 // Optional (returns null for missing)
 zSensitiveOptional('sensitive', 'phone')
 
-// Parse from envelope format
-zSensitiveFromEnvelope('credential')
+// Parse from serialized format
+zSensitiveDeserialize('credential')
 ```
 
 ## Examples
@@ -95,11 +95,11 @@ const headers = AuthHeaderSchema.parse(req.headers);
 // Receiving service
 const PayloadSchema = z.object({
   userId: z.string(),
-  token: zSensitiveFromEnvelope('credential'),
+  token: zSensitiveDeserialize('credential'),
 });
 
 const { token } = PayloadSchema.parse(req.body);
-// token is SensitiveString<'credential'>, reconstructed from envelope
+// token is SensitiveString<'credential'>, reconstructed from serialized form
 ```
 
 ## Re-exports
@@ -108,7 +108,7 @@ For convenience, this package re-exports commonly used items from `@anthropic-se
 
 - `SensitiveString`
 - `SensitivityClass`
-- `SensitiveEnvelope`
+- `SerializedSensitiveString`
 - `RevealContext`
 - `withRevealContext`
 - `getCurrentRevealContext`

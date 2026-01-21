@@ -94,11 +94,11 @@ res.json(webhook); // Sensitive fields automatically redacted
 
 Please read this section carefully to ensure secure usage.
 
-### 1. `toEnvelope` Exposes Raw Data
-The `toEnvelope()` method is designed for **secure transmission boundaries** (e.g., mTLS between internal services). It returns an object containing the **RAW, UNREDACTED** value.
-*   **DO NOT** log the output of `toEnvelope()`.
-*   **DO NOT** return the output of `toEnvelope()` to untrusted clients.
-*   **ONLY** use this when you explicitly intend to send the secret to another trusted system that will reconstruct it using `SensitiveString.fromEnvelope()`.
+### 1. `serialize` Exposes Raw Data
+The `serialize()` method is designed for **secure transmission boundaries** (e.g., mTLS between internal services). It returns an object containing the **RAW, UNREDACTED** value.
+*   **DO NOT** log the output of `serialize()`.
+*   **DO NOT** return the output of `serialize()` to untrusted clients.
+*   **ONLY** use this when you explicitly intend to send the secret to another trusted system that will reconstruct it using `SensitiveString.deserialize()`.
 
 ### 2. `reveal()` is the Danger Zone
 Calling `.reveal()` strips all protection. The returned value is a plain JavaScript string.
@@ -214,8 +214,8 @@ class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   isEmpty(): boolean;
   
   // Service-to-service transmission
-  toEnvelope(ctx?: RevealContext): SensitiveEnvelope;
-  static fromEnvelope<C>(envelope: SensitiveEnvelope): SensitiveString<C>;
+  serialize(ctx?: RevealContext): SerializedSensitiveString;
+  static deserialize<C>(serialized: SerializedSensitiveString): SensitiveString<C>;
   static fromOptional<C>(value: string | null | undefined, klass: C): SensitiveString<C> | null;
 }
 ```
@@ -238,8 +238,8 @@ zSensitiveWithValidation(klass, zodStringSchema, label?)
 // Optional values (returns null for missing)
 zSensitiveOptional(klass, label?)
 
-// Parse from envelope format
-zSensitiveFromEnvelope(expectedKlass?)
+// Parse from serialized format
+zSensitiveDeserialize(expectedKlass?)
 ```
 
 ### Utility Functions
@@ -318,13 +318,13 @@ registerPolicy({
 
 ### Service-to-Service Transmission
 
-When transmitting sensitive values between services, use the envelope pattern:
+When transmitting sensitive values between services, use the serialized pattern:
 
 ```typescript
 // Sender
 const payload = {
   userId: user.id,
-  token: authToken.toEnvelope({ 
+  token: authToken.serialize({
     name: 'service-call',
     reason: 'forwarding to payment service' 
   }),
@@ -333,18 +333,18 @@ await httpClient.post('https://payment-service/process', payload);
 
 // Receiver
 import { SensitiveString } from '@anthropic-security/sensitive-core';
-import { zSensitiveFromEnvelope } from '@anthropic-security/sensitive-zod';
+import { zSensitiveDeserialize } from '@anthropic-security/sensitive-zod';
 
 const PayloadSchema = z.object({
   userId: z.string(),
-  token: zSensitiveFromEnvelope('credential'),
+  token: zSensitiveDeserialize('credential'),
 });
 
 const { token } = PayloadSchema.parse(req.body);
 // token is SensitiveString<'credential'>
 ```
 
-> ⚠️ **Security Note**: Envelopes contain the **RAW UNREDACTED STRING**. Never log envelopes. Only use this method when transmitting data over secure channels (mTLS, encrypted message buses, or VPC-internal communication) to another trusted service.
+> ⚠️ **Security Note**: Serialized sensitive strings contain the **RAW UNREDACTED STRING**. Never log serialized outputs. Only use this method when transmitting data over secure channels (mTLS, encrypted message buses, or VPC-internal communication) to another trusted service.
 
 ### NestJS Integration (Example)
 
@@ -463,7 +463,7 @@ sensitive-string-lib/
 
 ### Medium-term
 - [ ] Domain-specific policy modules (PCI-DSS, HIPAA)
-- [ ] Encrypted envelope for transmission (KMS integration)
+- [ ] Encrypted serialized payload for transmission (KMS integration)
 - [ ] Prisma integration for database columns
 
 ### Long-term

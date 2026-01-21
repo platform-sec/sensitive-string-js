@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import type {
   SensitivityClass,
   SensitivityPolicy,
-  SensitiveEnvelope,
+  SerializedSensitiveString,
   RevealContext,
 } from './types.js';
 import { getPolicy, defaultCombineClasses } from './policy.js';
@@ -130,8 +130,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * Length differences are unavoidable information leakage in timing-safe comparisons.
    */
   equals(other: string | SensitiveString<SensitivityClass>, ctx?: RevealContext): boolean {
-    const rawOther =
-      other instanceof SensitiveString ? other.reveal(ctx) : other;
+    const rawOther = other instanceof SensitiveString ? other.reveal(ctx) : other;
 
     if (this.policy.requireConstantTimeEquals) {
       const a = Buffer.from(this.#value, 'utf8');
@@ -161,12 +160,10 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     other: string | SensitiveString<D>,
     ctx?: RevealContext
   ): SensitiveString<SensitivityClass> {
-    const rawOther =
-      other instanceof SensitiveString ? other.reveal(ctx) : other;
+    const rawOther = other instanceof SensitiveString ? other.reveal(ctx) : other;
     const otherClass: SensitivityClass =
       other instanceof SensitiveString ? other.klass : 'sensitive';
-    const otherLabel =
-      other instanceof SensitiveString ? other.label : undefined;
+    const otherLabel = other instanceof SensitiveString ? other.label : undefined;
 
     const combinedClass = this.policy.combineClasses
       ? this.policy.combineClasses(this.klass, otherClass)
@@ -174,9 +171,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
 
     // Combine labels if both exist
     const combinedLabel =
-      this.label && otherLabel
-        ? `${this.label}/${otherLabel}`
-        : this.label ?? otherLabel;
+      this.label && otherLabel ? `${this.label}/${otherLabel}` : (this.label ?? otherLabel);
 
     return new SensitiveString(this.#value + rawOther, combinedClass, combinedLabel);
   }
@@ -220,31 +215,31 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    *
    * @param ctx - Optional context for audit/permission checks
    */
-  toEnvelope(ctx?: RevealContext): SensitiveEnvelope {
-    const envelope: SensitiveEnvelope = {
+  serialize(ctx?: RevealContext): SerializedSensitiveString {
+    const serialized: SerializedSensitiveString = {
       __sensitive: true as const,
       klass: this.klass,
       value: this.reveal(ctx),
     };
     if (this.label !== undefined) {
-      envelope.label = this.label;
+      serialized.label = this.label;
     }
-    return envelope;
+    return serialized;
   }
 
   /**
-   * Reconstruct a SensitiveString from a secure envelope.
+   * Reconstruct a SensitiveString from a serialized form.
    *
-   * @param envelope - The envelope validating the sensitive marker.
-   * @throws If the envelope is missing the `__sensitive` marker.
+   * @param serialized - The serialized form validating the sensitive marker.
+   * @throws If the serialized form is missing the `__sensitive` marker.
    */
-  static fromEnvelope<C extends SensitivityClass>(
-    envelope: SensitiveEnvelope
+  static deserialize<C extends SensitivityClass>(
+    serialized: SerializedSensitiveString
   ): SensitiveString<C> {
-    if (!envelope.__sensitive) {
-      throw new Error('Invalid SensitiveEnvelope: missing __sensitive marker');
+    if (!serialized.__sensitive) {
+      throw new Error('Invalid SerializedSensitiveString: missing __sensitive marker');
     }
-    return new SensitiveString(envelope.value, envelope.klass as C, envelope.label);
+    return new SensitiveString(serialized.value, serialized.klass as C, serialized.label);
   }
 
   /**

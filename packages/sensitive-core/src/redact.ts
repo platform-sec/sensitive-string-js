@@ -72,10 +72,7 @@ export function redactInStructure(obj: unknown, seen = new WeakSet<object>()): u
   if (obj instanceof Map) {
     const result = new Map<unknown, unknown>();
     for (const [key, value] of obj) {
-      result.set(
-        redactInStructure(key, seen),
-        redactInStructure(value, seen)
-      );
+      result.set(redactInStructure(key, seen), redactInStructure(value, seen));
     }
     return result;
   }

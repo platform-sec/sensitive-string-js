@@ -36,7 +36,7 @@ export type {
   SensitivityClass,
   SensitivityPolicy,
   SensitivityAdvisory,
-  SensitiveEnvelope,
+  SerializedSensitiveString,
   RevealContext,
   ISensitiveString,
 } from './types.js';

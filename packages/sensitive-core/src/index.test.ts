@@ -4,7 +4,7 @@ import {
   SensitiveString,
   SensitivityClass,
   RevealContext,
-  SensitiveEnvelope,
+  SerializedSensitiveString,
   registerPolicy,
   getPolicy,
   resetPolicies,
@@ -298,53 +298,56 @@ describe('SensitiveString', () => {
     });
   });
 
-  describe('Envelope Tests', () => {
-    it('test_toEnvelope_contains_raw_value', () => {
+  describe('Serialization Tests', () => {
+    it('test_serialize_contains_raw_value', () => {
       const s = new SensitiveString(CANARY, 'credential');
-      const envelope = s.toEnvelope();
+      const serialized = s.serialize();
 
-      expect(envelope.value).toBe(CANARY);
-      expect(envelope.__sensitive).toBe(true);
-      expect(envelope.klass).toBe('credential');
+      expect(serialized.value).toBe(CANARY);
+      expect(serialized.__sensitive).toBe(true);
+      expect(serialized.klass).toBe('credential');
     });
 
-    it('test_toEnvelope_includes_label', () => {
+    it('test_serialize_includes_label', () => {
       const s = new SensitiveString(CANARY, 'credential', 'api_key');
-      const envelope = s.toEnvelope();
+      const serialized = s.serialize();
 
-      expect(envelope.label).toBe('api_key');
+      expect(serialized.label).toBe('api_key');
     });
 
-    it('test_fromEnvelope_reconstructs', () => {
+    it('test_deserialize_reconstructs', () => {
       const original = new SensitiveString(CANARY, 'credential');
-      const envelope = original.toEnvelope();
-      const reconstructed = SensitiveString.fromEnvelope(envelope);
+      const serialized = original.serialize();
+      const reconstructed = SensitiveString.deserialize(serialized);
 
       expect(reconstructed.reveal()).toBe(CANARY);
       expect(reconstructed.klass).toBe('credential');
     });
 
-    it('test_fromEnvelope_preserves_label', () => {
+    it('test_deserialize_preserves_label', () => {
       const original = new SensitiveString(CANARY, 'credential', 'api_key');
-      const envelope = original.toEnvelope();
-      const reconstructed = SensitiveString.fromEnvelope(envelope);
+      const serialized = original.serialize();
+      const reconstructed = SensitiveString.deserialize(serialized);
 
       expect(reconstructed.label).toBe('api_key');
     });
 
-    it('test_fromEnvelope_rejects_invalid', () => {
-      const invalid: Partial<SensitiveEnvelope> = { value: 'test', klass: 'sensitive' };
+    it('test_deserialize_rejects_invalid', () => {
+      const invalid: Partial<SerializedSensitiveString> = {
+        value: 'test',
+        klass: 'sensitive',
+      };
 
-      expect(() =>
-        SensitiveString.fromEnvelope(invalid as SensitiveEnvelope)
-      ).toThrow('Invalid SensitiveEnvelope: missing __sensitive marker');
+      expect(() => SensitiveString.deserialize(invalid as SerializedSensitiveString)).toThrow(
+        'Invalid SerializedSensitiveString: missing __sensitive marker'
+      );
     });
 
-    it('test_toEnvelope_calls_audit', () => {
+    it('test_serialize_calls_audit', () => {
       const s = new SensitiveString(CANARY, 'credential');
       const auditSpy = vi.fn();
 
-      s.toEnvelope({ name: 'envelope-test', auditReveal: auditSpy });
+      s.serialize({ name: 'serialize-test', auditReveal: auditSpy });
 
       expect(auditSpy).toHaveBeenCalledTimes(1);
     });
@@ -565,10 +568,13 @@ describe('Policy Registry', () => {
   });
 
   it('test_register_custom_policy', () => {
-    registerPolicy({
-      name: 'sensitive',
-      redact: (value) => `***${value.length}***`,
-    }, { overwrite: true });
+    registerPolicy(
+      {
+        name: 'sensitive',
+        redact: (value) => `***${value.length}***`,
+      },
+      { overwrite: true }
+    );
 
     const s = new SensitiveString('hello', 'sensitive');
     expect(s.toString()).toBe('***5***');

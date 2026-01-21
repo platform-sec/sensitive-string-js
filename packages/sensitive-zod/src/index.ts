@@ -25,10 +25,7 @@
  */
 
 import { z } from 'zod';
-import {
-  SensitiveString,
-  SensitivityClass,
-} from '@anthropic-security/sensitive-core';
+import { SensitiveString, SensitivityClass } from '@anthropic-security/sensitive-core';
 
 /**
  * Create a Zod schema that parses strings into SensitiveString instances.
@@ -186,28 +183,28 @@ export function zSensitiveOptional<C extends SensitivityClass>(
 }
 
 /**
- * Create a Zod schema that validates against an envelope format
+ * Create a Zod schema that validates against a serialized format
  * and reconstructs the SensitiveString.
  *
- * Useful for validating incoming payloads that were serialized with toEnvelope().
+ * Useful for validating incoming payloads that were serialized with serialize().
  *
  * @typeParam C - The expected sensitivity class
  * @param expectedKlass - Optional expected class (validates if provided)
- * @returns A Zod schema that parses envelopes to SensitiveString
+ * @returns A Zod schema that parses serialized forms to SensitiveString
  *
  * @example
  * ```ts
  * const schema = z.object({
- *   token: zSensitiveFromEnvelope('credential'),
+ *   token: zSensitiveDeserialize('credential'),
  * });
  *
- * // Validates envelope structure and reconstructs
+ * // Validates serialized structure and reconstructs
  * const result = schema.parse({
  *   token: { __sensitive: true, klass: 'credential', value: 'secret-value', label: 'api_key' }
  * });
  * ```
  */
-export function zSensitiveFromEnvelope<C extends SensitivityClass>(
+export function zSensitiveDeserialize<C extends SensitivityClass>(
   expectedKlass?: C
 ): z.ZodEffects<
   z.ZodObject<{
@@ -231,13 +228,11 @@ export function zSensitiveFromEnvelope<C extends SensitivityClass>(
       value: z.string(),
       label: z.string().optional(),
     })
-    .transform((envelope): SensitiveString<C> => {
-      if (expectedKlass && envelope.klass !== expectedKlass) {
-        throw new Error(
-          `Expected sensitivity class '${expectedKlass}', got '${envelope.klass}'`
-        );
+    .transform((serialized): SensitiveString<C> => {
+      if (expectedKlass && serialized.klass !== expectedKlass) {
+        throw new Error(`Expected sensitivity class '${expectedKlass}', got '${serialized.klass}'`);
       }
-      return new SensitiveString(envelope.value, envelope.klass as C, envelope.label);
+      return new SensitiveString(serialized.value, serialized.klass as C, serialized.label);
     });
 }
 
@@ -245,7 +240,7 @@ export function zSensitiveFromEnvelope<C extends SensitivityClass>(
 export { SensitiveString } from '@anthropic-security/sensitive-core';
 export type {
   SensitivityClass,
-  SensitiveEnvelope,
+  SerializedSensitiveString,
   RevealContext,
 } from '@anthropic-security/sensitive-core';
 export {
