@@ -6,8 +6,6 @@
 
 Enterprise-grade library for handling sensitive string data in Node.js with **automatic redaction**, **type-safe classification**, and **audit-ready reveal patterns**.
 
-The best libraries are opinionated about defaults and flexible about overrides.
-
 ## Why SensitiveString?
 
 In typical Node.js services, sensitive data (tokens, PII, secrets) spreads as plain `string` values, making it trivial to accidentally:
@@ -387,6 +385,230 @@ const logger = pino({
 // Sensitive values in logged objects are automatically redacted
 logger.info({ payload: { token: sensitiveToken } }, 'Processing request');
 ```
+
+---
+
+## Zod Integration Deep Dive
+
+The `@anthropic-security/sensitive-zod` package bridges Zod validation with `SensitiveString`. This section explains how they work together and when to use (or avoid) the integration.
+
+### How It Works Step by Step
+
+**Step 1: Define a schema with Zod helpers**
+
+```typescript
+import { z } from 'zod';
+import { zCredential, zSensitive } from '@anthropic-security/sensitive-zod';
+
+const LoginSchema = z.object({
+  email: zSensitive('email'),
+  password: zCredential('password'),
+});
+```
+
+**Step 2: Each helper creates a Zod transform**
+
+Under the hood, each helper wraps `z.string().transform()`:
+
+```typescript
+// zCredential('password') is equivalent to:
+z.string().transform((value) => new SensitiveString(value, 'credential', 'password'));
+```
+
+**Step 3: Parse user input**
+
+```typescript
+const input = { email: 'user@example.com', password: 'hunter2' };
+const result = LoginSchema.parse(input);
+
+// result.email is SensitiveString<'sensitive'>
+// result.password is SensitiveString<'credential'>
+```
+
+**Step 4: Automatic redaction kicks in**
+
+```typescript
+console.log(result.email);   // [REDACTED:sensitive]
+JSON.stringify(result);      // {"email":"[REDACTED:sensitive]","password":"[REDACTED:credential]"}
+```
+
+**Step 5: Explicit reveal when needed**
+
+```typescript
+const rawPassword = result.password.reveal({ name: 'auth', reason: 'verifying' });
+```
+
+### When Zod Integration is Useful
+
+#### API Request Validation
+
+Parse and protect sensitive fields in one step:
+
+```typescript
+const CreateUserSchema = z.object({
+  email: zSensitive('email'),
+  password: zSensitiveWithValidation('credential', z.string().min(8), 'password'),
+  name: z.string(),
+});
+
+app.post('/users', (req, res) => {
+  const user = CreateUserSchema.parse(req.body);
+  // user.password is already protected
+  // Logging user won't leak the password
+});
+```
+
+#### Environment Variable Loading
+
+Validate and protect config at startup:
+
+```typescript
+const EnvSchema = z.object({
+  DATABASE_URL: zCredential('database_url'),
+  API_KEY: zCredential('api_key'),
+  SENTRY_DSN: zSensitive('sentry_dsn'),
+});
+
+const config = EnvSchema.parse(process.env);
+// Logging config won't leak secrets
+```
+
+#### Webhook Payload Handling
+
+Protect incoming sensitive data immediately:
+
+```typescript
+const WebhookSchema = z.object({
+  event: z.string(),
+  customer: z.object({
+    id: z.string(),
+    email: zSensitive('email'),
+    paymentToken: zCredential('payment_token'),
+  }),
+});
+
+app.post('/webhook', (req, res) => {
+  const payload = WebhookSchema.parse(req.body);
+  console.log('Received:', payload);  // Safe - sensitive fields redact
+});
+```
+
+#### Form Validation with Error Messages
+
+Validate before protecting to get useful error messages:
+
+```typescript
+const RegistrationSchema = z.object({
+  password: zSensitiveWithValidation(
+    'credential',
+    z.string()
+      .min(12, 'Password must be at least 12 characters')
+      .regex(/[!@#$%^&*]/, 'Must contain a special character'),
+    'password'
+  ),
+});
+
+// Bad input gets helpful errors, not wrapped in SensitiveString
+RegistrationSchema.parse({ password: 'short' });
+// throws: "Password must be at least 12 characters"
+```
+
+### When Zod Integration Gets in the Way
+
+#### You Need to Validate the Raw Value Later
+
+Once wrapped, accessing the value requires `.reveal()`:
+
+```typescript
+const { email } = schema.parse({ email: 'test@example.com' });
+
+// This doesn't work - SensitiveString isn't a string
+if (email.endsWith('@company.com')) { }  // Error!
+
+// You have to reveal first
+if (email.reveal().endsWith('@company.com')) { }
+```
+
+**Workaround:** Use `zSensitiveWithValidation` to validate before wrapping:
+
+```typescript
+zSensitiveWithValidation(
+  'sensitive',
+  z.string().email().endsWith('@company.com', 'Must be company email'),
+  'email'
+)
+```
+
+#### Third-Party Libraries Expect Plain Strings
+
+Many libraries won't understand `SensitiveString`:
+
+```typescript
+const { password } = schema.parse(input);
+
+// bcrypt expects a string
+bcrypt.hash(password, 10);  // Error!
+
+// You must reveal
+bcrypt.hash(password.reveal({ name: 'password-hash' }), 10);
+```
+
+This is intentional—it forces you to think about where secrets go—but adds friction.
+
+#### No Refinements After Transform
+
+Zod's `.refine()` runs after transforms, so you can't refine on the raw value:
+
+```typescript
+// This doesn't work as expected
+zCredential('api_key').refine(val => val.startsWith('sk-'))  // val is SensitiveString!
+```
+
+**Workaround:** Use `zSensitiveWithValidation`:
+
+```typescript
+zSensitiveWithValidation(
+  'credential',
+  z.string().refine(s => s.startsWith('sk-'), 'Must start with sk-'),
+  'api_key'
+)
+```
+
+#### Optional Fields Return `null`, Not `undefined`
+
+`zSensitiveOptional` returns `null` for missing values:
+
+```typescript
+const { apiKey } = schema.parse({});
+apiKey === null       // true
+apiKey === undefined  // false
+
+// If downstream expects undefined:
+const config = { apiKey: result.apiKey ?? undefined };
+```
+
+#### Serialized Format is Verbose
+
+The wire format for service-to-service is larger than plain strings:
+
+```typescript
+// Plain: "secret-token"
+// Serialized: {"__sensitive":true,"klass":"credential","value":"secret-token","label":"token"}
+```
+
+For high-throughput scenarios, this overhead may matter.
+
+### Summary Table
+
+| Scenario | Use Zod Integration? |
+|----------|---------------------|
+| API request validation | **Yes** - protect at boundary |
+| Environment config loading | **Yes** - protect early |
+| Webhook payload handling | **Yes** - immediate protection |
+| Service-to-service with serialization | **Yes** - use serialize/deserialize |
+| High-throughput internal pipelines | **Maybe** - consider overhead |
+| Complex post-transform validation | **Avoid** - use validation-first pattern |
+| Interop with string-expecting libraries | **Use carefully** - reveal at integration points |
 
 ---
 
