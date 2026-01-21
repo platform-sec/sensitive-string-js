@@ -2,7 +2,8 @@
 
 [![Node.js 20+](https://img.shields.io/badge/node-20%2B-brightgreen)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.4%2B-blue)](https://www.typescriptlang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Supply Chain Security](<https://img.shields.io/badge/supply_chain-protected-blue>)](.github/SUPPLY_CHAIN_SECURITY.md)
 
 Enterprise-grade library for handling sensitive string data in Node.js with **automatic redaction**, **type-safe classification**, and **audit-ready reveal patterns**.
 
@@ -634,6 +635,24 @@ For high-throughput scenarios, this overhead may matter.
 | V8 heap persistence | Raw values may persist until GC | Consider WASM-based secure memory for highest sensitivity |
 
 ---
+
+## Security
+
+### Supply Chain Protection
+
+This project implements comprehensive supply chain security measures:
+
+- **Dependency Review**: Automated scanning for vulnerable and malicious dependencies
+- **CodeQL Analysis**: Weekly security scanning for vulnerabilities
+- **SBOM Generation**: Software Bill of Materials for transparency
+- **Vulnerability Audits**: Continuous monitoring with `pnpm audit`
+- **License Compliance**: Enforced permissive licensing (MIT, Apache-2.0, BSD, ISC)
+
+See [Supply Chain Security Documentation](.github/SUPPLY_CHAIN_SECURITY.md) for details.
+
+### Reporting Security Issues
+
+If you discover a security vulnerability, please file a [GitHub Security Advisory](../../security/advisories/new) rather than opening a public issue.
 
 ## Development
 

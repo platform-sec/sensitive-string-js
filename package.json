@@ -10,7 +10,7 @@
     "redaction",
     "typescript"
   ],
-  "license": "MIT",
+  "license": "Apache-2.0",
   "engines": {
     "node": ">=20.0.0"
   },
@@ -23,7 +23,14 @@
     "lint": "eslint packages/*/src/**/*.ts",
     "lint:fix": "eslint packages/*/src/**/*.ts --fix",
     "format": "prettier --write \"packages/*/src/**/*.ts\"",
-    "clean": "rm -rf packages/*/dist packages/*/.turbo node_modules/.cache && find packages/*/src -name '*.js' -delete 2>/dev/null; find packages/*/src -name '*.d.ts' -delete 2>/dev/null; find packages/*/src -name '*.js.map' -delete 2>/dev/null; true"
+    "clean": "rm -rf packages/*/dist packages/*/.turbo node_modules/.cache && find packages/*/src -name '*.js' -delete 2>/dev/null; find packages/*/src -name '*.d.ts' -delete 2>/dev/null; find packages/*/src -name '*.js.map' -delete 2>/dev/null; true",
+    "codeql:download": "codeql pack download codeql/javascript-queries",
+    "codeql:create": "codeql database create codeql-db --language=javascript --source-root=. --overwrite",
+    "codeql:analyze": "codeql database analyze codeql-db codeql/javascript-queries:codeql-suites/javascript-code-scanning.qls --format=sarif-latest --output=codeql-results.sarif --threads=0",
+    "codeql:analyze:full": "codeql database analyze codeql-db codeql/javascript-queries:codeql-suites/javascript-security-and-quality.qls --format=sarif-latest --output=codeql-results.sarif --threads=0",
+    "codeql:run": "pnpm codeql:download && pnpm codeql:create && pnpm codeql:analyze",
+    "codeql:run:full": "pnpm codeql:download && pnpm codeql:create && pnpm codeql:analyze:full",
+    "codeql:clean": "rm -rf codeql-db codeql-results.sarif"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

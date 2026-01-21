@@ -1,0 +1,477 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: 'Packages to release'
+        required: true
+        type: choice
+        options:
+          - 'all'
+          - 'sensitive-core'
+          - 'sensitive-zod'
+      version_bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - 'patch'
+          - 'minor'
+          - 'major'
+      dry_run:
+        description: 'Dry run (skip actual publish)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Verify: lint and test before release
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run ESLint
+        run: pnpm lint
+
+      - name: Check formatting
+        run: pnpm format --check
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Run security audit
+        run: pnpm audit --audit-level=high || echo "Audit warnings found"
+
+  # Prepare release: bump versions and create tarballs
+  prepare:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    needs: verify
+    permissions:
+      contents: read
+    outputs:
+      core_version: ${{ steps.versions.outputs.core_version }}
+      zod_version: ${{ steps.versions.outputs.zod_version }}
+      release_packages: ${{ steps.versions.outputs.release_packages }}
+      hashes: ${{ steps.hash.outputs.hashes }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Bump versions
+        id: versions
+        run: |
+          BUMP_TYPE="${{ inputs.version_bump }}"
+          PACKAGES="${{ inputs.packages }}"
+
+          bump_version() {
+            local pkg_path=$1
+            local current_version=$(jq -r '.version' "$pkg_path/package.json")
+            local IFS='.'
+            read -ra parts <<< "$current_version"
+            local major=${parts[0]}
+            local minor=${parts[1]}
+            local patch=${parts[2]}
+
+            case "$BUMP_TYPE" in
+              major)
+                major=$((major + 1))
+                minor=0
+                patch=0
+                ;;
+              minor)
+                minor=$((minor + 1))
+                patch=0
+                ;;
+              patch)
+                patch=$((patch + 1))
+                ;;
+            esac
+
+            echo "${major}.${minor}.${patch}"
+          }
+
+          RELEASE_PACKAGES=""
+
+          # Bump sensitive-core if selected
+          if [[ "$PACKAGES" == "all" || "$PACKAGES" == "sensitive-core" ]]; then
+            CORE_VERSION=$(bump_version "packages/sensitive-core")
+            jq --arg v "$CORE_VERSION" '.version = $v' packages/sensitive-core/package.json > tmp.json
+            mv tmp.json packages/sensitive-core/package.json
+            echo "core_version=$CORE_VERSION" >> "$GITHUB_OUTPUT"
+            RELEASE_PACKAGES="sensitive-core"
+            echo "Updated sensitive-core to $CORE_VERSION"
+          fi
+
+          # Bump sensitive-zod if selected
+          if [[ "$PACKAGES" == "all" || "$PACKAGES" == "sensitive-zod" ]]; then
+            ZOD_VERSION=$(bump_version "packages/sensitive-zod")
+            jq --arg v "$ZOD_VERSION" '.version = $v' packages/sensitive-zod/package.json > tmp.json
+            mv tmp.json packages/sensitive-zod/package.json
+            echo "zod_version=$ZOD_VERSION" >> "$GITHUB_OUTPUT"
+            if [[ -n "$RELEASE_PACKAGES" ]]; then
+              RELEASE_PACKAGES="$RELEASE_PACKAGES,sensitive-zod"
+            else
+              RELEASE_PACKAGES="sensitive-zod"
+            fi
+            echo "Updated sensitive-zod to $ZOD_VERSION"
+          fi
+
+          echo "release_packages=$RELEASE_PACKAGES" >> "$GITHUB_OUTPUT"
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Pack npm tarballs
+        run: |
+          mkdir -p dist-tarballs
+          PACKAGES="${{ inputs.packages }}"
+
+          if [[ "$PACKAGES" == "all" || "$PACKAGES" == "sensitive-core" ]]; then
+            cd packages/sensitive-core
+            pnpm pack --pack-destination ../../dist-tarballs
+            cd ../..
+          fi
+
+          if [[ "$PACKAGES" == "all" || "$PACKAGES" == "sensitive-zod" ]]; then
+            cd packages/sensitive-zod
+            pnpm pack --pack-destination ../../dist-tarballs
+            cd ../..
+          fi
+
+          ls -la dist-tarballs/
+
+      - name: Generate hashes for SLSA
+        id: hash
+        run: |
+          cd dist-tarballs
+          echo "hashes=$(sha256sum *.tgz | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-packages-${{ github.sha }}
+          path: |
+            dist-tarballs/*.tgz
+            packages/*/package.json
+          retention-days: 7
+          if-no-files-found: error
+
+  # Sign packages with cosign
+  sign:
+    name: Sign Packages
+    runs-on: ubuntu-latest
+    needs: prepare
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-packages-${{ github.sha }}
+          path: artifacts
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign packages with cosign (keyless)
+        run: |
+          cd artifacts/dist-tarballs
+          for tarball in *.tgz; do
+            echo "Signing $tarball..."
+            cosign sign-blob \
+              --yes \
+              --output-signature "${tarball}.sig" \
+              --output-certificate "${tarball}.pem" \
+              "$tarball"
+          done
+          ls -la
+
+      - name: Verify signatures
+        run: |
+          cd artifacts/dist-tarballs
+          for tarball in *.tgz; do
+            echo "Verifying $tarball..."
+            cosign verify-blob \
+              --signature "${tarball}.sig" \
+              --certificate "${tarball}.pem" \
+              --certificate-identity-regexp "https://github.com/${{ github.repository }}/*" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "$tarball"
+            echo "✓ $tarball signature verified"
+          done
+
+      - name: Upload signed artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-packages-${{ github.sha }}
+          path: |
+            artifacts/dist-tarballs/*.tgz
+            artifacts/dist-tarballs/*.sig
+            artifacts/dist-tarballs/*.pem
+          retention-days: 90
+          if-no-files-found: error
+
+  # Publish to npm
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    needs: [prepare, sign]
+    if: ${{ inputs.dry_run == false }}
+    permissions:
+      contents: read
+      id-token: write
+    environment: npm-publish
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-packages-${{ github.sha }}
+          path: artifacts
+
+      - name: Restore package.json versions
+        run: |
+          if [[ -f artifacts/packages/sensitive-core/package.json ]]; then
+            cp artifacts/packages/sensitive-core/package.json packages/sensitive-core/package.json
+          fi
+          if [[ -f artifacts/packages/sensitive-zod/package.json ]]; then
+            cp artifacts/packages/sensitive-zod/package.json packages/sensitive-zod/package.json
+          fi
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Publish sensitive-core
+        if: contains(needs.prepare.outputs.release_packages, 'sensitive-core')
+        run: |
+          cd packages/sensitive-core
+          pnpm publish --access public --no-git-checks --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish sensitive-zod
+        if: contains(needs.prepare.outputs.release_packages, 'sensitive-zod')
+        run: |
+          cd packages/sensitive-zod
+          pnpm publish --access public --no-git-checks --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Generate publish summary
+        run: |
+          echo "## 📦 Published Packages" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ needs.prepare.outputs.core_version }}" != "" ]]; then
+            echo "- **@platform-sec/sensitive-string-core** v${{ needs.prepare.outputs.core_version }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [[ "${{ needs.prepare.outputs.zod_version }}" != "" ]]; then
+            echo "- **@platform-sec/sensitive-string-zod** v${{ needs.prepare.outputs.zod_version }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**npm provenance:** Enabled" >> $GITHUB_STEP_SUMMARY
+          echo "**Sigstore signing:** Verified" >> $GITHUB_STEP_SUMMARY
+
+  # Create GitHub release with tags
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [prepare, sign, publish]
+    if: ${{ inputs.dry_run == false }}
+    permissions:
+      contents: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download signed artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: signed-packages-${{ github.sha }}
+          path: signed-packages
+
+      - name: Create tags and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          RELEASE_NOTES="## Release Notes\n\n"
+          RELEASE_NOTES+="### Packages Released\n\n"
+
+          # Create tags for released packages
+          if [[ "${{ needs.prepare.outputs.core_version }}" != "" ]]; then
+            TAG="@platform-sec/sensitive-string-core@${{ needs.prepare.outputs.core_version }}"
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+            RELEASE_NOTES+="- **@platform-sec/sensitive-string-core** v${{ needs.prepare.outputs.core_version }}\n"
+          fi
+
+          if [[ "${{ needs.prepare.outputs.zod_version }}" != "" ]]; then
+            TAG="@platform-sec/sensitive-string-zod@${{ needs.prepare.outputs.zod_version }}"
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+            RELEASE_NOTES+="- **@platform-sec/sensitive-string-zod** v${{ needs.prepare.outputs.zod_version }}\n"
+          fi
+
+          RELEASE_NOTES+="\n### Security\n\n"
+          RELEASE_NOTES+="- Packages signed with Sigstore cosign (keyless)\n"
+          RELEASE_NOTES+="- npm provenance enabled\n"
+          RELEASE_NOTES+="\n### Verification\n\n"
+          RELEASE_NOTES+='```bash\n'
+          RELEASE_NOTES+="# Verify signature with cosign\n"
+          RELEASE_NOTES+="cosign verify-blob --signature <package>.sig --certificate <package>.pem <package>.tgz\n"
+          RELEASE_NOTES+='```\n'
+
+          # Determine release tag
+          if [[ "${{ needs.prepare.outputs.core_version }}" != "" ]]; then
+            RELEASE_TAG="v${{ needs.prepare.outputs.core_version }}"
+          else
+            RELEASE_TAG="v${{ needs.prepare.outputs.zod_version }}"
+          fi
+
+          # Create GitHub release
+          echo -e "$RELEASE_NOTES" > release_notes.md
+
+          gh release create "$RELEASE_TAG" \
+            --title "Release $RELEASE_TAG" \
+            --notes-file release_notes.md \
+            signed-packages/*.tgz \
+            signed-packages/*.sig \
+            signed-packages/*.pem
+
+  # Dry run summary
+  dry-run-summary:
+    name: Dry Run Summary
+    runs-on: ubuntu-latest
+    needs: [prepare, sign]
+    if: ${{ inputs.dry_run == true }}
+    steps:
+      - name: Generate dry run summary
+        run: |
+          echo "## 🧪 Dry Run Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This was a dry run. No packages were published." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Packages that would be released:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ needs.prepare.outputs.core_version }}" != "" ]]; then
+            echo "- **@platform-sec/sensitive-string-core** v${{ needs.prepare.outputs.core_version }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [[ "${{ needs.prepare.outputs.zod_version }}" != "" ]]; then
+            echo "- **@platform-sec/sensitive-string-zod** v${{ needs.prepare.outputs.zod_version }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Signed packages are available as workflow artifacts." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "To publish for real, re-run this workflow with **dry_run** unchecked." >> $GITHUB_STEP_SUMMARY

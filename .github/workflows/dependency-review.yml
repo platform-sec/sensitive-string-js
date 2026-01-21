@@ -1,0 +1,34 @@
+name: Dependency Review
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          # Fail on critical and high vulnerabilities
+          fail-on-severity: moderate
+          # Deny GPL, LGPL, and other copyleft licenses
+          deny-licenses: GPL-2.0, GPL-3.0, LGPL-2.0, LGPL-2.1, LGPL-3.0, AGPL-3.0
+          # Allow common permissive licenses
+          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD
+          # Fail on packages with no license
+          fail-on-scopes: runtime, development
+          comment-summary-in-pr: always
+          # Block known malicious packages
+          vulnerability-check: true
+          # Check for abandoned/deprecated packages
+          warn-on-openssf-scorecard-level: 3

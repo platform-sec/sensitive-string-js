@@ -1,0 +1,242 @@
+name: SLSA Provenance
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Build and generate hashes for SLSA provenance
+  build:
+    name: Build Packages
+    runs-on: ubuntu-latest
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
+      artifacts-sha256: ${{ steps.hash.outputs.artifacts-sha256 }}
+    permissions:
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Pack npm tarballs
+        run: |
+          mkdir -p dist-tarballs
+          for pkg in packages/*/; do
+            pkg_name=$(basename "$pkg")
+            echo "Packing $pkg_name..."
+            cd "$pkg"
+            pnpm pack --pack-destination ../../dist-tarballs
+            cd ../..
+          done
+          ls -la dist-tarballs/
+
+      - name: Generate subject hashes for SLSA
+        id: hash
+        run: |
+          cd dist-tarballs
+          # Generate SHA256 hashes in base64 for SLSA provenance
+          HASHES=$(sha256sum *.tgz | base64 -w0)
+          echo "hashes=$HASHES" >> "$GITHUB_OUTPUT"
+
+          # Also output individual hashes for verification
+          echo "artifacts-sha256<<EOF" >> "$GITHUB_OUTPUT"
+          sha256sum *.tgz >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-packages-slsa
+          path: dist-tarballs/*.tgz
+          retention-days: 30
+          if-no-files-found: error
+
+  # Generate SLSA Level 3 provenance
+  # Uses the official SLSA GitHub generator for maximum assurance
+  provenance:
+    name: Generate SLSA Provenance
+    needs: build
+    permissions:
+      actions: read      # To read workflow path
+      id-token: write    # To sign the provenance
+      contents: write    # To upload provenance to release
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
+    with:
+      base64-subjects: "${{ needs.build.outputs.hashes }}"
+      upload-assets: true  # Upload to release if this is a release event
+      # Provenance will be uploaded as an artifact with name: <artifact-name>.intoto.jsonl
+
+  # Verify the generated provenance
+  verify:
+    name: Verify Provenance
+    needs: [build, provenance]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-packages-slsa
+          path: dist-tarballs
+
+      - name: Download provenance
+        uses: actions/download-artifact@v4
+        with:
+          name: multiple.intoto.jsonl
+          path: provenance
+
+      - name: Install slsa-verifier
+        uses: slsa-framework/slsa-verifier/actions/installer@v2.6.0
+
+      - name: Verify provenance
+        run: |
+          echo "=== Verifying SLSA Provenance ==="
+          cd dist-tarballs
+          for tarball in *.tgz; do
+            echo "Verifying $tarball..."
+            slsa-verifier verify-artifact \
+              --provenance-path ../provenance/multiple.intoto.jsonl \
+              --source-uri "github.com/${{ github.repository }}" \
+              --source-branch "${{ github.ref_name }}" \
+              "$tarball"
+            echo "✓ $tarball provenance verified"
+          done
+
+      - name: Generate provenance summary
+        run: |
+          echo "## SLSA Provenance Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**SLSA Level:** 3" >> $GITHUB_STEP_SUMMARY
+          echo "**Builder:** slsa-framework/slsa-github-generator" >> $GITHUB_STEP_SUMMARY
+          echo "**Repository:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch/Tag:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifact Hashes (SHA256)" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ needs.build.outputs.artifacts-sha256 }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Verification" >> $GITHUB_STEP_SUMMARY
+          echo "All artifacts verified against SLSA provenance ✓" >> $GITHUB_STEP_SUMMARY
+
+  # Attest build artifacts using GitHub's native attestation
+  attest:
+    name: Attest Build Artifacts
+    needs: [build, provenance]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    permissions:
+      id-token: write    # Required for attestation
+      contents: read
+      attestations: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-packages-slsa
+          path: dist-tarballs
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: 'dist-tarballs/*.tgz'
+
+      - name: Generate attestation summary
+        run: |
+          echo "## GitHub Attestation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Build provenance attestations generated for all packages." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Attestations can be verified with:**" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo 'gh attestation verify <artifact> --repo ${{ github.repository }}' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  # Upload provenance and artifacts to release
+  release-upload:
+    name: Upload to Release
+    needs: [build, provenance, verify]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-packages-slsa
+          path: dist-tarballs
+
+      - name: Download provenance
+        uses: actions/download-artifact@v4
+        with:
+          name: multiple.intoto.jsonl
+          path: provenance
+
+      - name: Generate checksums
+        run: |
+          cd dist-tarballs
+          sha256sum *.tgz > SHA256SUMS.txt
+          sha512sum *.tgz > SHA512SUMS.txt
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Upload tarballs, provenance, and checksums to the release
+          gh release upload ${{ github.ref_name }} \
+            dist-tarballs/*.tgz \
+            dist-tarballs/SHA256SUMS.txt \
+            dist-tarballs/SHA512SUMS.txt \
+            provenance/multiple.intoto.jsonl \
+            --clobber \
+            --repo ${{ github.repository }}
+
+          echo "## Release Assets Uploaded" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The following files have been attached to the release:" >> $GITHUB_STEP_SUMMARY
+          echo "- npm package tarballs (*.tgz)" >> $GITHUB_STEP_SUMMARY
+          echo "- SHA256SUMS.txt" >> $GITHUB_STEP_SUMMARY
+          echo "- SHA512SUMS.txt" >> $GITHUB_STEP_SUMMARY
+          echo "- SLSA provenance (multiple.intoto.jsonl)" >> $GITHUB_STEP_SUMMARY

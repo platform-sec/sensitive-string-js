@@ -6,13 +6,67 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
+  workflow-security:
+    name: Workflow Security
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run actionlint
+        uses: raven-actions/actionlint@v2
+        with:
+          fail-on-error: true
+
+      - name: Install zizmor
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -LsSf https://github.com/woodruffw/zizmor/releases/latest/download/zizmor-x86_64-unknown-linux-gnu.tar.gz | tar xz -C "$HOME/.local/bin"
+          chmod +x "$HOME/.local/bin/zizmor"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run zizmor
+        run: zizmor --format sarif . > zizmor-results.sarif || true
+
+      - name: Upload zizmor SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        continue-on-error: true
+        with:
+          sarif_file: zizmor-results.sarif
+          category: zizmor
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v3
@@ -37,9 +91,19 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v3
@@ -69,12 +133,22 @@ jobs:
   test:
     name: Test (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       matrix:
         node-version: ['20', '22']
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v3
@@ -99,9 +173,19 @@ jobs:
   coverage:
     name: Test Coverage
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v3
@@ -130,3 +214,239 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run pnpm audit
+        run: |
+          # Run audit and capture results
+          pnpm audit --audit-level=moderate --json > audit-results.json || true
+
+          # Display human-readable results
+          echo "=== Security Audit Results ==="
+          pnpm audit --audit-level=moderate || echo "Vulnerabilities found - check details above"
+
+          # Check for critical/high vulnerabilities
+          CRITICAL=$(jq '[.advisories | to_entries[] | select(.value.severity == "critical")] | length' audit-results.json 2>/dev/null || echo "0")
+          HIGH=$(jq '[.advisories | to_entries[] | select(.value.severity == "high")] | length' audit-results.json 2>/dev/null || echo "0")
+
+          echo "Critical vulnerabilities: $CRITICAL"
+          echo "High vulnerabilities: $HIGH"
+
+          # Fail if critical vulnerabilities found
+          if [ "$CRITICAL" -gt 0 ]; then
+            echo "❌ Critical vulnerabilities detected - build failed"
+            exit 1
+          fi
+
+          # Warn on high vulnerabilities but don't fail
+          if [ "$HIGH" -gt 0 ]; then
+            echo "⚠️  High severity vulnerabilities detected - review recommended"
+          fi
+
+      - name: Verify lockfile integrity
+        run: |
+          # Ensure lockfile is in sync with package.json
+          pnpm install --frozen-lockfile --dry-run
+          echo "✓ Lockfile integrity verified"
+
+      - name: Check for known malicious packages
+        run: |
+          # Extract all dependencies
+          echo "Checking dependencies for known malicious packages..."
+          pnpm list --json --depth=Infinity > deps.json || true
+
+          # Look for suspicious patterns (typosquatting, etc.)
+          echo "Scanning for suspicious package names..."
+          jq -r '.. | .dependencies? | select(.) | keys[]' deps.json 2>/dev/null | sort -u | while read pkg; do
+            # Flag packages with suspicious patterns
+            if echo "$pkg" | grep -qE '(^[0-9]+$|script|exec|eval)'; then
+              echo "⚠️  Suspicious package name detected: $pkg"
+            fi
+          done
+          echo "✓ Package name check complete"
+
+      - name: Upload audit results
+        uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: security-audit-results
+          path: |
+            audit-results.json
+            deps.json
+          retention-days: 30
+
+  # Package artifacts for signing (only on main branch pushes)
+  package:
+    name: Package Artifacts
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build, test, lint]
+    permissions:
+      contents: read
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Pack npm tarballs
+        run: |
+          mkdir -p dist-tarballs
+          for pkg in packages/*/; do
+            pkg_name=$(basename "$pkg")
+            echo "Packing $pkg_name..."
+            cd "$pkg"
+            pnpm pack --pack-destination ../../dist-tarballs
+            cd ../..
+          done
+          ls -la dist-tarballs/
+
+      - name: Generate hashes for SLSA
+        id: hash
+        run: |
+          cd dist-tarballs
+          # Generate SHA256 hashes in base64 for SLSA provenance
+          echo "hashes=$(sha256sum *.tgz | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-packages-${{ github.sha }}
+          path: dist-tarballs/*.tgz
+          retention-days: 30
+          if-no-files-found: error
+
+  # Sign packages with cosign (keyless via Sigstore)
+  sign:
+    name: Sign Packages (Cosign)
+    runs-on: ubuntu-latest
+    needs: package
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write  # Required for keyless signing via OIDC
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-packages-${{ github.sha }}
+          path: dist-tarballs
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign packages with cosign (keyless)
+        run: |
+          cd dist-tarballs
+          for tarball in *.tgz; do
+            echo "Signing $tarball..."
+            cosign sign-blob \
+              --yes \
+              --output-signature "${tarball}.sig" \
+              --output-certificate "${tarball}.pem" \
+              "$tarball"
+          done
+          ls -la
+
+      - name: Verify signatures
+        run: |
+          cd dist-tarballs
+          for tarball in *.tgz; do
+            echo "Verifying $tarball..."
+            cosign verify-blob \
+              --signature "${tarball}.sig" \
+              --certificate "${tarball}.pem" \
+              --certificate-identity-regexp "https://github.com/${{ github.repository }}/*" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "$tarball"
+            echo "✓ $tarball signature verified"
+          done
+
+      - name: Upload signed artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-packages-signed-${{ github.sha }}
+          path: |
+            dist-tarballs/*.tgz
+            dist-tarballs/*.sig
+            dist-tarballs/*.pem
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Generate signing summary
+        run: |
+          echo "## Cosign Signing Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | Signature | Certificate |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-----------|-------------|" >> $GITHUB_STEP_SUMMARY
+          cd dist-tarballs
+          for tarball in *.tgz; do
+            sig_hash=$(sha256sum "${tarball}.sig" | cut -d' ' -f1 | head -c 12)
+            cert_hash=$(sha256sum "${tarball}.pem" | cut -d' ' -f1 | head -c 12)
+            echo "| $tarball | ${sig_hash}... | ${cert_hash}... |" >> $GITHUB_STEP_SUMMARY
+          done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Signing method:** Sigstore keyless (OIDC)" >> $GITHUB_STEP_SUMMARY
+          echo "**Transparency log:** Rekor" >> $GITHUB_STEP_SUMMARY

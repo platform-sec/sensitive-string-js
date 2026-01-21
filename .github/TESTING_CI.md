@@ -76,6 +76,17 @@ The CI workflow includes these jobs:
 2. **Build** - Compiles TypeScript packages
 3. **Test** - Runs Vitest test suite on Node 20 and 22
 4. **Coverage** - Generates test coverage reports
+5. **Security Audit** - Vulnerability scanning and dependency verification
+
+## Security Workflows
+
+Additional security workflows run automatically:
+
+1. **Dependency Review** (PRs only) - Scans new dependencies for vulnerabilities and license issues
+2. **CodeQL** - Static security analysis (push, PR, weekly schedule)
+3. **SBOM Generation** - Creates Software Bill of Materials (main branch, releases)
+
+See [SUPPLY_CHAIN_SECURITY.md](./SUPPLY_CHAIN_SECURITY.md) for detailed documentation.
 
 ## Expected Results
 
