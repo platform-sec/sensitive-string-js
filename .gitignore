@@ -6,6 +6,12 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Prevent accidental build artifacts in src
+packages/*/src/**/*.js
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.js.map
+!packages/*/src/**/*.test.ts
+
 # IDE
 .idea/
 .vscode/

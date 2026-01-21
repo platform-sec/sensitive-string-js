@@ -23,7 +23,7 @@
     "lint": "eslint packages/*/src/**/*.ts",
     "lint:fix": "eslint packages/*/src/**/*.ts --fix",
     "format": "prettier --write \"packages/*/src/**/*.ts\"",
-    "clean": "rm -rf packages/*/dist packages/*/.turbo node_modules/.cache"
+    "clean": "rm -rf packages/*/dist packages/*/.turbo node_modules/.cache && find packages/*/src -name '*.js' -delete 2>/dev/null; find packages/*/src -name '*.d.ts' -delete 2>/dev/null; find packages/*/src -name '*.js.map' -delete 2>/dev/null; true"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

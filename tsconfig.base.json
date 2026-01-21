@@ -17,10 +17,6 @@
     "exactOptionalPropertyTypes": true,
     "noPropertyAccessFromIndexSignature": true,
     "isolatedModules": true,
-    "resolveJsonModule": true,
-    "paths": {
-      "@platform-sec/sensitive-string-core": ["./packages/sensitive-core/src/index.ts"],
-      "@platform-sec/sensitive-string-zod": ["./packages/sensitive-zod/src/index.ts"]
-    }
+    "resolveJsonModule": true
   }
 }

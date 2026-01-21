@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "paths": {
+      "@platform-sec/sensitive-string-core": ["../packages/sensitive-core/src/index.ts"],
+      "@platform-sec/sensitive-string-zod": ["../packages/sensitive-zod/src/index.ts"]
+    }
+  },
+  "include": ["./**/*.ts"],
+  "exclude": ["../node_modules", "../packages"]
+}
