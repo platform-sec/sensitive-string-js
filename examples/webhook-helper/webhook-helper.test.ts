@@ -21,7 +21,7 @@ import {
   checkSensitiveFieldsWrapped,
   safeStringify,
   withRevealContext,
-} from '@anthropic-security/sensitive-core';
+} from '@platform-sec/sensitive-string-core';
 
 /**
  * Sample webhook payload matching the PSP_SENSITIVE_FIELDS structure.

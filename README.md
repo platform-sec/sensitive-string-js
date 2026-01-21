@@ -21,7 +21,7 @@ In typical Node.js services, sensitive data (tokens, PII, secrets) spreads as pl
 - **Forces explicit, auditable access** for raw values
 
 ```typescript
-import { SensitiveString } from '@anthropic-security/sensitive-core';
+import { SensitiveString } from '@platform-sec/sensitive-string-core';
 
 const apiKey = new SensitiveString(process.env.API_KEY!, 'credential', 'api_key');
 
@@ -40,16 +40,16 @@ const raw = apiKey.reveal({ name: 'api-call', reason: 'authenticating' });
 
 ```bash
 # Using pnpm (recommended)
-pnpm add @anthropic-security/sensitive-core
+pnpm add @platform-sec/sensitive-string-core
 
 # With Zod integration
-pnpm add @anthropic-security/sensitive-core @anthropic-security/sensitive-zod zod
+pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-zod zod
 ```
 
 ### Basic Usage
 
 ```typescript
-import { SensitiveString, safeLog } from '@anthropic-security/sensitive-core';
+import { SensitiveString, safeLog } from '@platform-sec/sensitive-string-core';
 
 // Create sensitive values
 const token = new SensitiveString('sk-abc123secret', 'credential', 'session_token');
@@ -68,7 +68,7 @@ await callExternalAPI(rawToken);
 
 ```typescript
 import { z } from 'zod';
-import { zCredential, zSensitiveWithValidation } from '@anthropic-security/sensitive-zod';
+import { zCredential, zSensitiveWithValidation } from '@platform-sec/sensitive-string-zod';
 
 const WebhookSchema = z.object({
   token: zCredential('session_token'),
@@ -157,7 +157,7 @@ const raw = secret.reveal({
 Use `withRevealContext` to propagate audit context through async operations:
 
 ```typescript
-import { withRevealContext, SensitiveString } from '@anthropic-security/sensitive-core';
+import { withRevealContext, SensitiveString } from '@platform-sec/sensitive-string-core';
 
 app.post('/payment', async (req, res) => {
   await withRevealContext({
@@ -295,7 +295,7 @@ defaultCombineClasses(a: SensitivityClass, b: SensitivityClass): SensitivityClas
 ### Custom Policies
 
 ```typescript
-import { registerPolicy } from '@anthropic-security/sensitive-core';
+import { registerPolicy } from '@platform-sec/sensitive-string-core';
 
 registerPolicy({
   name: 'credential',
@@ -330,8 +330,8 @@ const payload = {
 await httpClient.post('https://payment-service/process', payload);
 
 // Receiver
-import { SensitiveString } from '@anthropic-security/sensitive-core';
-import { zSensitiveDeserialize } from '@anthropic-security/sensitive-zod';
+import { SensitiveString } from '@platform-sec/sensitive-string-core';
+import { zSensitiveDeserialize } from '@platform-sec/sensitive-string-zod';
 
 const PayloadSchema = z.object({
   userId: z.string(),
@@ -373,7 +373,7 @@ async login(
 
 ```typescript
 import pino from 'pino';
-import { createSensitiveSerializer } from '@anthropic-security/sensitive-core';
+import { createSensitiveSerializer } from '@platform-sec/sensitive-string-core';
 
 const logger = pino({
   serializers: {
@@ -390,7 +390,7 @@ logger.info({ payload: { token: sensitiveToken } }, 'Processing request');
 
 ## Zod Integration Deep Dive
 
-The `@anthropic-security/sensitive-zod` package bridges Zod validation with `SensitiveString`. This section explains how they work together and when to use (or avoid) the integration.
+The `@platform-sec/sensitive-string-zod` package bridges Zod validation with `SensitiveString`. This section explains how they work together and when to use (or avoid) the integration.
 
 ### How It Works Step by Step
 
@@ -398,7 +398,7 @@ The `@anthropic-security/sensitive-zod` package bridges Zod validation with `Sen
 
 ```typescript
 import { z } from 'zod';
-import { zCredential, zSensitive } from '@anthropic-security/sensitive-zod';
+import { zCredential, zSensitive } from '@platform-sec/sensitive-string-zod';
 
 const LoginSchema = z.object({
   email: zSensitive('email'),

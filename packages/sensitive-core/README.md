@@ -1,11 +1,11 @@
-# @anthropic-security/sensitive-core
+# @platform-sec/sensitive-string-core
 
 Core library for handling sensitive string data with automatic redaction, type-safe classification, and audit-ready reveal patterns.
 
 ## Installation
 
 ```bash
-pnpm add @anthropic-security/sensitive-core
+pnpm add @platform-sec/sensitive-string-core
 ```
 
 ## Requirements
@@ -20,7 +20,7 @@ import {
   SensitiveString, 
   safeLog, 
   withRevealContext 
-} from '@anthropic-security/sensitive-core';
+} from '@platform-sec/sensitive-string-core';
 
 // Create a sensitive value
 const apiKey = new SensitiveString(process.env.API_KEY!, 'credential', 'api_key');
@@ -55,7 +55,7 @@ When receiving data from external services (payment gateways, identity providers
 import { 
   wrapSensitiveByPath,
   SensitiveFieldConfig,
-} from '@anthropic-security/sensitive-core';
+} from '@platform-sec/sensitive-string-core';
 
 // 1. Define which fields are sensitive
 const WEBHOOK_SENSITIVE_FIELDS: SensitiveFieldConfig = {
@@ -106,7 +106,7 @@ const safe = wrapSensitiveByPath(rawBody, config); // Won't work!
 Use `validateSensitiveFieldConfig` in tests to catch path typos:
 
 ```typescript
-import { validateSensitiveFieldConfig } from '@anthropic-security/sensitive-core';
+import { validateSensitiveFieldConfig } from '@platform-sec/sensitive-string-core';
 
 test('sensitive field config matches payload structure', () => {
   const samplePayload = { /* your sample webhook */ };

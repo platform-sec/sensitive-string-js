@@ -1,5 +1,5 @@
 {
-  "name": "@anthropic-security/sensitive-core",
+  "name": "@platform-sec/sensitive-string-core",
   "version": "0.1.0",
   "description": "Core library for handling sensitive string data with automatic redaction",
   "main": "./dist/index.js",

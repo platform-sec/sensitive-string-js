@@ -65,6 +65,7 @@ describe('SensitiveString', () => {
 
       // Capture console output
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      // eslint-disable-next-line no-console
       console.log(s);
 
       const output = consoleSpy.mock.calls[0]?.[0] as SensitiveString<'sensitive'> | undefined;

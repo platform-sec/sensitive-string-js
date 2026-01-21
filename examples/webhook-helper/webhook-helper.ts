@@ -21,12 +21,12 @@
  * ```
  */
 
-import { wrapSensitiveByPath, unwrapSensitiveByPath } from '@anthropic-security/sensitive-core';
+import { wrapSensitiveByPath, unwrapSensitiveByPath } from '@platform-sec/sensitive-string-core';
 import type {
   SensitiveFieldConfig,
   RevealContext,
   SensitiveString,
-} from '@anthropic-security/sensitive-core';
+} from '@platform-sec/sensitive-string-core';
 
 // ============================================================
 // Generic Helper Functions

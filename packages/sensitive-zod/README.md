@@ -1,24 +1,24 @@
-# @anthropic-security/sensitive-zod
+# @platform-sec/sensitive-string-zod
 
 Zod integration for SensitiveString - parse and validate input directly into sensitive types at boundary layers.
 
 ## Installation
 
 ```bash
-pnpm add @anthropic-security/sensitive-zod zod
+pnpm add @platform-sec/sensitive-string-zod zod
 ```
 
 ## Requirements
 
 - Node.js 20+
 - Zod 3.22+
-- @anthropic-security/sensitive-core (peer dependency)
+- @platform-sec/sensitive-string-core (peer dependency)
 
 ## Quick Start
 
 ```typescript
 import { z } from 'zod';
-import { zCredential, zSensitiveWithValidation } from '@anthropic-security/sensitive-zod';
+import { zCredential, zSensitiveWithValidation } from '@platform-sec/sensitive-string-zod';
 
 // Define schema with sensitive fields
 const WebhookSchema = z.object({
@@ -104,7 +104,7 @@ const { token } = PayloadSchema.parse(req.body);
 
 ## Re-exports
 
-For convenience, this package re-exports commonly used items from `@anthropic-security/sensitive-core`:
+For convenience, this package re-exports commonly used items from `@platform-sec/sensitive-string-core`:
 
 - `SensitiveString`
 - `SensitivityClass`

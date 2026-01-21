@@ -1,5 +1,5 @@
 {
-  "name": "@anthropic-security/sensitive-zod",
+  "name": "@platform-sec/sensitive-string-zod",
   "version": "0.1.0",
   "description": "Zod integration for SensitiveString - parse input directly into sensitive types",
   "main": "./dist/index.js",
@@ -35,7 +35,7 @@
     "zod": "^3.22.0"
   },
   "dependencies": {
-    "@anthropic-security/sensitive-core": "workspace:*"
+    "@platform-sec/sensitive-string-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

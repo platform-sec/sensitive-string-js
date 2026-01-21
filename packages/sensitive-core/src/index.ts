@@ -1,5 +1,5 @@
 /**
- * @anthropic-security/sensitive-core
+ * @platform-sec/sensitive-string-core
  *
  * Enterprise-grade library for handling sensitive string data in Node.js.
  *
@@ -12,7 +12,7 @@
  *
  * @example
  * ```ts
- * import { SensitiveString, safeLog, withRevealContext } from '@anthropic-security/sensitive-core';
+ * import { SensitiveString, safeLog, withRevealContext } from '@platform-sec/sensitive-string-core';
  *
  * // Create a sensitive value
  * const apiKey = new SensitiveString(process.env.API_KEY!, 'credential', 'api_key');

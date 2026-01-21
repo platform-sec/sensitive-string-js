@@ -1,5 +1,5 @@
 /**
- * @anthropic-security/sensitive-zod
+ * @platform-sec/sensitive-string-zod
  *
  * Zod integration for SensitiveString.
  * Parse and validate input directly into sensitive types at boundary layers.
@@ -7,7 +7,7 @@
  * @example
  * ```ts
  * import { z } from 'zod';
- * import { zSensitive, zCredential } from '@anthropic-security/sensitive-zod';
+ * import { zSensitive, zCredential } from '@platform-sec/sensitive-string-zod';
  *
  * const WebhookSchema = z.object({
  *   token: zCredential('session_token'),
@@ -25,7 +25,7 @@
  */
 
 import { z } from 'zod';
-import { SensitiveString, SensitivityClass } from '@anthropic-security/sensitive-core';
+import { SensitiveString, SensitivityClass } from '@platform-sec/sensitive-string-core';
 
 /**
  * Create a Zod schema that parses strings into SensitiveString instances.
@@ -237,15 +237,15 @@ export function zSensitiveDeserialize<C extends SensitivityClass>(
 }
 
 // Re-export core types and utilities for convenience
-export { SensitiveString } from '@anthropic-security/sensitive-core';
+export { SensitiveString } from '@platform-sec/sensitive-string-core';
 export type {
   SensitivityClass,
   SerializedSensitiveString,
   RevealContext,
-} from '@anthropic-security/sensitive-core';
+} from '@platform-sec/sensitive-string-core';
 export {
   withRevealContext,
   getCurrentRevealContext,
   safeLog,
   redactInStructure,
-} from '@anthropic-security/sensitive-core';
+} from '@platform-sec/sensitive-string-core';
