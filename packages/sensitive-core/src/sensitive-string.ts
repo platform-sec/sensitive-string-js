@@ -216,30 +216,55 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param ctx - Optional context for audit/permission checks
    */
   serialize(ctx?: RevealContext): SerializedSensitiveString {
-    const serialized: SerializedSensitiveString = {
+    if (this.label !== undefined) {
+      return {
+        __sensitive: true as const,
+        klass: this.klass,
+        value: this.reveal(ctx),
+        label: this.label,
+      };
+    }
+
+    return {
       __sensitive: true as const,
       klass: this.klass,
       value: this.reveal(ctx),
     };
-    if (this.label !== undefined) {
-      serialized.label = this.label;
-    }
-    return serialized;
   }
 
   /**
    * Reconstruct a SensitiveString from a serialized form.
    *
-   * @param serialized - The serialized form validating the sensitive marker.
-   * @throws If the serialized form is missing the `__sensitive` marker.
+   * @param serialized - The serialized form (potentially untrusted data from external source).
+   * @throws If the serialized form is invalid or missing required fields.
    */
   static deserialize<C extends SensitivityClass>(
-    serialized: SerializedSensitiveString
+    serialized: unknown
   ): SensitiveString<C> {
-    if (!serialized.__sensitive) {
+    // Type guard for runtime validation of untrusted data
+    if (
+      typeof serialized !== 'object' ||
+      serialized === null ||
+      !('__sensitive' in serialized) ||
+      serialized.__sensitive !== true
+    ) {
       throw new Error('Invalid SerializedSensitiveString: missing __sensitive marker');
     }
-    return new SensitiveString(serialized.value, serialized.klass as C, serialized.label);
+    if (!('value' in serialized) || typeof serialized.value !== 'string') {
+      throw new Error('Invalid SerializedSensitiveString: value must be a string');
+    }
+    if (!('klass' in serialized) || typeof serialized.klass !== 'string') {
+      throw new Error('Invalid SerializedSensitiveString: klass must be a string');
+    }
+    if ('label' in serialized && serialized.label !== undefined && typeof serialized.label !== 'string') {
+      throw new Error('Invalid SerializedSensitiveString: label must be a string or undefined');
+    }
+
+    const label = 'label' in serialized && typeof serialized.label === 'string'
+      ? serialized.label
+      : undefined;
+
+    return new SensitiveString(serialized.value, serialized.klass as C, label);
   }
 
   /**

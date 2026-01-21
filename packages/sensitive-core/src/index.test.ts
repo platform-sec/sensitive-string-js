@@ -4,7 +4,6 @@ import {
   SensitiveString,
   SensitivityClass,
   RevealContext,
-  SerializedSensitiveString,
   registerPolicy,
   getPolicy,
   resetPolicies,
@@ -334,12 +333,13 @@ describe('SensitiveString', () => {
     });
 
     it('test_deserialize_rejects_invalid', () => {
-      const invalid: Partial<SerializedSensitiveString> = {
+      const invalid = {
         value: 'test',
         klass: 'sensitive',
+        // Missing __sensitive marker
       };
 
-      expect(() => SensitiveString.deserialize(invalid as SerializedSensitiveString)).toThrow(
+      expect(() => SensitiveString.deserialize(invalid)).toThrow(
         'Invalid SerializedSensitiveString: missing __sensitive marker'
       );
     });
@@ -434,7 +434,11 @@ describe('SensitiveString', () => {
         s.reveal();
         expect.fail('Should have thrown');
       } catch (e) {
-        expect((e as Error).message).not.toContain(CANARY);
+        if (e instanceof Error) {
+          expect(e.message).not.toContain(CANARY);
+        } else {
+          throw e;
+        }
       }
     });
 
