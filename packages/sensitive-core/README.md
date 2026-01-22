@@ -16,14 +16,19 @@ pnpm add @platform-sec/sensitive-string-core
 ## Quick Start
 
 ```typescript
-import { 
-  SensitiveString, 
-  safeLog, 
-  withRevealContext 
+import { readFileSync } from 'node:fs';
+import {
+  SensitiveString,
+  safeLog,
+  withRevealContext
 } from '@platform-sec/sensitive-string-core';
 
-// Create a sensitive value
-const apiKey = new SensitiveString(process.env.API_KEY!, 'credential', 'api_key');
+// Read secret from vault-injected file mount (e.g., Kubernetes secrets, HashiCorp Vault)
+const apiKey = new SensitiveString(
+  readFileSync('/run/secrets/api_key', 'utf-8').trim(),
+  'credential',
+  'api_key'
+);
 
 // Safe for logging - automatically redacted
 console.log('Using API key:', apiKey);

@@ -20,15 +20,24 @@ In typical system, sensitive data (tokens, PII, secrets) spreads as plain `strin
 - **Forces explicit, auditable access** for raw values
 
 ```typescript
+import { readFileSync } from 'node:fs';
 import { SensitiveString } from '@platform-sec/sensitive-string-core';
 
-const apiKey = new SensitiveString(process.env.API_KEY!, 'credential', 'api_key');
+// Read secret from vault-injected file mount (e.g., Kubernetes secrets, HashiCorp Vault)
+const apiKey = new SensitiveString(
+  readFileSync('/run/secrets/api_key', 'utf-8'),
+  'credential',
+  'api_key'
+);
 
-console.log(apiKey);                   // SensitiveString<credential:api_key> { [REDACTED:credential] }
-console.log(JSON.stringify({ apiKey })); // {"apiKey":"[REDACTED:credential]"}
+console.log(apiKey);            
+// SensitiveString<credential:api_key> { [REDACTED:credential] }
+console.log(JSON.stringify({ apiKey }));
+// {"apiKey":"[REDACTED:credential]"}
 
 // Explicit access when needed
 const raw = apiKey.reveal({ name: 'api-call', reason: 'authenticating' });
+
 ```
 
 ---
