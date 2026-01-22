@@ -89,7 +89,8 @@ describe('SensitiveString', () => {
     it('test_template_literal_is_redacted', () => {
       const s = new SensitiveString(CANARY, 'credential');
 
-      const result = `Value is: ${String(s)}`;
+      // Direct interpolation without explicit String() - tests ToPrimitive chain
+      const result = `Value is: ${s}`;
 
       expect(result).not.toContain(CANARY);
       expect(result).toBe('Value is: [REDACTED:credential]');
@@ -445,16 +446,82 @@ describe('SensitiveString', () => {
     it('test_type_coercion_attack', () => {
       const s = new SensitiveString(CANARY, 'credential');
 
-      // Various coercion attempts
-      const stringified = String(s);
-      const templateCoercion = `${stringified}`;
-      const concatenated = stringified + '';
-      const joined = [stringified].join('');
+      // Direct coercion attempts on SensitiveString (not pre-stringified)
+      const stringConstructor = String(s);
+      const templateLiteral = `${s}`;
+      const plusEmptyString = s + '';
+      const emptyStringPlus = '' + s;
+      const arrayJoin = [s].join('');
+      const arrayJoinWithSeparator = ['a', s, 'b'].join('-');
 
-      expect(stringified).not.toContain(CANARY);
-      expect(templateCoercion).not.toContain(CANARY);
-      expect(concatenated).not.toContain(CANARY);
-      expect(joined).not.toContain(CANARY);
+      expect(stringConstructor).not.toContain(CANARY);
+      expect(templateLiteral).not.toContain(CANARY);
+      expect(plusEmptyString).not.toContain(CANARY);
+      expect(emptyStringPlus).not.toContain(CANARY);
+      expect(arrayJoin).not.toContain(CANARY);
+      expect(arrayJoinWithSeparator).not.toContain(CANARY);
+
+      // Verify expected redacted output
+      expect(stringConstructor).toBe('[REDACTED:credential]');
+      expect(templateLiteral).toBe('[REDACTED:credential]');
+      expect(plusEmptyString).toBe('[REDACTED:credential]');
+      expect(emptyStringPlus).toBe('[REDACTED:credential]');
+      expect(arrayJoin).toBe('[REDACTED:credential]');
+      expect(arrayJoinWithSeparator).toBe('a-[REDACTED:credential]-b');
+    });
+
+    it('test_error_message_interpolation', () => {
+      const s = new SensitiveString(CANARY, 'credential');
+
+      // Error messages often interpolate values for debugging
+      const error = new Error(`Authentication failed with token ${s}`);
+
+      expect(error.message).not.toContain(CANARY);
+      expect(error.message).toBe('Authentication failed with token [REDACTED:credential]');
+
+      // Also test Error cause pattern
+      const causeError = new Error('Auth failed', { cause: { token: s } });
+      const causeStr = JSON.stringify(causeError.cause);
+
+      expect(causeStr).not.toContain(CANARY);
+    });
+
+    it('test_url_construction', () => {
+      const apiKey = new SensitiveString(CANARY, 'credential', 'api_key');
+
+      // Dangerous pattern: building URLs with query params
+      const url = `https://api.example.com/data?key=${apiKey}&format=json`;
+
+      expect(url).not.toContain(CANARY);
+      expect(url).toBe('https://api.example.com/data?key=[REDACTED:credential]&format=json');
+
+      // URLSearchParams also coerces to string
+      const params = new URLSearchParams({ key: String(apiKey), format: 'json' });
+      expect(params.toString()).not.toContain(CANARY);
+    });
+
+    it('test_structured_logging_context', () => {
+      // Simulates structured logging where entire context objects get serialized
+      const userContext = {
+        userId: 'user_123',
+        email: 'alice@example.com',
+        sessionToken: new SensitiveString(CANARY, 'credential', 'session'),
+        roles: ['admin', 'billing'],
+        metadata: {
+          apiKey: new SensitiveString('another-secret', 'credential', 'api_key'),
+        },
+      };
+
+      // JSON.stringify (common in structured loggers)
+      const jsonOutput = JSON.stringify(userContext);
+      expect(jsonOutput).not.toContain(CANARY);
+      expect(jsonOutput).not.toContain('another-secret');
+      expect(jsonOutput).toContain('[REDACTED:credential]');
+
+      // util.inspect (common in console.log)
+      const inspectOutput = util.inspect(userContext, { depth: null });
+      expect(inspectOutput).not.toContain(CANARY);
+      expect(inspectOutput).not.toContain('another-secret');
     });
   });
 
@@ -775,5 +842,236 @@ describe('Redaction Helpers', () => {
   it('test_containsSensitive_with_array', () => {
     const data = [1, 2, new SensitiveString('x', 'sensitive')];
     expect(containsSensitive(data)).toBe(true);
+  });
+});
+
+describe('Security Fixes', () => {
+  beforeEach(() => {
+    resetPolicies();
+  });
+
+  describe('Policy Redact Function Validation', () => {
+    it('rejects identity redact function', () => {
+      expect(() =>
+        registerPolicy(
+          {
+            name: 'sensitive',
+            redact: (value) => value, // Identity - leaks!
+          },
+          { overwrite: true }
+        )
+      ).toThrow('Invalid redact function: must not return the original value unchanged');
+    });
+
+    it('rejects redact function that includes the value', () => {
+      expect(() =>
+        registerPolicy(
+          {
+            name: 'sensitive',
+            redact: (value) => `debug: ${value}`, // Includes value!
+          },
+          { overwrite: true }
+        )
+      ).toThrow('Invalid redact function: must not include the original value in output');
+    });
+
+    it('accepts valid redact function', () => {
+      expect(() =>
+        registerPolicy(
+          {
+            name: 'sensitive',
+            redact: () => '[REDACTED]',
+          },
+          { overwrite: true }
+        )
+      ).not.toThrow();
+    });
+
+    it('accepts redact function that uses length but not value', () => {
+      expect(() =>
+        registerPolicy(
+          {
+            name: 'sensitive',
+            redact: (value) => `[REDACTED:${value.length} chars]`,
+          },
+          { overwrite: true }
+        )
+      ).not.toThrow();
+    });
+
+    it('allows skipRedactValidation for testing', () => {
+      // This is intentionally dangerous - only for testing malicious policy behavior
+      expect(() =>
+        registerPolicy(
+          {
+            name: 'sensitive',
+            redact: (value) => value,
+          },
+          { overwrite: true, skipRedactValidation: true }
+        )
+      ).not.toThrow();
+    });
+  });
+
+  describe('Operations Respect checkRevealAllowed', () => {
+    beforeEach(() => {
+      // Register a policy that requires context for all reveals
+      registerPolicy(
+        {
+          name: 'credential',
+          redact: () => '[REDACTED:credential]',
+          checkRevealAllowed: (ctx) => {
+            if (!ctx) {
+              throw new Error('Context required for credential access');
+            }
+          },
+        },
+        { overwrite: true }
+      );
+    });
+
+    it('substring respects checkRevealAllowed', () => {
+      const s = new SensitiveString(CANARY, 'credential');
+
+      // Without context - should throw
+      expect(() => s.substring(0, 3)).toThrow('Context required for credential access');
+
+      // With context - should succeed
+      const ctx: RevealContext = { name: 'test' };
+      withRevealContext(ctx, () => {
+        expect(() => s.substring(0, 3)).not.toThrow();
+        expect(s.substring(0, 3).reveal()).toBe(CANARY.substring(0, 3));
+      });
+    });
+
+    it('map respects checkRevealAllowed', () => {
+      const s = new SensitiveString(CANARY, 'credential');
+
+      // Without context - should throw
+      expect(() => s.map((v) => v.toUpperCase())).toThrow(
+        'Context required for credential access'
+      );
+
+      // With context - should succeed
+      const ctx: RevealContext = { name: 'test' };
+      withRevealContext(ctx, () => {
+        expect(() => s.map((v) => v.toUpperCase())).not.toThrow();
+        expect(s.map((v) => v.toUpperCase()).reveal()).toBe(CANARY.toUpperCase());
+      });
+    });
+
+    it('reclassify respects checkRevealAllowed', () => {
+      const s = new SensitiveString(CANARY, 'credential');
+
+      // Without context - should throw
+      expect(() => s.reclassify('sensitive')).toThrow('Context required for credential access');
+
+      // With context - should succeed
+      const ctx: RevealContext = { name: 'test' };
+      withRevealContext(ctx, () => {
+        expect(() => s.reclassify('sensitive')).not.toThrow();
+        expect(s.reclassify('sensitive').klass).toBe('sensitive');
+      });
+    });
+
+    it('explicit context works for substring', () => {
+      const s = new SensitiveString(CANARY, 'credential');
+      const ctx: RevealContext = { name: 'explicit' };
+
+      expect(s.substring(0, 3, ctx).reveal(ctx)).toBe(CANARY.substring(0, 3));
+    });
+
+    it('explicit context works for map', () => {
+      const s = new SensitiveString(CANARY, 'credential');
+      const ctx: RevealContext = { name: 'explicit' };
+
+      expect(s.map((v) => v.toUpperCase(), ctx).reveal(ctx)).toBe(CANARY.toUpperCase());
+    });
+
+    it('explicit context works for reclassify', () => {
+      const s = new SensitiveString(CANARY, 'credential');
+      const ctx: RevealContext = { name: 'explicit' };
+
+      expect(s.reclassify('sensitive', undefined, ctx).klass).toBe('sensitive');
+    });
+  });
+
+  describe('Deserialize Validation', () => {
+    it('rejects unknown sensitivity class', () => {
+      const invalid = {
+        __sensitive: true,
+        klass: 'unknown_class',
+        value: 'secret',
+      };
+
+      expect(() => SensitiveString.deserialize(invalid)).toThrow(
+        "Invalid SerializedSensitiveString: unknown sensitivity class 'unknown_class'"
+      );
+    });
+
+    it('accepts valid sensitivity classes', () => {
+      const validCredential = {
+        __sensitive: true,
+        klass: 'credential',
+        value: 'secret',
+      };
+
+      const validSensitive = {
+        __sensitive: true,
+        klass: 'sensitive',
+        value: 'pii-data',
+      };
+
+      expect(() => SensitiveString.deserialize(validCredential)).not.toThrow();
+      expect(() => SensitiveString.deserialize(validSensitive)).not.toThrow();
+    });
+
+    it('rejects missing __sensitive marker', () => {
+      const invalid = {
+        klass: 'credential',
+        value: 'secret',
+      };
+
+      expect(() => SensitiveString.deserialize(invalid)).toThrow(
+        'Invalid SerializedSensitiveString: missing __sensitive marker'
+      );
+    });
+
+    it('rejects non-string value', () => {
+      const invalid = {
+        __sensitive: true,
+        klass: 'credential',
+        value: 12345,
+      };
+
+      expect(() => SensitiveString.deserialize(invalid)).toThrow(
+        'Invalid SerializedSensitiveString: value must be a string'
+      );
+    });
+
+    it('rejects non-string klass', () => {
+      const invalid = {
+        __sensitive: true,
+        klass: 123,
+        value: 'secret',
+      };
+
+      expect(() => SensitiveString.deserialize(invalid)).toThrow(
+        'Invalid SerializedSensitiveString: klass must be a string'
+      );
+    });
+
+    it('rejects non-string label', () => {
+      const invalid = {
+        __sensitive: true,
+        klass: 'credential',
+        value: 'secret',
+        label: 123,
+      };
+
+      expect(() => SensitiveString.deserialize(invalid)).toThrow(
+        'Invalid SerializedSensitiveString: label must be a string or undefined'
+      );
+    });
   });
 });

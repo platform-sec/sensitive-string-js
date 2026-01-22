@@ -5,7 +5,7 @@ import type {
   SerializedSensitiveString,
   RevealContext,
 } from './types.js';
-import { getPolicy, defaultCombineClasses } from './policy.js';
+import { getPolicy, defaultCombineClasses, hasPolicy } from './policy.js';
 import { getCurrentRevealContext } from './context.js';
 
 /**
@@ -197,10 +197,15 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param start - Start index.
    * @param end - Optional end index.
    * @param ctx - Audit context.
+   * @throws If policy checking fails (e.g., context required but not provided).
    */
   substring(start: number, end?: number, ctx?: RevealContext): SensitiveString<C> {
-    // Audit this operation as it involves the raw value
     const effectiveCtx = ctx ?? getCurrentRevealContext();
+
+    // Enforce policy access control
+    this.policy.checkRevealAllowed?.(effectiveCtx);
+
+    // Audit this operation as it involves the raw value
     effectiveCtx?.auditReveal?.(this);
 
     return new SensitiveString(this.#value.substring(start, end), this.klass, this.label);
@@ -237,6 +242,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    *
    * @param serialized - The serialized form (potentially untrusted data from external source).
    * @throws If the serialized form is invalid or missing required fields.
+   * @throws If the klass is not a registered sensitivity class.
    */
   static deserialize<C extends SensitivityClass>(
     serialized: unknown
@@ -256,6 +262,14 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     if (!('klass' in serialized) || typeof serialized.klass !== 'string') {
       throw new Error('Invalid SerializedSensitiveString: klass must be a string');
     }
+
+    // Validate that klass is a registered sensitivity class
+    if (!hasPolicy(serialized.klass as SensitivityClass)) {
+      throw new Error(
+        `Invalid SerializedSensitiveString: unknown sensitivity class '${serialized.klass}'`
+      );
+    }
+
     if ('label' in serialized && serialized.label !== undefined && typeof serialized.label !== 'string') {
       throw new Error('Invalid SerializedSensitiveString: label must be a string or undefined');
     }
@@ -289,9 +303,15 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param fn - Transformation function
    * @param ctx - Reveal context for audit
    * @returns A new SensitiveString with the transformed value, preserving class and label
+   * @throws If policy checking fails (e.g., context required but not provided).
    */
   map(fn: (value: string) => string, ctx?: RevealContext): SensitiveString<C> {
     const effectiveCtx = ctx ?? getCurrentRevealContext();
+
+    // Enforce policy access control
+    this.policy.checkRevealAllowed?.(effectiveCtx);
+
+    // Audit this operation
     effectiveCtx?.auditReveal?.(this);
 
     return new SensitiveString(fn(this.#value), this.klass, this.label);
@@ -305,6 +325,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param newLabel - Optional new label (if undefined, preserves existing label)
    * @param ctx - Reveal context for audit
    * @returns A new SensitiveString with the new class
+   * @throws If policy checking fails (e.g., context required but not provided).
    *
    * @remarks
    * Use with caution - this bypasses the automatic class escalation logic.
@@ -315,6 +336,11 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     ctx?: RevealContext
   ): SensitiveString<D> {
     const effectiveCtx = ctx ?? getCurrentRevealContext();
+
+    // Enforce policy access control
+    this.policy.checkRevealAllowed?.(effectiveCtx);
+
+    // Audit this operation
     effectiveCtx?.auditReveal?.(this);
 
     return new SensitiveString(this.#value, newKlass, newLabel ?? this.label);

@@ -65,12 +65,52 @@ for (const policy of DEFAULT_POLICIES) {
 export interface RegisterPolicyOptions {
   /** Allow overwriting an existing policy */
   overwrite?: boolean;
+  /**
+   * Skip validation of the redact function.
+   * ⚠️ DANGEROUS - only use for testing malicious policy behavior.
+   */
+  skipRedactValidation?: boolean;
+}
+
+/**
+ * Validate that a redact function actually redacts the value.
+ * Tests with multiple canary values to catch identity functions and partial leaks.
+ *
+ * @throws Error if the redact function returns or contains the original value
+ */
+function validateRedactFunction(redact: (value: string) => string): void {
+  // Test with multiple canary values to catch various bypass attempts
+  const canaries = [
+    'VALIDATION_CANARY_' + Math.random().toString(36).slice(2),
+    'test-secret-value-12345',
+    '<script>alert(1)</script>', // XSS-like payload
+  ];
+
+  for (const canary of canaries) {
+    const result = redact(canary);
+
+    // Check for identity function
+    if (result === canary) {
+      throw new Error(
+        'Invalid redact function: must not return the original value unchanged'
+      );
+    }
+
+    // Check for partial inclusion (value embedded in output)
+    // Only check if canary is long enough to be meaningful
+    if (canary.length >= 8 && result.includes(canary)) {
+      throw new Error(
+        'Invalid redact function: must not include the original value in output'
+      );
+    }
+  }
 }
 
 /**
  * Register a custom sensitivity policy.
  *
  * @throws Error if policy already exists and overwrite is not set
+ * @throws Error if redact function does not actually redact values
  */
 export function registerPolicy(policy: SensitivityPolicy, opts: RegisterPolicyOptions = {}): void {
   if (policyRegistry.has(policy.name) && !opts.overwrite) {
@@ -78,6 +118,12 @@ export function registerPolicy(policy: SensitivityPolicy, opts: RegisterPolicyOp
       `Policy '${policy.name}' already registered. Use { overwrite: true } to replace.`
     );
   }
+
+  // Validate the redact function unless explicitly skipped
+  if (!opts.skipRedactValidation) {
+    validateRedactFunction(policy.redact);
+  }
+
   policyRegistry.set(policy.name, policy);
 }
 
