@@ -25,7 +25,7 @@ import {
 
 // Read secret from vault-injected file mount (e.g., Kubernetes secrets, HashiCorp Vault)
 const apiKey = new SensitiveString(
-  readFileSync('/run/secrets/api_key', 'utf-8').trim(),
+  readFileSync('/run/secrets/api_key', 'utf-8'),
   'credential',
   'api_key'
 );
