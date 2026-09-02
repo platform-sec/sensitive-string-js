@@ -105,6 +105,26 @@ describe('wrapSensitiveByPath', () => {
       expect((result.user.identifier as unknown as SensitiveString).klass).toBe('sensitive');
     });
 
+    it('should apply class and label from object field configuration', () => {
+      const config: SensitiveFieldConfig = {
+        'user.email': { klass: 'sensitive', label: 'contact_email' },
+        'credentials.apiKey': { klass: 'credential', label: 'partner_api_key' },
+      };
+      const input = {
+        user: { email: 'user@test.local' },
+        credentials: { apiKey: 'key_test_12345' },
+      };
+
+      const result = wrapSensitiveByPath(input, config);
+      const email = result.user.email as unknown as SensitiveString;
+      const apiKey = result.credentials.apiKey as unknown as SensitiveString;
+
+      expect(email.klass).toBe('sensitive');
+      expect(email.label).toBe('contact_email');
+      expect(apiKey.klass).toBe('credential');
+      expect(apiKey.label).toBe('partner_api_key');
+    });
+
     it('should not mutate the original object', () => {
       const config: SensitiveFieldConfig = { email: 'sensitive' };
       const original = { email: 'original@test.local', name: 'Test' };

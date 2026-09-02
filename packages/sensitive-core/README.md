@@ -65,8 +65,8 @@ import {
 // 1. Define which fields are sensitive
 const WEBHOOK_SENSITIVE_FIELDS: SensitiveFieldConfig = {
   'notification.metadata.webhookSignature': 'credential',
-  'notification.metadata.cardLastFour': 'sensitive',
-  'notification.metadata.customerIpAddress': 'sensitive',
+  'notification.metadata.cardLastFour': { klass: 'sensitive', label: 'card_last_four' },
+  'notification.metadata.customerIpAddress': { klass: 'sensitive', label: 'customer_ip' },
   'notification.transaction.gatewayReference': 'credential',
 };
 
@@ -121,6 +121,17 @@ test('sensitive field config matches payload structure', () => {
   expect(result.missingPaths).toEqual([]);
 });
 ```
+
+Configuration values may use the short class form or `{ klass, label }`. Labels
+appear in inspection and audit metadata without exposing the protected value.
+
+## Process-global state
+
+The policy registry and reveal-context storage are shared across duplicate
+installed copies of core through `Symbol.for()`. Policy registration is mutable
+process-global configuration: it protects against accidental misuse and
+misconfiguration, but code already executing in the process can replace a
+policy and must be trusted.
 
 ## API
 

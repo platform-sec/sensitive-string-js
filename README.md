@@ -213,7 +213,12 @@ app.post('/payment', async (req, res) => {
 
 ```typescript
 class SensitiveString<C extends SensitivityClass = 'sensitive'> {
-  constructor(value: string, klass: C, label?: string);
+  constructor(
+    value: string,
+    klass: C,
+    label?: string,
+    options?: SensitiveStringOptions
+  );
   
   readonly klass: C;
   readonly label?: string;
@@ -245,7 +250,12 @@ class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   // Service-to-service transmission
   serialize(ctx?: RevealContext): SerializedSensitiveString;
   static deserialize<C>(serialized: SerializedSensitiveString): SensitiveString<C>;
-  static fromOptional<C>(value: string | null | undefined, klass: C): SensitiveString<C> | null;
+  static fromOptional<C>(
+    value: string | null | undefined,
+    klass: C,
+    label?: string,
+    options?: SensitiveStringOptions
+  ): SensitiveString<C> | null;
 }
 ```
 
@@ -332,6 +342,8 @@ registerPolicy({
   name: 'credential',
   redact: (value) => `***${value.length} chars***`,
   requireConstantTimeEquals: true,
+  allowPartialQueries: false,
+  allowMask: false,
   checkRevealAllowed: (ctx) => {
     if (!ctx) {
       throw new Error('Context required for credential access');
@@ -344,6 +356,11 @@ registerPolicy({
   },
 }, { overwrite: true });
 ```
+
+The policy registry is process-global and shared across duplicate installed
+copies of core using `Symbol.for()`. This mutable configuration prevents
+accidental misuse; it is not a security boundary against code already running
+inside the process, which can replace a registered policy.
 
 ### Service-to-Service Transmission
 

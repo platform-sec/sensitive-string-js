@@ -2,21 +2,28 @@ import { SensitiveString } from './sensitive-string.js';
 import type { SensitivityClass, RevealContext } from './types.js';
 import { getCurrentRevealContext } from './context.js';
 
+/** Class and optional audit label for one configured field path. */
+export interface SensitiveFieldOptions {
+  klass: SensitivityClass;
+  label?: string;
+}
+
 /**
  * Configuration for path-based sensitive field wrapping.
- * Keys are dot-notation paths, values are sensitivity classes.
+ * Keys are dot-notation paths. Values are either sensitivity classes or an
+ * object containing a class and optional label.
  *
  * @example
  * ```ts
  * const config: SensitiveFieldConfig = {
  *   'user.email': 'sensitive',
- *   'user.ssn': 'sensitive',
+ *   'user.ssn': { klass: 'sensitive', label: 'ssn' },
  *   'credentials.apiKey': 'credential',
  *   'session.token': 'credential',
  * };
  * ```
  */
-export type SensitiveFieldConfig = Record<string, SensitivityClass>;
+export type SensitiveFieldConfig = Record<string, SensitivityClass | SensitiveFieldOptions>;
 
 /**
  * Result type after wrapping - transforms string fields at specified paths
@@ -126,7 +133,7 @@ function deepClone<T>(obj: T): T {
  *
  * @typeParam T - The type of the input object
  * @param obj - The object containing sensitive data
- * @param config - Mapping of dot-notation paths to sensitivity classes
+ * @param config - Mapping of dot-notation paths to class or class-and-label configuration
  * @returns A deep clone of the object with specified fields wrapped as SensitiveString
  *
  * @remarks
@@ -156,12 +163,14 @@ export function wrapSensitiveByPath<T extends object>(obj: T, config: SensitiveF
   // Deep clone to avoid mutating the original
   const result = deepClone(obj) as Record<string, unknown>;
 
-  for (const [path, klass] of Object.entries(config)) {
+  for (const [path, fieldConfig] of Object.entries(config)) {
     const value = getByPath(result, path);
 
     // Only wrap if value exists and is a string
     if (typeof value === 'string') {
-      const wrapped = new SensitiveString(value, klass);
+      const { klass, label } =
+        typeof fieldConfig === 'string' ? { klass: fieldConfig, label: undefined } : fieldConfig;
+      const wrapped = new SensitiveString(value, klass, label);
       setByPath(result, path, wrapped);
     }
     // If already a SensitiveString, leave it alone

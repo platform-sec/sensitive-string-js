@@ -1,11 +1,15 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { RevealContext } from './types.js';
+import { getGlobalSingleton } from './global-state.js';
 
 /**
  * AsyncLocalStorage instance for reveal context propagation.
  * Allows context to flow through async call chains without explicit threading.
  */
-const revealContextStorage = new AsyncLocalStorage<RevealContext>();
+const revealContextStorage = getGlobalSingleton(
+  'reveal-context-storage',
+  () => new AsyncLocalStorage<RevealContext>()
+);
 
 /**
  * Execute a function within a reveal context.

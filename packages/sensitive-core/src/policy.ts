@@ -1,10 +1,5 @@
 import { SensitivityClass, SensitivityPolicy, SENSITIVITY_PRECEDENCE } from './types.js';
-
-/**
- * Internal registry of sensitivity policies.
- * Keyed by SensitivityClass name.
- */
-const policyRegistry = new Map<SensitivityClass, SensitivityPolicy>();
+import { getGlobalSingleton } from './global-state.js';
 
 /**
  * Determine the more restrictive class when combining two sensitive values.
@@ -34,6 +29,8 @@ const DEFAULT_POLICIES: SensitivityPolicy[] = [
     name: 'sensitive',
     redact: createDefaultRedact('sensitive'),
     requireConstantTimeEquals: false,
+    allowPartialQueries: true,
+    allowMask: true,
     advisory: {
       allowPersistPlain: false,
       allowPersistEncrypted: true,
@@ -45,6 +42,8 @@ const DEFAULT_POLICIES: SensitivityPolicy[] = [
     name: 'credential',
     redact: createDefaultRedact('credential'),
     requireConstantTimeEquals: true,
+    allowPartialQueries: false,
+    allowMask: false,
     advisory: {
       allowPersistPlain: false,
       allowSendToLog: true,
@@ -54,10 +53,16 @@ const DEFAULT_POLICIES: SensitivityPolicy[] = [
   },
 ];
 
-// Initialize registry with default policies
-for (const policy of DEFAULT_POLICIES) {
-  policyRegistry.set(policy.name, policy);
-}
+/**
+ * Internal registry of sensitivity policies.
+ *
+ * The Symbol.for()-backed singleton keeps policy changes visible when an
+ * application loads multiple physical copies of core.
+ */
+const policyRegistry = getGlobalSingleton(
+  'policy-registry',
+  () => new Map(DEFAULT_POLICIES.map((policy) => [policy.name, policy]))
+);
 
 /**
  * Options for registering a policy.
@@ -91,17 +96,13 @@ function validateRedactFunction(redact: (value: string) => string): void {
 
     // Check for identity function
     if (result === canary) {
-      throw new Error(
-        'Invalid redact function: must not return the original value unchanged'
-      );
+      throw new Error('Invalid redact function: must not return the original value unchanged');
     }
 
     // Check for partial inclusion (value embedded in output)
     // Only check if canary is long enough to be meaningful
     if (canary.length >= 8 && result.includes(canary)) {
-      throw new Error(
-        'Invalid redact function: must not include the original value in output'
-      );
+      throw new Error('Invalid redact function: must not include the original value in output');
     }
   }
 }
@@ -121,7 +122,7 @@ export function registerPolicy(policy: SensitivityPolicy, opts: RegisterPolicyOp
 
   // Validate the redact function unless explicitly skipped
   if (!opts.skipRedactValidation) {
-    validateRedactFunction(policy.redact);
+    validateRedactFunction((value) => policy.redact(value));
   }
 
   policyRegistry.set(policy.name, policy);

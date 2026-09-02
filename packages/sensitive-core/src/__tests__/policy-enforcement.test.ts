@@ -25,55 +25,42 @@ describe('Policy Enforcement Security', () => {
   // All operations that access #value
   const VALUE_ACCESSING_OPERATIONS: Array<{
     name: string;
-    supportsExplicitContext: boolean;
-    execute: (
-      s: SensitiveString<'credential'>,
-      ctx?: RevealContext
-    ) => unknown;
+    execute: (s: SensitiveString<'credential'>, ctx?: RevealContext) => unknown;
   }> = [
     {
       name: 'reveal()',
-      supportsExplicitContext: true,
       execute: (s, ctx) => s.reveal(ctx),
     },
     {
       name: 'equals(string)',
-      supportsExplicitContext: false,
-      execute: (s) => s.equals('test'),
+      execute: (s, ctx) => s.equals('test', ctx),
     },
     {
       name: 'equals(SensitiveString)',
-      supportsExplicitContext: true,
       execute: (s, ctx) => s.equals(new SensitiveString('test', 'credential'), ctx),
     },
     {
       name: 'substring()',
-      supportsExplicitContext: true,
       execute: (s, ctx) => s.substring(0, 3, ctx),
     },
     {
       name: 'map()',
-      supportsExplicitContext: true,
       execute: (s, ctx) => s.map((v) => v.toUpperCase(), ctx),
     },
     {
       name: 'concat(string)',
-      supportsExplicitContext: false,
-      execute: (s) => s.concat('suffix'),
+      execute: (s, ctx) => s.concat('suffix', ctx),
     },
     {
       name: 'concat(SensitiveString)',
-      supportsExplicitContext: true,
       execute: (s, ctx) => s.concat(new SensitiveString('suffix', 'credential'), ctx),
     },
     {
       name: 'reclassify()',
-      supportsExplicitContext: true,
       execute: (s, ctx) => s.reclassify('sensitive', undefined, ctx),
     },
     {
       name: 'serialize()',
-      supportsExplicitContext: true,
       execute: (s, ctx) => s.serialize(ctx),
     },
   ];
@@ -99,73 +86,57 @@ describe('Policy Enforcement Security', () => {
     });
 
     for (const op of VALUE_ACCESSING_OPERATIONS) {
-      // Operations that access #value should respect checkRevealAllowed
-      // Note: equals(string) and concat(string) only access THIS value, not the argument
-      const shouldEnforcePolicy = [
-        'reveal()',
-        'substring()',
-        'map()',
-        'reclassify()',
-        'serialize()',
-      ].includes(op.name);
+      it(`${op.name} throws without context`, () => {
+        const s = new SensitiveString(CANARY, 'credential');
+        expect(() => op.execute(s)).toThrow('Context required for credential access');
+      });
 
-      if (shouldEnforcePolicy) {
-        it(`${op.name} throws without context`, () => {
-          const s = new SensitiveString(CANARY, 'credential');
-          expect(() => op.execute(s)).toThrow('Context required for credential access');
+      it(`${op.name} succeeds with valid ALS context`, () => {
+        const s = new SensitiveString(CANARY, 'credential');
+        const ctx: RevealContext = { name: 'valid-context' };
+
+        withRevealContext(ctx, () => {
+          expect(() => op.execute(s)).not.toThrow();
         });
+      });
 
-        it(`${op.name} succeeds with valid ALS context`, () => {
-          const s = new SensitiveString(CANARY, 'credential');
-          const ctx: RevealContext = { name: 'valid-context' };
+      it(`${op.name} throws with forbidden context`, () => {
+        const s = new SensitiveString(CANARY, 'credential');
+        const ctx: RevealContext = { name: 'forbidden' };
 
-          withRevealContext(ctx, () => {
-            expect(() => op.execute(s)).not.toThrow();
-          });
+        withRevealContext(ctx, () => {
+          expect(() => op.execute(s)).toThrow('Access forbidden for this context');
         });
+      });
 
-        it(`${op.name} throws with forbidden context`, () => {
-          const s = new SensitiveString(CANARY, 'credential');
-          const ctx: RevealContext = { name: 'forbidden' };
+      it(`${op.name} succeeds with explicit context`, () => {
+        const s = new SensitiveString(CANARY, 'credential');
+        const ctx: RevealContext = { name: 'explicit-context' };
 
-          withRevealContext(ctx, () => {
-            expect(() => op.execute(s)).toThrow('Access forbidden for this context');
-          });
+        expect(() => op.execute(s, ctx)).not.toThrow();
+      });
+
+      it(`${op.name} explicit context overrides ALS context`, () => {
+        const s = new SensitiveString(CANARY, 'credential');
+        const forbiddenCtx: RevealContext = { name: 'forbidden' };
+        const allowedCtx: RevealContext = { name: 'allowed' };
+
+        // ALS has forbidden context, but explicit context is allowed
+        withRevealContext(forbiddenCtx, () => {
+          expect(() => op.execute(s, allowedCtx)).not.toThrow();
         });
-
-        if (op.supportsExplicitContext) {
-          it(`${op.name} succeeds with explicit context`, () => {
-            const s = new SensitiveString(CANARY, 'credential');
-            const ctx: RevealContext = { name: 'explicit-context' };
-
-            expect(() => op.execute(s, ctx)).not.toThrow();
-          });
-
-          it(`${op.name} explicit context overrides ALS context`, () => {
-            const s = new SensitiveString(CANARY, 'credential');
-            const forbiddenCtx: RevealContext = { name: 'forbidden' };
-            const allowedCtx: RevealContext = { name: 'allowed' };
-
-            // ALS has forbidden context, but explicit context is allowed
-            withRevealContext(forbiddenCtx, () => {
-              expect(() => op.execute(s, allowedCtx)).not.toThrow();
-            });
-          });
-        }
-      }
+      });
     }
   });
 
   describe('auditReveal is called', () => {
     for (const op of VALUE_ACCESSING_OPERATIONS) {
-      // Operations that should trigger audit
-      const shouldAudit = [
-        'reveal()',
-        'substring()',
-        'map()',
-        'reclassify()',
-        'serialize()',
-      ].includes(op.name);
+      const expectedAuditCount = op.name.startsWith('equals(')
+        ? 0
+        : op.name === 'concat(SensitiveString)'
+          ? 2
+          : 1;
+      const shouldAudit = expectedAuditCount > 0;
 
       if (shouldAudit) {
         it(`${op.name} calls auditReveal via ALS context`, () => {
@@ -181,49 +152,56 @@ describe('Policy Enforcement Security', () => {
             op.execute(s);
           });
 
-          expect(auditSpy).toHaveBeenCalledTimes(1);
+          expect(auditSpy).toHaveBeenCalledTimes(expectedAuditCount);
           expect(auditSpy).toHaveBeenCalledWith(s);
         });
 
-        if (op.supportsExplicitContext) {
-          it(`${op.name} calls auditReveal via explicit context`, () => {
-            const s = new SensitiveString(CANARY, 'credential');
-            const auditSpy = vi.fn();
+        it(`${op.name} calls auditReveal via explicit context`, () => {
+          const s = new SensitiveString(CANARY, 'credential');
+          const auditSpy = vi.fn();
 
-            const ctx: RevealContext = {
-              name: 'explicit-audit',
-              auditReveal: auditSpy,
-            };
+          const ctx: RevealContext = {
+            name: 'explicit-audit',
+            auditReveal: auditSpy,
+          };
 
-            op.execute(s, ctx);
+          op.execute(s, ctx);
 
-            expect(auditSpy).toHaveBeenCalledTimes(1);
-            expect(auditSpy).toHaveBeenCalledWith(s);
+          expect(auditSpy).toHaveBeenCalledTimes(expectedAuditCount);
+          expect(auditSpy).toHaveBeenCalledWith(s);
+        });
+
+        it(`${op.name} explicit context audit overrides ALS context audit`, () => {
+          const s = new SensitiveString(CANARY, 'credential');
+          const alsAuditSpy = vi.fn();
+          const explicitAuditSpy = vi.fn();
+
+          const alsCtx: RevealContext = {
+            name: 'als',
+            auditReveal: alsAuditSpy,
+          };
+
+          const explicitCtx: RevealContext = {
+            name: 'explicit',
+            auditReveal: explicitAuditSpy,
+          };
+
+          withRevealContext(alsCtx, () => {
+            op.execute(s, explicitCtx);
           });
 
-          it(`${op.name} explicit context audit overrides ALS context audit`, () => {
-            const s = new SensitiveString(CANARY, 'credential');
-            const alsAuditSpy = vi.fn();
-            const explicitAuditSpy = vi.fn();
+          expect(alsAuditSpy).not.toHaveBeenCalled();
+          expect(explicitAuditSpy).toHaveBeenCalledTimes(expectedAuditCount);
+        });
+      } else {
+        it(`${op.name} authorizes access without auditing it as a reveal`, () => {
+          const s = new SensitiveString(CANARY, 'credential');
+          const auditSpy = vi.fn();
 
-            const alsCtx: RevealContext = {
-              name: 'als',
-              auditReveal: alsAuditSpy,
-            };
+          op.execute(s, { name: 'comparison', auditReveal: auditSpy });
 
-            const explicitCtx: RevealContext = {
-              name: 'explicit',
-              auditReveal: explicitAuditSpy,
-            };
-
-            withRevealContext(alsCtx, () => {
-              op.execute(s, explicitCtx);
-            });
-
-            expect(alsAuditSpy).not.toHaveBeenCalled();
-            expect(explicitAuditSpy).toHaveBeenCalledTimes(1);
-          });
-        }
+          expect(auditSpy).not.toHaveBeenCalled();
+        });
       }
     }
   });
@@ -334,12 +312,11 @@ describe('Policy Enforcement Security', () => {
         },
       };
 
-      // Concatenating two SensitiveStrings should audit both
+      // Concatenating two SensitiveStrings audits both inputs.
       s1.concat(s2, ctx);
 
-      // Note: concat on s1 doesn't trigger audit for s1 (it accesses #value directly),
-      // but calling s2.reveal(ctx) inside concat should trigger audit for s2
-      expect(auditedInstances.length).toBeGreaterThanOrEqual(1);
+      expect(auditedInstances).toHaveLength(2);
+      expect(auditedInstances).toContain(s1);
       expect(auditedInstances).toContain(s2);
     });
 
@@ -359,7 +336,7 @@ describe('Policy Enforcement Security', () => {
       });
 
       // Each operation should trigger audit
-      expect(auditSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(auditSpy).toHaveBeenCalledTimes(3);
     });
   });
 

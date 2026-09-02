@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import type {
   SensitivityClass,
   SensitivityPolicy,
+  SensitiveStringOptions,
   SerializedSensitiveString,
   RevealContext,
 } from './types.js';
@@ -12,6 +13,21 @@ import { getCurrentRevealContext } from './context.js';
  * Node.js custom inspect symbol for util.inspect() and console.log().
  */
 const NODE_INSPECT_SYMBOL = Symbol.for('nodejs.util.inspect.custom');
+
+/**
+ * How a caller uses the raw value determines authorization and auditing.
+ * Safe reads only feed redaction or intentionally public metadata. Comparisons
+ * are authorized but are not reveals. Exposing reads are authorized and audited.
+ */
+type RawValueAccess = 'safe' | 'compare' | 'expose';
+
+/**
+ * Shared by a value and all of its derivatives. Feature implementations add
+ * constraint state (such as reveal counters) here rather than copying it.
+ */
+interface SensitiveStringState {
+  readonly options: SensitiveStringOptions;
+}
 
 /**
  * Secure wrapper for sensitive string data.
@@ -41,6 +57,13 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   #value: string;
 
   /**
+   * State inherited from the values this instance was derived from. Multiple
+   * sources are retained for concat so future constraints and counters remain
+   * shared without dropping either parent.
+   */
+  #states: readonly SensitiveStringState[];
+
+  /**
    * The sensitivity classification for this value.
    */
   readonly klass: C;
@@ -57,9 +80,11 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param value - The raw string value to protect
    * @param klass - The sensitivity classification ('credential' or 'sensitive')
    * @param label - Optional label for audit/compliance (e.g., 'api_key', 'email')
+   * @param options - Shared options for access constraints and feature behavior
    */
-  constructor(value: string, klass: C, label?: string) {
+  constructor(value: string, klass: C, label?: string, options?: SensitiveStringOptions) {
     this.#value = value;
+    this.#states = [{ options: options ?? {} }];
     this.klass = klass;
     this.label = label;
   }
@@ -72,11 +97,55 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   }
 
   /**
+   * The sole accessor for #value.
+   *
+   * Feature-level checks such as expiry, revocation, and environment
+   * restrictions belong here so no operation can bypass them. Redaction and
+   * documented metadata reads stay available even when access is denied.
+   */
+  #readRawValue(access: RawValueAccess, ctx?: RevealContext): string {
+    if (access === 'safe') {
+      return this.#value;
+    }
+
+    const effectiveCtx = ctx ?? getCurrentRevealContext();
+    this.policy.checkRevealAllowed?.(effectiveCtx);
+
+    if (access === 'expose') {
+      effectiveCtx?.auditReveal?.(this);
+    }
+
+    return this.#value;
+  }
+
+  /**
+   * Construct a derived instance while retaining every source state object.
+   */
+  static #derived<D extends SensitivityClass>(
+    value: string,
+    klass: D,
+    label: string | undefined,
+    sources: readonly SensitiveString<SensitivityClass>[]
+  ): SensitiveString<D> {
+    const derived = new SensitiveString(value, klass, label);
+    const states = new Set<SensitiveStringState>();
+
+    for (const source of sources) {
+      for (const state of source.#states) {
+        states.add(state);
+      }
+    }
+
+    derived.#states = Array.from(states);
+    return derived;
+  }
+
+  /**
    * Returns the redacted form of this value.
    * Safe for logging and display.
    */
   toString(): string {
-    return this.policy.redact(this.#value);
+    return this.policy.redact(this.#readRawValue('safe'));
   }
 
   /**
@@ -105,15 +174,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @throws If policy checking fails.
    */
   reveal(ctx?: RevealContext): string {
-    const effectiveCtx = ctx ?? getCurrentRevealContext();
-
-    // Allow policy to reject the reveal
-    this.policy.checkRevealAllowed?.(effectiveCtx);
-
-    // Audit the reveal if context has an audit callback
-    effectiveCtx?.auditReveal?.(this);
-
-    return this.#value;
+    return this.#readRawValue('expose', ctx);
   }
 
   /**
@@ -123,17 +184,18 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * to prevent timing attacks.
    *
    * @param other - The value to compare against
-   * @param ctx - Optional reveal context (needed if other is a SensitiveString)
+   * @param ctx - Optional reveal context for policy checks
    * @returns true if values are equal
    *
    * @remarks
    * Length differences are unavoidable information leakage in timing-safe comparisons.
    */
   equals(other: string | SensitiveString<SensitivityClass>, ctx?: RevealContext): boolean {
-    const rawOther = other instanceof SensitiveString ? other.reveal(ctx) : other;
+    const value = this.#readRawValue('compare', ctx);
+    const rawOther = other instanceof SensitiveString ? other.#readRawValue('compare', ctx) : other;
 
     if (this.policy.requireConstantTimeEquals) {
-      const a = Buffer.from(this.#value, 'utf8');
+      const a = Buffer.from(value, 'utf8');
       const b = Buffer.from(rawOther, 'utf8');
 
       // Length difference is unavoidable information leakage
@@ -144,7 +206,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       return timingSafeEqual(a, b);
     }
 
-    return this.#value === rawOther;
+    return value === rawOther;
   }
 
   /**
@@ -154,13 +216,14 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * Labels are combined with '/' separator.
    *
    * @param other - The value to append.
-   * @param ctx - Audit context if `other` is sensitive.
+   * @param ctx - Audit context for raw-value access.
    */
   concat<D extends SensitivityClass>(
     other: string | SensitiveString<D>,
     ctx?: RevealContext
   ): SensitiveString<SensitivityClass> {
-    const rawOther = other instanceof SensitiveString ? other.reveal(ctx) : other;
+    const value = this.#readRawValue('expose', ctx);
+    const rawOther = other instanceof SensitiveString ? other.#readRawValue('expose', ctx) : other;
     const otherClass: SensitivityClass =
       other instanceof SensitiveString ? other.klass : 'sensitive';
     const otherLabel = other instanceof SensitiveString ? other.label : undefined;
@@ -173,7 +236,10 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     const combinedLabel =
       this.label && otherLabel ? `${this.label}/${otherLabel}` : (this.label ?? otherLabel);
 
-    return new SensitiveString(this.#value + rawOther, combinedClass, combinedLabel);
+    const sources: SensitiveString<SensitivityClass>[] =
+      other instanceof SensitiveString ? [this, other] : [this];
+
+    return SensitiveString.#derived(value + rawOther, combinedClass, combinedLabel, sources);
   }
 
   /**
@@ -181,14 +247,14 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * Note: Length is generally not considered sensitive for most use cases.
    */
   get length(): number {
-    return this.#value.length;
+    return this.#readRawValue('safe').length;
   }
 
   /**
    * Check if the raw value is empty.
    */
   isEmpty(): boolean {
-    return this.#value.length === 0;
+    return this.#readRawValue('safe').length === 0;
   }
 
   /**
@@ -200,15 +266,8 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @throws If policy checking fails (e.g., context required but not provided).
    */
   substring(start: number, end?: number, ctx?: RevealContext): SensitiveString<C> {
-    const effectiveCtx = ctx ?? getCurrentRevealContext();
-
-    // Enforce policy access control
-    this.policy.checkRevealAllowed?.(effectiveCtx);
-
-    // Audit this operation as it involves the raw value
-    effectiveCtx?.auditReveal?.(this);
-
-    return new SensitiveString(this.#value.substring(start, end), this.klass, this.label);
+    const value = this.#readRawValue('expose', ctx);
+    return SensitiveString.#derived(value.substring(start, end), this.klass, this.label, [this]);
   }
 
   /**
@@ -221,11 +280,13 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param ctx - Optional context for audit/permission checks
    */
   serialize(ctx?: RevealContext): SerializedSensitiveString {
+    const value = this.#readRawValue('expose', ctx);
+
     if (this.label !== undefined) {
       return {
         __sensitive: true as const,
         klass: this.klass,
-        value: this.reveal(ctx),
+        value,
         label: this.label,
       };
     }
@@ -233,7 +294,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     return {
       __sensitive: true as const,
       klass: this.klass,
-      value: this.reveal(ctx),
+      value,
     };
   }
 
@@ -244,9 +305,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @throws If the serialized form is invalid or missing required fields.
    * @throws If the klass is not a registered sensitivity class.
    */
-  static deserialize<C extends SensitivityClass>(
-    serialized: unknown
-  ): SensitiveString<C> {
+  static deserialize<C extends SensitivityClass>(serialized: unknown): SensitiveString<C> {
     // Type guard for runtime validation of untrusted data
     if (
       typeof serialized !== 'object' ||
@@ -270,13 +329,16 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       );
     }
 
-    if ('label' in serialized && serialized.label !== undefined && typeof serialized.label !== 'string') {
+    if (
+      'label' in serialized &&
+      serialized.label !== undefined &&
+      typeof serialized.label !== 'string'
+    ) {
       throw new Error('Invalid SerializedSensitiveString: label must be a string or undefined');
     }
 
-    const label = 'label' in serialized && typeof serialized.label === 'string'
-      ? serialized.label
-      : undefined;
+    const label =
+      'label' in serialized && typeof serialized.label === 'string' ? serialized.label : undefined;
 
     return new SensitiveString(serialized.value, serialized.klass as C, label);
   }
@@ -288,12 +350,13 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   static fromOptional<C extends SensitivityClass>(
     value: string | null | undefined,
     klass: C,
-    label?: string
+    label?: string,
+    options?: SensitiveStringOptions
   ): SensitiveString<C> | null {
     if (value == null || value === '') {
       return null;
     }
-    return new SensitiveString(value, klass, label);
+    return new SensitiveString(value, klass, label, options);
   }
 
   /**
@@ -306,15 +369,8 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @throws If policy checking fails (e.g., context required but not provided).
    */
   map(fn: (value: string) => string, ctx?: RevealContext): SensitiveString<C> {
-    const effectiveCtx = ctx ?? getCurrentRevealContext();
-
-    // Enforce policy access control
-    this.policy.checkRevealAllowed?.(effectiveCtx);
-
-    // Audit this operation
-    effectiveCtx?.auditReveal?.(this);
-
-    return new SensitiveString(fn(this.#value), this.klass, this.label);
+    const value = this.#readRawValue('expose', ctx);
+    return SensitiveString.#derived(fn(value), this.klass, this.label, [this]);
   }
 
   /**
@@ -335,14 +391,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     newLabel?: string,
     ctx?: RevealContext
   ): SensitiveString<D> {
-    const effectiveCtx = ctx ?? getCurrentRevealContext();
-
-    // Enforce policy access control
-    this.policy.checkRevealAllowed?.(effectiveCtx);
-
-    // Audit this operation
-    effectiveCtx?.auditReveal?.(this);
-
-    return new SensitiveString(this.#value, newKlass, newLabel ?? this.label);
+    const value = this.#readRawValue('expose', ctx);
+    return SensitiveString.#derived(value, newKlass, newLabel ?? this.label, [this]);
   }
 }

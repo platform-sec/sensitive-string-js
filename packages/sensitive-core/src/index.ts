@@ -36,6 +36,7 @@ export type {
   SensitivityClass,
   SensitivityPolicy,
   SensitivityAdvisory,
+  SensitiveStringOptions,
   SerializedSensitiveString,
   RevealContext,
   ISensitiveString,
@@ -83,4 +84,4 @@ export {
   validateSensitiveFieldConfig,
   checkSensitiveFieldsWrapped,
 } from './wrap.js';
-export type { SensitiveFieldConfig, WrappedResult } from './wrap.js';
+export type { SensitiveFieldConfig, SensitiveFieldOptions, WrappedResult } from './wrap.js';

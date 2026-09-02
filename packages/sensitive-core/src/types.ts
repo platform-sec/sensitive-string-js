@@ -20,6 +20,17 @@ export const SENSITIVITY_PRECEDENCE: readonly SensitivityClass[] = [
 ] as const;
 
 /**
+ * Options shared by every SensitiveString feature.
+ *
+ * This interface is intentionally empty until an option-bearing feature is
+ * implemented. It is defined centrally so features can add optional fields
+ * without introducing competing constructor arguments. As an interface, it
+ * can also be extended through declaration merging by integration packages.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-interface
+export interface SensitiveStringOptions {}
+
+/**
  * Advisory metadata for sensitivity policies.
  * NOT enforced by this library in MVP - use for documentation,
  * external policy engines, and future enforcement.
@@ -82,6 +93,18 @@ export interface SensitivityPolicy {
 
   /** Use constant-time comparison for equals() operations */
   requireConstantTimeEquals?: boolean;
+
+  /**
+   * Allow queries that disclose partial information about the raw value.
+   * Defaults to true for sensitive values and false for credentials.
+   */
+  allowPartialQueries?: boolean;
+
+  /**
+   * Allow partially masked output.
+   * Defaults to true for sensitive values and false for credentials.
+   */
+  allowMask?: boolean;
 
   /**
    * Hook to validate whether reveal is allowed in the given context.
