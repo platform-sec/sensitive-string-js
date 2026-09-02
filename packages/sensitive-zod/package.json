@@ -32,12 +32,11 @@
     "node": ">=20.0.0"
   },
   "peerDependencies": {
+    "@platform-sec/sensitive-string-core": "^0.1.0",
     "zod": "^3.22.0"
   },
-  "dependencies": {
-    "@platform-sec/sensitive-string-core": "workspace:*"
-  },
   "devDependencies": {
+    "@platform-sec/sensitive-string-core": "workspace:*",
     "@types/node": "^20.14.0",
     "typescript": "^5.4.5",
     "vitest": "^1.6.0",
