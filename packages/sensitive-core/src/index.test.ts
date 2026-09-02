@@ -843,6 +843,118 @@ describe('Redaction Helpers', () => {
     const data = [1, 2, new SensitiveString('x', 'sensitive')];
     expect(containsSensitive(data)).toBe(true);
   });
+
+  it('test_containsSensitive_with_class_instances_maps_and_sets', () => {
+    class Entity {
+      token = new SensitiveString('x', 'credential');
+    }
+
+    expect(containsSensitive(new Entity())).toBe(true);
+    expect(containsSensitive({ entity: new Entity() })).toBe(true);
+    expect(containsSensitive(new Map([['token', new SensitiveString('x', 'credential')]]))).toBe(
+      true
+    );
+    expect(containsSensitive(new Set([new SensitiveString('x', 'credential')]))).toBe(true);
+    expect(containsSensitive(new Map([['plain', 'value']]))).toBe(false);
+    expect(containsSensitive(new Set(['plain']))).toBe(false);
+  });
+
+  describe('class instances', () => {
+    class UserEntity {
+      id = 1;
+      email = new SensitiveString(CANARY, 'sensitive', 'email');
+      apiKey = new SensitiveString(CANARY, 'credential', 'api_key');
+    }
+
+    it('test_redactInStructure_handles_class_instances', () => {
+      const result = redactInStructure(new UserEntity());
+
+      expect(JSON.stringify(result)).not.toContain(CANARY);
+      expect(util.inspect(result)).not.toContain(CANARY);
+      expect(util.inspect(result)).not.toContain('[object Object]');
+      expect(result).toEqual({
+        id: 1,
+        email: '[REDACTED:sensitive]',
+        apiKey: '[REDACTED:credential]',
+      });
+      expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+    });
+
+    it('test_redactInStructure_handles_nested_class_instances', () => {
+      class Order {
+        owner = new UserEntity();
+        items = [new UserEntity()];
+      }
+
+      const result = redactInStructure({ order: new Order() });
+
+      expect(JSON.stringify(result)).not.toContain(CANARY);
+      const typed = result as {
+        order: { owner: { email: string }; items: { apiKey: string }[] };
+      };
+      expect(typed.order.owner.email).toBe('[REDACTED:sensitive]');
+      expect(typed.order.items[0]?.apiKey).toBe('[REDACTED:credential]');
+    });
+
+    it('test_redactInStructure_recurses_into_toJSON_output', () => {
+      class Session {
+        token = new SensitiveString(CANARY, 'credential');
+        toJSON() {
+          return { token: this.token, kind: 'session' };
+        }
+      }
+
+      const result = redactInStructure(new Session()) as { token: unknown; kind: string };
+
+      expect(JSON.stringify(result)).not.toContain(CANARY);
+      expect(result.token).toBe('[REDACTED:credential]');
+      expect(result.token).not.toBeInstanceOf(SensitiveString);
+      expect(result.kind).toBe('session');
+    });
+
+    it('test_redactInStructure_handles_toJSON_returning_self', () => {
+      class SelfJson {
+        token = new SensitiveString(CANARY, 'credential');
+        toJSON() {
+          return this;
+        }
+      }
+
+      const result = redactInStructure(new SelfJson());
+
+      expect(JSON.stringify(result)).not.toContain(CANARY);
+      expect(result).toEqual({ token: '[REDACTED:credential]' });
+    });
+
+    it('test_redactInStructure_handles_null_prototype_objects', () => {
+      // querystring.parse() and similar parsers return null-prototype objects
+      const data = Object.assign(Object.create(null) as Record<string, unknown>, {
+        token: new SensitiveString(CANARY, 'credential'),
+      });
+
+      const result = redactInStructure(data);
+
+      expect(JSON.stringify(result)).not.toContain(CANARY);
+      expect(result).toEqual({ token: '[REDACTED:credential]' });
+    });
+
+    it('test_redactInStructure_keeps_string_form_for_exotic_objects', () => {
+      const result = redactInStructure({
+        bytes: new Uint8Array([1, 2, 3]),
+        pattern: /abc/,
+      });
+
+      expect(result).toEqual({ bytes: '1,2,3', pattern: '/abc/' });
+    });
+
+    it('test_safeLog_class_instance_does_not_leak', () => {
+      const logged = util.inspect(safeLog({ user: new UserEntity() }), { depth: null });
+
+      expect(logged).not.toContain(CANARY);
+      expect(logged).toContain('[REDACTED:sensitive]');
+      expect(logged).toContain('[REDACTED:credential]');
+    });
+  });
 });
 
 describe('Security Fixes', () => {

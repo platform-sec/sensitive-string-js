@@ -1,13 +1,42 @@
 import { SensitiveString } from './sensitive-string.js';
 
 /**
+ * Identify ordinary objects: plain objects, null-prototype objects, and class
+ * instances. Exotic objects such as typed arrays, promises, boxed primitives,
+ * and anything with a custom Symbol.toStringTag report a different tag and are
+ * handled by the string fallback instead.
+ */
+function isOrdinaryObject(obj: object): boolean {
+  return Object.prototype.toString.call(obj) === '[object Object]';
+}
+
+/**
+ * Copy own enumerable properties into a new plain object, redacting as we go.
+ * Used for plain objects and class instances alike. The result is always a
+ * plain object: methods, prototype getters, and private fields are not carried
+ * over, which keeps the output inert for logging.
+ */
+function redactOwnProperties(obj: object, seen: WeakSet<object>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    result[key] = redactInStructure(value, seen);
+  }
+  return result;
+}
+
+/**
  * Recursively redact SensitiveString instances in a data structure.
  *
  * Handles:
  * - Primitive values (returned as-is)
  * - SensitiveString instances (redacted via toString())
- * - Arrays (recursively processed)
- * - Plain objects (recursively processed)
+ * - Arrays, Map, and Set (recursively processed)
+ * - Date (preserved as-is)
+ * - Error (name, message, and stack copied into a plain object)
+ * - Plain objects and class instances (own enumerable properties recursively
+ *   processed into a new plain object)
+ * - Objects with a toJSON() method (their JSON form, recursively processed)
+ * - Other exotic objects such as typed arrays or promises (string form)
  * - Circular references (replaced with '[Circular]')
  *
  * @param obj - The value to process
@@ -88,19 +117,26 @@ export function redactInStructure(obj: unknown, seen = new WeakSet<object>()): u
 
   // Handle plain objects
   if (Object.getPrototypeOf(obj) === Object.prototype) {
-    const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key] = redactInStructure(value, seen);
-    }
-    return result;
+    return redactOwnProperties(obj, seen);
   }
 
-  // Non-plain objects: check for toJSON method
+  // Objects that define their own JSON form (URL, Buffer, user classes):
+  // redact that form. A toJSON() that returns the object itself is walked
+  // like any other class instance.
   if ('toJSON' in obj && typeof (obj as { toJSON: unknown }).toJSON === 'function') {
-    return (obj as { toJSON: () => unknown }).toJSON();
+    const json: unknown = (obj as { toJSON: () => unknown }).toJSON();
+    return json === obj ? redactOwnProperties(obj, seen) : redactInStructure(json, seen);
   }
 
-  // Fallback: return string representation
+  // Class instances (entities, DTOs, view models) and null-prototype objects:
+  // walk own enumerable properties. Stringifying these would hide any
+  // SensitiveString they hold behind "[object Object]".
+  if (isOrdinaryObject(obj)) {
+    return redactOwnProperties(obj, seen);
+  }
+
+  // Exotic objects (typed arrays, promises, boxed primitives, RegExp, ...):
+  // fall back to the string representation
   return String(obj);
 }
 
@@ -183,6 +219,9 @@ export function createSensitiveSerializer(): (value: unknown) => unknown {
  * Check if a value contains any SensitiveString instances.
  * Useful for validation or debugging.
  *
+ * Walks arrays, Map and Set entries, plain objects, and the own enumerable
+ * properties of class instances.
+ *
  * @param obj - The value to check
  * @param seen - WeakSet to track circular references (internal use)
  * @returns true if any SensitiveString is found
@@ -205,7 +244,25 @@ export function containsSensitive(obj: unknown, seen = new WeakSet<object>()): b
     return obj.some((item) => containsSensitive(item, seen));
   }
 
-  if (Object.getPrototypeOf(obj) === Object.prototype) {
+  if (obj instanceof Map) {
+    for (const [key, value] of obj) {
+      if (containsSensitive(key, seen) || containsSensitive(value, seen)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  if (obj instanceof Set) {
+    for (const value of obj) {
+      if (containsSensitive(value, seen)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  if (isOrdinaryObject(obj)) {
     return Object.values(obj).some((value) => containsSensitive(value, seen));
   }
 
