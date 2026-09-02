@@ -16,6 +16,7 @@
   },
   "packageManager": "pnpm@9.0.0",
   "scripts": {
+    "preinstall": "npx only-allow pnpm",
     "build": "pnpm -r build",
     "test": "vitest run",
     "test:watch": "vitest",

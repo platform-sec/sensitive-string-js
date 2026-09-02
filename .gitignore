@@ -56,3 +56,9 @@ sarif-results/
 # CodeQL
 codeql-db/
 codeql-results.sarif
+
+# Non-pnpm lock files (this repo is pnpm-only; see packageManager in package.json)
+package-lock.json
+yarn.lock
+npm-shrinkwrap.json
+bun.lockb
