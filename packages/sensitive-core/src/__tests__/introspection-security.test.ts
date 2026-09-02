@@ -126,7 +126,7 @@ describe('Introspection Security', () => {
         const keys = Object.getOwnPropertyNames(proto);
         for (const key of keys) {
           try {
-            const value = (s as Record<string, unknown>)[key];
+            const value = (s as unknown as Record<string, unknown>)[key];
             if (typeof value !== 'function') {
               expect(String(value)).not.toContain(CANARY);
             }
@@ -146,7 +146,7 @@ describe('Introspection Security', () => {
 
     it('__proto__ does not expose value', () => {
       // eslint-disable-next-line no-proto
-      const proto = (s as { __proto__: unknown }).__proto__;
+      const proto = (s as unknown as { __proto__: unknown }).__proto__;
       // Note: The prototype object itself doesn't have enumerable properties
       // that would contain the value, but JSON.stringify might fail for other reasons
       // (e.g., trying to call toJSON on prototype with undefined klass).
@@ -379,7 +379,7 @@ describe('Introspection Security', () => {
       const found: string[] = [];
       for (const key in s) {
         found.push(key);
-        found.push(String((s as Record<string, unknown>)[key]));
+        found.push(String((s as unknown as Record<string, unknown>)[key]));
       }
       expect(found.join('')).not.toContain(CANARY);
     });
@@ -475,7 +475,7 @@ describe('Introspection Security', () => {
   describe('Comparison attacks', () => {
     it('== comparison does not expose value', () => {
       // eslint-disable-next-line eqeqeq
-      const result = s == CANARY;
+      const result = (s as unknown) == CANARY;
       expect(result).toBe(false); // Objects are not equal to strings
     });
 

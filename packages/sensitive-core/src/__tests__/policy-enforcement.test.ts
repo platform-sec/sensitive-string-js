@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   SensitiveString,
-  SensitivityClass,
+  ISensitiveString,
   RevealContext,
   registerPolicy,
   resetPolicies,
@@ -387,7 +387,7 @@ describe('Policy Enforcement Security', () => {
     it('nested reveal calls each trigger audit', () => {
       const s1 = new SensitiveString('first', 'credential');
       const s2 = new SensitiveString('second', 'credential');
-      const auditedInstances: SensitiveString<SensitivityClass>[] = [];
+      const auditedInstances: ISensitiveString[] = [];
 
       const ctx: RevealContext = {
         name: 'nested-test',
@@ -524,14 +524,14 @@ describe('Policy Enforcement Security', () => {
     });
 
     it('checkRevealAllowed receives full context object', () => {
-      let receivedCtx: RevealContext | null | undefined = undefined;
+      const receivedContexts: Array<RevealContext | null | undefined> = [];
 
       registerPolicy(
         {
           name: 'credential',
           redact: () => '[REDACTED:credential]',
           checkRevealAllowed: (ctx) => {
-            receivedCtx = ctx;
+            receivedContexts.push(ctx);
           },
         },
         { overwrite: true }
@@ -546,6 +546,7 @@ describe('Policy Enforcement Security', () => {
 
       s.reveal(ctx);
 
+      const receivedCtx = receivedContexts[0];
       expect(receivedCtx).toEqual(ctx);
       expect(receivedCtx?.name).toBe('full-context');
       expect(receivedCtx?.reason).toBe('unit test');
