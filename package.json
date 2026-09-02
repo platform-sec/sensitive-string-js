@@ -10,7 +10,7 @@
     "redaction",
     "typescript"
   ],
-  "license": "Apache-2.0",
+  "license": "MIT",
   "engines": {
     "node": ">=20.0.0"
   },

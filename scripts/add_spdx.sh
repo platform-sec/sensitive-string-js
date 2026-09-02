@@ -25,8 +25,8 @@ set -euo pipefail
 ########################################
 # Defaults (override via CLI flags)
 ########################################
-LICENSE_ID="Apache-2.0"
-HOLDER="YOUR_ORG_OR_NAME"
+LICENSE_ID="MIT"
+HOLDER="AppSec Science, LLC"
 YEAR="$(date +%Y)"
 MODE="replace"                 # replace | no-replace
 FALLBACK_DOT_LICENSE="true"    # if true, writes <file>.license for unknown comment styles
