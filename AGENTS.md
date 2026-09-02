@@ -1,0 +1,38 @@
+# Repository Guidelines
+
+## Project Structure & Module Organization
+
+This is a pnpm workspace for Node.js 20+ and TypeScript. Packages live under `packages/`:
+
+- `packages/sensitive-core/src/` contains the redaction, policy, context, and wrapping APIs.
+- `packages/sensitive-zod/src/` contains the Zod integration and depends on the core package.
+- Tests are colocated as `*.test.ts`; larger adversarial suites live in `src/__tests__/`.
+- `examples/` contains checked TypeScript usage examples. Shared compiler and test settings are in `tsconfig.base.json` and `vitest.config.ts`; CI and supply-chain automation live in `.github/`.
+
+Generated `dist/`, coverage, CodeQL, and scratch artifacts must not be committed.
+
+## Build, Test, and Development Commands
+
+Use pnpm 9; the preinstall hook rejects other package managers.
+
+- `pnpm install --frozen-lockfile` installs the exact dependency graph.
+- `pnpm build` compiles every workspace package to its `dist/` directory.
+- `pnpm exec tsc --noEmit` type-checks packages and examples together.
+- `pnpm test` runs the Vitest suite once; `pnpm test:watch` supports local iteration.
+- `pnpm test:coverage` writes V8 text, JSON, and HTML coverage reports.
+- `pnpm lint` runs type-aware ESLint; `pnpm lint:fix` applies safe fixes.
+- `pnpm format` formats package TypeScript sources with Prettier.
+
+Before opening a PR, run build, lint, tests, and the root type-check.
+
+## Coding Style & Naming Conventions
+
+Write strict ES2022 TypeScript using NodeNext modules. Prettier enforces two-space indentation, single quotes, semicolons, trailing commas, and a 100-column width. Use `camelCase` for values/functions, `PascalCase` for types/classes, and kebab-case filenames such as `sensitive-string.ts`. Prefix intentionally unused parameters with `_`. Add JSDoc to public APIs.
+
+## Testing & Security Guidelines
+
+Use Vitest `describe`/`it` blocks and name files `*.test.ts`. New behavior requires positive, edge-case, and adversarial coverage; maintain the documented target above 90%. Sensitive-value tests must use a conspicuous `CANARY` value and assert that logs, errors, inspection, and serialization do not contain it. Preserve ES `#private` fields and default redaction. Treat changes to reveal, serialization, policies, comparison, or context propagation as security-impacting.
+
+## Commits & Pull Requests
+
+History follows Conventional Commits, commonly scoped: `feat(core): ...`, `fix(zod): ...`, `test(core): ...`; append `!` for breaking changes. Keep commits focused. PRs should describe intent and security impact, link relevant issues, list verification commands, and add tests. Update README/JSDoc for public APIs and `CHANGELOG.md` for user-visible changes. Security-impacting changes require maintainer review; report vulnerabilities privately rather than in public issues.
