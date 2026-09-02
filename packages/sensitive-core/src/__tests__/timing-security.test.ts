@@ -8,6 +8,9 @@
  * They're primarily useful for development and should be run with `continue-on-error: true` in CI.
  */
 
+// Timing diagnostics are intentional output from these statistical tests.
+/* eslint-disable no-console */
+
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SensitiveString, getPolicy, resetPolicies } from '../index.js';
 
@@ -121,9 +124,7 @@ describe('Constant-Time Comparison Security', () => {
     function median(arr: number[]): number {
       const sorted = [...arr].sort((a, b) => a - b);
       const mid = Math.floor(sorted.length / 2);
-      return sorted.length % 2
-        ? sorted[mid]!
-        : (sorted[mid - 1]! + sorted[mid]!) / 2;
+      return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
     }
 
     function percentile(arr: number[], p: number): number {

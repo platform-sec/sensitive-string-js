@@ -92,7 +92,7 @@ describe('Introspection Security', () => {
     it('Reflect.get() on known properties does not expose value', () => {
       const keys = Reflect.ownKeys(s);
       for (const key of keys) {
-        const value = Reflect.get(s, key);
+        const value: unknown = Reflect.get(s, key);
         expect(String(value)).not.toContain(CANARY);
       }
     });
@@ -101,7 +101,7 @@ describe('Introspection Security', () => {
       // Note: This actually throws a SyntaxError at parse time if you try
       // to use a string literal '#value', so we test dynamic access
       const privateKey = '#value';
-      const result = Reflect.get(s, privateKey);
+      const result: unknown = Reflect.get(s, privateKey);
       expect(result).toBeUndefined();
     });
 
@@ -121,7 +121,7 @@ describe('Introspection Security', () => {
 
   describe('Prototype chain introspection', () => {
     it('prototype chain does not expose value', () => {
-      let proto = Object.getPrototypeOf(s);
+      let proto = Object.getPrototypeOf(s) as object | null;
       while (proto !== null) {
         const keys = Object.getOwnPropertyNames(proto);
         for (const key of keys) {
@@ -134,7 +134,7 @@ describe('Introspection Security', () => {
             // Getters may throw, that's fine
           }
         }
-        proto = Object.getPrototypeOf(proto);
+        proto = Object.getPrototypeOf(proto) as object | null;
       }
     });
 
@@ -166,7 +166,7 @@ describe('Introspection Security', () => {
     });
 
     it('JSON.stringify() with replacer does not expose value', () => {
-      const result = JSON.stringify(s, (key, value) => {
+      const result = JSON.stringify(s, (_key: string, value: unknown): unknown => {
         // Malicious replacer trying to access internals
         if (typeof value === 'object' && value !== null) {
           return { ...value, _keys: Object.keys(value) };
@@ -204,8 +204,9 @@ describe('Introspection Security', () => {
   describe('Proxy-based introspection attempts', () => {
     it('wrapping in Proxy does not expose value via reflection', () => {
       const handler: ProxyHandler<SensitiveString<'credential'>> = {
-        get(target, prop) {
-          return Reflect.get(target, prop);
+        get(target, prop): unknown {
+          const value: unknown = Reflect.get(target, prop);
+          return value;
         },
         ownKeys(target) {
           return Reflect.ownKeys(target);
@@ -260,8 +261,9 @@ describe('Introspection Security', () => {
     });
 
     it('Symbol.toPrimitive does not expose value', () => {
-      // @ts-expect-error Testing primitive coercion
-      const primitive = s[Symbol.toPrimitive]?.('string');
+      const primitive = (s as unknown as { [Symbol.toPrimitive]?: (hint: string) => unknown })[
+        Symbol.toPrimitive
+      ]?.('string');
       if (primitive !== undefined) {
         expect(String(primitive)).not.toContain(CANARY);
       }
@@ -319,11 +321,17 @@ describe('Introspection Security', () => {
     });
 
     it('template literal coercion does not expose value', () => {
+      // This test exercises implicit template-literal coercion.
+      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
       expect(`${s}`).not.toContain(CANARY);
     });
 
     it('concatenation coercion does not expose value', () => {
+      // This test exercises left-hand implicit string coercion.
+      // eslint-disable-next-line @typescript-eslint/restrict-plus-operands
       expect('' + s).not.toContain(CANARY);
+      // This test exercises right-hand implicit string coercion.
+      // eslint-disable-next-line @typescript-eslint/restrict-plus-operands
       expect(s + '').not.toContain(CANARY);
     });
 
@@ -353,6 +361,8 @@ describe('Introspection Security', () => {
     });
 
     it('error message interpolation does not expose value', () => {
+      // This test exercises implicit interpolation in error messages.
+      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
       const error = new Error(`Token: ${s}`);
       expect(error.message).not.toContain(CANARY);
       expect(error.stack ?? '').not.toContain(CANARY);

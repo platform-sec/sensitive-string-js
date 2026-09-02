@@ -75,32 +75,6 @@ const FUZZ_VALUES = [
   'Bearer abc123',
 ];
 
-// Values that would cause false positives due to appearing naturally in output
-// These are tested separately with targeted assertions
-const PROBLEMATIC_VALUES = [
-  ' ',      // Whitespace appears in util.inspect output
-  '   ',
-  '\t\n\r',
-  '\t',
-  '\n',
-  'x',      // Single chars can appear in paths/stack traces
-  'xy',
-  'xyz',
-  'null',         // These words appear in JavaScript output
-  'undefined',
-  'true',
-  'false',
-  '123',
-  'NaN',
-  'Infinity',
-  '-Infinity',
-  '__proto__',    // These appear in prototype-related output
-  'constructor',
-  'prototype',
-  '__defineGetter__',
-  '__defineSetter__',
-];
-
 const ALL_CLASSES: SensitivityClass[] = ['credential', 'sensitive'];
 
 describe('Serialization Path Security', () => {
@@ -197,7 +171,11 @@ describe('Serialization Path Security', () => {
           it('String coercion never leaks', () => {
             const s = new SensitiveString(value, klass);
             const stringConstructor = String(s);
+            // This test exercises implicit template-literal coercion.
+            // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
             const templateLiteral = `${s}`;
+            // This test exercises implicit concatenation coercion.
+            // eslint-disable-next-line @typescript-eslint/restrict-plus-operands
             const concatenated = '' + s;
 
             if (value.length > 0) {
@@ -282,7 +260,7 @@ describe('Serialization Path Security', () => {
       const obj = { secret: s, public: 'visible' };
 
       // Malicious replacer trying to access internals
-      const result = JSON.stringify(obj, (key, value) => {
+      const result = JSON.stringify(obj, (_key: string, value: unknown): unknown => {
         if (typeof value === 'object' && value !== null) {
           return { ...value, _inspected: true };
         }
