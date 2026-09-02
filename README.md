@@ -584,7 +584,7 @@ bcrypt.hash(password, 10);  // Error!
 bcrypt.hash(password.reveal({ name: 'password-hash' }), 10);
 ```
 
-This is intentional—it forces you to think about where secrets go—but adds friction.
+This is intentional, since it forces you to think about where secrets go, but it adds friction.
 
 #### No Refinements After Transform
 
@@ -668,4 +668,4 @@ If you discover a security vulnerability, please file a [GitHub Security Advisor
 
 ## License
 
-Apache 2.0 © Anton Abashkin
+MIT © AppSec Science, LLC
