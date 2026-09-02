@@ -44,6 +44,78 @@ describe('Policy Enforcement Security', () => {
       execute: (s, ctx) => s.substring(0, 3, ctx),
     },
     {
+      name: 'trim()',
+      execute: (s, ctx) => s.trim(ctx),
+    },
+    {
+      name: 'trimStart()',
+      execute: (s, ctx) => s.trimStart(ctx),
+    },
+    {
+      name: 'trimEnd()',
+      execute: (s, ctx) => s.trimEnd(ctx),
+    },
+    {
+      name: 'toLowerCase()',
+      execute: (s, ctx) => s.toLowerCase(ctx),
+    },
+    {
+      name: 'toUpperCase()',
+      execute: (s, ctx) => s.toUpperCase(ctx),
+    },
+    {
+      name: 'padStart()',
+      execute: (s, ctx) => s.padStart(40, '*', ctx),
+    },
+    {
+      name: 'padEnd()',
+      execute: (s, ctx) => s.padEnd(40, '*', ctx),
+    },
+    {
+      name: 'slice()',
+      execute: (s, ctx) => s.slice(0, 3, ctx),
+    },
+    {
+      name: 'startsWith()',
+      execute: (s, ctx) => s.startsWith('test', 0, ctx),
+    },
+    {
+      name: 'endsWith()',
+      execute: (s, ctx) => s.endsWith('test', undefined, ctx),
+    },
+    {
+      name: 'includes()',
+      execute: (s, ctx) => s.includes('test', 0, ctx),
+    },
+    {
+      name: 'indexOf()',
+      execute: (s, ctx) => s.indexOf('test', 0, ctx),
+    },
+    {
+      name: 'lastIndexOf()',
+      execute: (s, ctx) => s.lastIndexOf('test', undefined, ctx),
+    },
+    {
+      name: 'split()',
+      execute: (s, ctx) => s.split('-', undefined, ctx),
+    },
+    {
+      name: 'replace()',
+      execute: (s, ctx) => s.replace('test', 'replacement', ctx),
+    },
+    {
+      name: 'replaceAll()',
+      execute: (s, ctx) => s.replaceAll('test', 'replacement', ctx),
+    },
+    {
+      name: 'charAt()',
+      execute: (s, ctx) => s.charAt(0, ctx),
+    },
+    {
+      name: 'at()',
+      execute: (s, ctx) => s.at(-1, ctx),
+    },
+    {
       name: 'map()',
       execute: (s, ctx) => s.map((v) => v.toUpperCase(), ctx),
     },
@@ -72,6 +144,7 @@ describe('Policy Enforcement Security', () => {
         {
           name: 'credential',
           redact: () => '[REDACTED:credential]',
+          allowPartialQueries: true,
           checkRevealAllowed: (ctx) => {
             if (!ctx) {
               throw new Error('Context required for credential access');
@@ -130,6 +203,18 @@ describe('Policy Enforcement Security', () => {
   });
 
   describe('auditReveal is called', () => {
+    beforeEach(() => {
+      registerPolicy(
+        {
+          name: 'credential',
+          redact: () => '[REDACTED:credential]',
+          requireConstantTimeEquals: true,
+          allowPartialQueries: true,
+        },
+        { overwrite: true }
+      );
+    });
+
     for (const op of VALUE_ACCESSING_OPERATIONS) {
       const expectedAuditCount = op.name.startsWith('equals(')
         ? 0

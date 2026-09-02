@@ -141,6 +141,28 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   }
 
   /**
+   * Apply an audited transformation and retain this instance's shared state.
+   */
+  #transform(transform: (value: string) => string, ctx?: RevealContext): SensitiveString<C> {
+    const value = this.#readRawValue('expose', ctx);
+    return SensitiveString.#derived(transform(value), this.klass, this.label, [this]);
+  }
+
+  /**
+   * Read the raw value for a partial query after enforcing the class policy.
+   */
+  #readPartialQueryValue(ctx?: RevealContext): string {
+    const policy = this.policy;
+    const allowPartialQueries = policy.allowPartialQueries ?? (this.klass === 'sensitive');
+
+    if (!allowPartialQueries) {
+      throw new Error(`Partial queries are not allowed for sensitivity class '${this.klass}'`);
+    }
+
+    return this.#readRawValue('expose', ctx);
+  }
+
+  /**
    * Returns the redacted form of this value.
    * Safe for logging and display.
    */
@@ -266,8 +288,226 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @throws If policy checking fails (e.g., context required but not provided).
    */
   substring(start: number, end?: number, ctx?: RevealContext): SensitiveString<C> {
+    return this.#transform((value) => value.substring(start, end), ctx);
+  }
+
+  /**
+   * Remove whitespace from both ends, preserving sensitivity and label.
+   *
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  trim(ctx?: RevealContext): SensitiveString<C> {
+    return this.#transform((value) => value.trim(), ctx);
+  }
+
+  /**
+   * Remove leading whitespace, preserving sensitivity and label.
+   *
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  trimStart(ctx?: RevealContext): SensitiveString<C> {
+    return this.#transform((value) => value.trimStart(), ctx);
+  }
+
+  /**
+   * Remove trailing whitespace, preserving sensitivity and label.
+   *
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  trimEnd(ctx?: RevealContext): SensitiveString<C> {
+    return this.#transform((value) => value.trimEnd(), ctx);
+  }
+
+  /**
+   * Convert the value to lowercase, preserving sensitivity and label.
+   *
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  toLowerCase(ctx?: RevealContext): SensitiveString<C> {
+    return this.#transform((value) => value.toLowerCase(), ctx);
+  }
+
+  /**
+   * Convert the value to uppercase, preserving sensitivity and label.
+   *
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  toUpperCase(ctx?: RevealContext): SensitiveString<C> {
+    return this.#transform((value) => value.toUpperCase(), ctx);
+  }
+
+  /**
+   * Pad the start of the value to a target length.
+   *
+   * @param targetLength - Desired result length.
+   * @param padString - String used for padding.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  padStart(targetLength: number, padString?: string, ctx?: RevealContext): SensitiveString<C> {
+    return this.#transform((value) => value.padStart(targetLength, padString), ctx);
+  }
+
+  /**
+   * Pad the end of the value to a target length.
+   *
+   * @param targetLength - Desired result length.
+   * @param padString - String used for padding.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  padEnd(targetLength: number, padString?: string, ctx?: RevealContext): SensitiveString<C> {
+    return this.#transform((value) => value.padEnd(targetLength, padString), ctx);
+  }
+
+  /**
+   * Extract a section of the value, preserving sensitivity and label.
+   *
+   * @param start - Zero-based start index. Negative indices count from the end.
+   * @param end - Optional exclusive end index.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  slice(start?: number, end?: number, ctx?: RevealContext): SensitiveString<C> {
+    return this.#transform((value) => value.slice(start, end), ctx);
+  }
+
+  /**
+   * Test whether the value begins with a string.
+   *
+   * Partial queries are disabled for credentials by default because their
+   * results can be used as a character-by-character oracle.
+   *
+   * @param searchString - Prefix to find.
+   * @param position - Position at which to begin searching.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  startsWith(searchString: string, position?: number, ctx?: RevealContext): boolean {
+    return this.#readPartialQueryValue(ctx).startsWith(searchString, position);
+  }
+
+  /**
+   * Test whether the value ends with a string.
+   *
+   * @param searchString - Suffix to find.
+   * @param endPosition - End position to use for the search.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  endsWith(searchString: string, endPosition?: number, ctx?: RevealContext): boolean {
+    return this.#readPartialQueryValue(ctx).endsWith(searchString, endPosition);
+  }
+
+  /**
+   * Test whether the value contains a string.
+   *
+   * @param searchString - String to find.
+   * @param position - Position at which to begin searching.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  includes(searchString: string, position?: number, ctx?: RevealContext): boolean {
+    return this.#readPartialQueryValue(ctx).includes(searchString, position);
+  }
+
+  /**
+   * Find the first index of a string in the value.
+   *
+   * @param searchString - String to find.
+   * @param position - Position at which to begin searching.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  indexOf(searchString: string, position?: number, ctx?: RevealContext): number {
+    return this.#readPartialQueryValue(ctx).indexOf(searchString, position);
+  }
+
+  /**
+   * Find the last index of a string in the value.
+   *
+   * @param searchString - String to find.
+   * @param position - Position at which to begin searching backward.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  lastIndexOf(searchString: string, position?: number, ctx?: RevealContext): number {
+    return this.#readPartialQueryValue(ctx).lastIndexOf(searchString, position);
+  }
+
+  /**
+   * Split the value into protected parts.
+   *
+   * @param separator - String or regular expression used to divide the value.
+   * @param limit - Maximum number of results.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  split(separator: string | RegExp, limit?: number, ctx?: RevealContext): SensitiveString<C>[] {
     const value = this.#readRawValue('expose', ctx);
-    return SensitiveString.#derived(value.substring(start, end), this.klass, this.label, [this]);
+    return value
+      .split(separator, limit)
+      .map((part) => SensitiveString.#derived(part, this.klass, this.label, [this]));
+  }
+
+  /**
+   * Replace the first matching string or the matches selected by a regular expression.
+   *
+   * Replacement callbacks are intentionally unsupported because they receive raw
+   * matched content.
+   *
+   * @param searchValue - String or regular expression to replace.
+   * @param replaceValue - String replacement pattern.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  replace(
+    searchValue: string | RegExp,
+    replaceValue: string,
+    ctx?: RevealContext
+  ): SensitiveString<C> {
+    if (typeof replaceValue !== 'string') {
+      throw new TypeError('SensitiveString replacement value must be a string');
+    }
+
+    return this.#transform((value) => value.replace(searchValue, replaceValue), ctx);
+  }
+
+  /**
+   * Replace every matching string or regular-expression match.
+   *
+   * Replacement callbacks are intentionally unsupported because they receive raw
+   * matched content.
+   *
+   * @param searchValue - String or global regular expression to replace.
+   * @param replaceValue - String replacement pattern.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  replaceAll(
+    searchValue: string | RegExp,
+    replaceValue: string,
+    ctx?: RevealContext
+  ): SensitiveString<C> {
+    if (typeof replaceValue !== 'string') {
+      throw new TypeError('SensitiveString replacement value must be a string');
+    }
+
+    return this.#transform((value) => value.replaceAll(searchValue, replaceValue), ctx);
+  }
+
+  /**
+   * Return the character at an index as a protected value.
+   *
+   * An out-of-range index returns a protected empty string, matching String.charAt().
+   *
+   * @param index - Zero-based character index.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  charAt(index: number, ctx?: RevealContext): SensitiveString<C> {
+    return this.#transform((value) => value.charAt(index), ctx);
+  }
+
+  /**
+   * Return the character at an index as a protected value.
+   *
+   * @param index - Character index. Negative indices count from the end.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  at(index: number, ctx?: RevealContext): SensitiveString<C> | undefined {
+    const value = this.#readRawValue('expose', ctx).at(index);
+    return value === undefined
+      ? undefined
+      : SensitiveString.#derived(value, this.klass, this.label, [this]);
   }
 
   /**

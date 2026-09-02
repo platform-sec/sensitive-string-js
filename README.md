@@ -238,6 +238,26 @@ class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   concat(other: string | SensitiveString, ctx?: RevealContext): SensitiveString;
   substring(start: number, end?: number, ctx?: RevealContext): SensitiveString<C>;
   map(fn: (value: string) => string, ctx?: RevealContext): SensitiveString<C>;
+  trim(ctx?: RevealContext): SensitiveString<C>;
+  trimStart(ctx?: RevealContext): SensitiveString<C>;
+  trimEnd(ctx?: RevealContext): SensitiveString<C>;
+  toLowerCase(ctx?: RevealContext): SensitiveString<C>;
+  toUpperCase(ctx?: RevealContext): SensitiveString<C>;
+  padStart(length: number, pad?: string, ctx?: RevealContext): SensitiveString<C>;
+  padEnd(length: number, pad?: string, ctx?: RevealContext): SensitiveString<C>;
+  slice(start?: number, end?: number, ctx?: RevealContext): SensitiveString<C>;
+  split(separator: string | RegExp, limit?: number, ctx?: RevealContext): SensitiveString<C>[];
+  replace(search: string | RegExp, replacement: string, ctx?: RevealContext): SensitiveString<C>;
+  replaceAll(search: string | RegExp, replacement: string, ctx?: RevealContext): SensitiveString<C>;
+  charAt(index: number, ctx?: RevealContext): SensitiveString<C>;
+  at(index: number, ctx?: RevealContext): SensitiveString<C> | undefined;
+
+  // Partial queries (disabled for credential by default)
+  startsWith(search: string, position?: number, ctx?: RevealContext): boolean;
+  endsWith(search: string, endPosition?: number, ctx?: RevealContext): boolean;
+  includes(search: string, position?: number, ctx?: RevealContext): boolean;
+  indexOf(search: string, position?: number, ctx?: RevealContext): number;
+  lastIndexOf(search: string, position?: number, ctx?: RevealContext): number;
   
   // Classification
   reclassify<D extends SensitivityClass>(
@@ -258,6 +278,12 @@ class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   ): SensitiveString<C> | null;
 }
 ```
+
+String transformations retain the original class and label and are authorized and audited like
+other exposing operations. Partial queries reveal facts about a value, so they are audited and
+controlled by `SensitivityPolicy.allowPartialQueries`. They are allowed for `sensitive` values and
+denied for `credential` values by default. Replacement callbacks are not supported because they
+would receive raw matched text.
 
 ### Zod Schemas
 
@@ -563,21 +589,19 @@ RegistrationSchema.parse({ password: 'short' });
 
 ### When Zod Integration Gets in the Way
 
-#### You Need to Validate the Raw Value Later
+#### You Need to Validate After Wrapping
 
-Once wrapped, accessing the value requires `.reveal()`:
+Sensitive values can use policy-controlled partial queries without revealing the raw string:
 
 ```typescript
 const { email } = schema.parse({ email: 'test@example.com' });
 
-// This doesn't work - SensitiveString isn't a string
-if (email.endsWith('@company.com')) { }  // Error!
-
-// You have to reveal first
-if (email.reveal().endsWith('@company.com')) { }
+// Allowed and audited by the default sensitive policy
+if (email.endsWith('@company.com')) { }
 ```
 
-**Workaround:** Use `zSensitiveWithValidation` to validate before wrapping:
+To keep the validation at the schema boundary, use `zSensitiveWithValidation` to validate before
+wrapping:
 
 ```typescript
 zSensitiveWithValidation(
@@ -608,8 +632,8 @@ This is intentional, since it forces you to think about where secrets go, but it
 Zod's `.refine()` runs after transforms, so you can't refine on the raw value:
 
 ```typescript
-// This doesn't work as expected
-zCredential('api_key').refine(val => val.startsWith('sk-'))  // val is SensitiveString!
+// Throws by default because credential partial queries are disabled
+zCredential('api_key').refine(val => val.startsWith('sk-'))
 ```
 
 **Workaround:** Use `zSensitiveWithValidation`:
