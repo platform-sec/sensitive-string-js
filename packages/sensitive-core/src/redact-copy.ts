@@ -1,6 +1,5 @@
 import { SensitiveString } from './sensitive-string.js';
-import { getPolicy, hasPolicy } from './policy.js';
-import type { SensitivityClass } from './types.js';
+import { carriesSerializedMarker, redactSerialized } from './serialized.js';
 
 /**
  * Copy a structure with every `SensitiveString` and every serialized sensitive
@@ -105,30 +104,6 @@ function copyRedacted(value: unknown, copies: WeakMap<object, unknown>): unknown
   }
 
   return copy;
-}
-
-/**
- * The shape `serialize()` produces, detected by its marker alone so that a
- * malformed or truncated copy of one is still replaced rather than emitted.
- */
-function carriesSerializedMarker(value: object): boolean {
-  return (value as { __sensitive?: unknown }).__sensitive === true;
-}
-
-/**
- * The redaction the named class would produce for the raw value, so a custom
- * policy's marker is honoured here as it is by `toString()`. A class that is
- * not registered gets a generic marker: echoing the unknown name would put
- * input the library did not produce into the output.
- */
-function redactSerialized(value: object): string {
-  const { klass, value: raw } = value as { klass?: unknown; value?: unknown };
-
-  if (typeof klass === 'string' && hasPolicy(klass as SensitivityClass)) {
-    return getPolicy(klass as SensitivityClass).redact(typeof raw === 'string' ? raw : '');
-  }
-
-  return '[REDACTED]';
 }
 
 /**

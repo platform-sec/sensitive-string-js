@@ -182,6 +182,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `redactInStructure()`, and with it `safeLog()`, `safeStringify()`, `createSensitiveSerializer()`,
+  and the winston format, replace a `serialize()` result with the redaction of the class it names,
+  or `'[REDACTED]'` for a class that is not registered. The serialized form is a plain object holding
+  the raw value, so it passed through every log-path helper untouched and `JSON.stringify` emitted
+  it; it was the one shape `toJSON()` could not catch. `containsSensitive()` now reports it and
+  `sensitiveClassesIn()` counts the class it names, so `dropClasses` in the winston format refuses a
+  record carrying a serialized credential as it refuses one carrying the instance.
+- `redactInStructure()` walks the JSON form of a plain object that carries its own `toJSON`, as it
+  already did for class instances. The plain-object copy kept the function and left it for
+  `JSON.stringify` to call later, on a form the walk had never seen.
 - Zod puts the input into the issue for four codes: `invalid_enum_value` and `invalid_literal` in
   `received`, `unrecognized_keys` in `keys`, and `custom` in `params`, with `invalid_union` nesting
   any of them one level down. An error map cannot reach those fields, only the message, so the

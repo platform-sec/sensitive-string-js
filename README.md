@@ -690,7 +690,8 @@ installSensitiveErrorMap()
 ### Utility Functions
 
 ```typescript
-// Recursively redact SensitiveString in structures
+// Recursively redact SensitiveString instances and serialize() results in
+// structures, for log lines: class instances become plain objects
 redactInStructure(obj: unknown): unknown;
 
 // Alias for logging context
@@ -715,7 +716,7 @@ safeStringify(
 // Buffer, Date, Map, Set, RegExp, and URL pass through by reference.
 redactCopy(value: unknown): unknown;
 
-// Check for sensitive values
+// Check for sensitive values, SensitiveString instances and serialize() results alike
 containsSensitive(obj: unknown): boolean;
 
 // Collect the sensitivity classes present in a structure

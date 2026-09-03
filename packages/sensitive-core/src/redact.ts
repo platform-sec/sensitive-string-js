@@ -1,5 +1,6 @@
 import { SensitiveString } from './sensitive-string.js';
 import type { SensitivityClass } from './types.js';
+import { carriesSerializedMarker, redactSerialized, serializedClass } from './serialized.js';
 
 /**
  * Identify ordinary objects: plain objects, null-prototype objects, and class
@@ -31,6 +32,9 @@ function redactOwnProperties(obj: object, seen: WeakSet<object>): Record<string,
  * Handles:
  * - Primitive values (returned as-is)
  * - SensitiveString instances (redacted via toString())
+ * - Serialized sensitive values, the `{ __sensitive: true, klass, value }` shape
+ *   `serialize()` produces (replaced by the redaction of the class they name,
+ *   or '[REDACTED]' for a class that is not registered)
  * - Arrays, Map, and Set (recursively processed)
  * - Date (preserved as-is)
  * - Error (name, message, and stack copied into a plain object)
@@ -71,6 +75,13 @@ export function redactInStructure(obj: unknown, seen = new WeakSet<object>()): u
   // Handle SensitiveString - redact to string
   if (obj instanceof SensitiveString) {
     return obj.toString();
+  }
+
+  // A serialize() result carries the raw value by design, and it is a plain
+  // object, so JSON.stringify would emit it. In a log line that is the one
+  // leak toJSON() cannot catch; it takes the class's redaction here instead.
+  if (carriesSerializedMarker(obj)) {
+    return redactSerialized(obj);
   }
 
   // Circular reference protection
@@ -116,17 +127,19 @@ export function redactInStructure(obj: unknown, seen = new WeakSet<object>()): u
     return result;
   }
 
-  // Handle plain objects
-  if (Object.getPrototypeOf(obj) === Object.prototype) {
-    return redactOwnProperties(obj, seen);
-  }
-
-  // Objects that define their own JSON form (URL, Buffer, user classes):
-  // redact that form. A toJSON() that returns the object itself is walked
-  // like any other class instance.
+  // Objects that define their own JSON form (URL, Buffer, user classes, and a
+  // plain object carrying its own toJSON): redact that form. It has to come
+  // before the plain-object copy, because a copy that keeps the function hands
+  // JSON.stringify an unredacted form to call later. A toJSON() that returns
+  // the object itself is walked like any other object.
   if ('toJSON' in obj && typeof obj.toJSON === 'function') {
     const json: unknown = (obj as { toJSON: () => unknown }).toJSON();
     return json === obj ? redactOwnProperties(obj, seen) : redactInStructure(json, seen);
+  }
+
+  // Handle plain objects
+  if (Object.getPrototypeOf(obj) === Object.prototype) {
+    return redactOwnProperties(obj, seen);
   }
 
   // Class instances (entities, DTOs, view models) and null-prototype objects:
@@ -277,7 +290,8 @@ export function createSensitiveSerializer(): (value: unknown) => unknown {
 }
 
 /**
- * Check if a value contains any SensitiveString instances.
+ * Check if a value contains any sensitive value: a SensitiveString instance,
+ * or a serialized one, which holds the raw value in the open.
  * Useful for validation or debugging.
  *
  * Walks arrays, Map and Set entries, plain objects, and the own enumerable
@@ -285,14 +299,14 @@ export function createSensitiveSerializer(): (value: unknown) => unknown {
  *
  * @param obj - The value to check
  * @param seen - WeakSet to track circular references (internal use)
- * @returns true if any SensitiveString is found
+ * @returns true if any SensitiveString or serialized sensitive value is found
  */
 export function containsSensitive(obj: unknown, seen = new WeakSet<object>()): boolean {
   if (obj === null || typeof obj !== 'object') {
     return false;
   }
 
-  if (obj instanceof SensitiveString) {
+  if (obj instanceof SensitiveString || carriesSerializedMarker(obj)) {
     return true;
   }
 
@@ -337,7 +351,9 @@ export function containsSensitive(obj: unknown, seen = new WeakSet<object>()): b
  * values, Set values, plain objects, and the own enumerable properties of class
  * instances. It answers "which classes are in here" where `containsSensitive`
  * answers "is anything in here", so a caller can act on `credential` without
- * acting on `sensitive`.
+ * acting on `sensitive`. A serialized value contributes the class it names when
+ * that class is registered; one naming an unregistered class is counted by
+ * `containsSensitive` but has no class to contribute here.
  *
  * @param obj - The value to inspect
  * @param found - Accumulator for the classes seen so far (internal use)
@@ -361,6 +377,16 @@ export function sensitiveClassesIn(
 
   if (obj instanceof SensitiveString) {
     found.add((obj as SensitiveString<SensitivityClass>).klass);
+    return found;
+  }
+
+  if (carriesSerializedMarker(obj)) {
+    const klass = serializedClass(obj);
+
+    if (klass !== undefined) {
+      found.add(klass);
+    }
+
     return found;
   }
 
