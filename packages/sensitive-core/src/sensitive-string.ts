@@ -5,12 +5,22 @@ import type {
   SensitiveStringOptions,
   SerializedSensitiveString,
   MaskOptions,
+  RenewalOptions,
   RevealContext,
   RevealDetails,
 } from './types.js';
 import { getPolicy, defaultCombineClasses, hasPolicy } from './policy.js';
 import { getCurrentRevealContext } from './context.js';
 import { applyMask, maskAuditDetails, planMask } from './mask.js';
+import {
+  ExpiredSensitiveValueError,
+  expiredDeadline,
+  planExpiry,
+  planRenewal,
+  renewAuditDetails,
+  RenewalNotAllowedError,
+  type ExpiryState,
+} from './ttl.js';
 
 /**
  * Node.js custom inspect symbol for util.inspect() and console.log().
@@ -62,7 +72,19 @@ type RawValueAccess = 'safe' | 'compare' | 'expose';
  */
 interface SensitiveStringState {
   readonly options: SensitiveStringOptions;
+  readonly expiry: ExpiryState;
 }
+
+/**
+ * Passed in place of options by `#derived`, which supplies the state of the
+ * values the derivative came from instead of planning its own.
+ *
+ * Without it a derived value would be planned as a fresh one, and a class whose
+ * policy sets `requireExpiration` would refuse to produce a substring of a value
+ * that does have a deadline. The symbol is module-private and unreachable from
+ * a caller, so the only way onto this path is from inside the class.
+ */
+const DERIVED_CONSTRUCTION = Symbol('SensitiveString.derived');
 
 /**
  * Package-internal derivation of a value from one or more existing values.
@@ -127,6 +149,14 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   #states: readonly SensitiveStringState[];
 
   /**
+   * This instance's own state, or undefined when it was derived from other
+   * values. Only an owner may renew: a derivative shares its sources' state by
+   * reference, so renewing through one would silently extend the lifetime of
+   * the value it came from, and of every other derivative of it.
+   */
+  #own: SensitiveStringState | undefined;
+
+  /**
    * The sensitivity classification for this value.
    */
   readonly klass: C;
@@ -144,12 +174,31 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param klass - The sensitivity classification ('credential' or 'sensitive')
    * @param label - Optional label for audit/compliance (e.g., 'api_key', 'email')
    * @param options - Shared options for access constraints and feature behavior
+   * @throws Error If both `ttl` and `expiresAt` are given, or the class policy requires an expiration and neither is.
+   * @throws TypeError If an option has the wrong type.
+   * @throws RangeError If `ttl` is negative or `expiresAt` is an invalid Date.
    */
   constructor(value: string, klass: C, label?: string, options?: SensitiveStringOptions) {
     this.#value = value;
-    this.#states = [{ options: options ?? {} }];
     this.klass = klass;
     this.label = label;
+
+    if ((options as unknown) === DERIVED_CONSTRUCTION) {
+      // #derived assigns the sources' state objects immediately after this
+      // returns. Planning state here would be discarded, and a policy that
+      // requires an expiration would reject a derivative that has one.
+      this.#states = [];
+      this.#own = undefined;
+      return;
+    }
+
+    const state: SensitiveStringState = {
+      options: options ?? {},
+      expiry: planExpiry(options, klass, getPolicy(klass)),
+    };
+
+    this.#states = [state];
+    this.#own = state;
   }
 
   /**
@@ -157,6 +206,29 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    */
   private get policy(): SensitivityPolicy {
     return getPolicy(this.klass);
+  }
+
+  /**
+   * The earliest deadline this value has passed, or undefined while it is live.
+   *
+   * Private on purpose: the gate must not route its decision through the public
+   * `isExpired()`, which a subclass could override to lift it.
+   */
+  #expiredDeadline(notify: boolean): number | undefined {
+    const now = Date.now();
+    let earliest: number | undefined;
+
+    // Every source state is checked rather than only the first match, so a
+    // derivative of two expiring values fires both onExpire callbacks.
+    for (const state of this.#states) {
+      const deadline = expiredDeadline(state.expiry, now, notify);
+
+      if (deadline !== undefined && (earliest === undefined || deadline < earliest)) {
+        earliest = deadline;
+      }
+    }
+
+    return earliest;
   }
 
   /**
@@ -173,6 +245,13 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   ): string {
     if (access === 'safe') {
       return this.#value;
+    }
+
+    // Before authorization and before the audit hook: a denied read is not a
+    // reveal, and must not be logged as one.
+    const expired = this.#expiredDeadline(true);
+    if (expired !== undefined) {
+      throw new ExpiredSensitiveValueError(new Date(expired), new Date(), this.label);
     }
 
     const effectiveCtx = ctx ?? getCurrentRevealContext();
@@ -194,7 +273,12 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     label: string | undefined,
     sources: readonly SensitiveString<SensitivityClass>[]
   ): SensitiveString<D> {
-    const derived = new SensitiveString(value, klass, label);
+    const derived = new SensitiveString(
+      value,
+      klass,
+      label,
+      DERIVED_CONSTRUCTION as unknown as SensitiveStringOptions
+    );
     const states = new Set<SensitiveStringState>();
 
     for (const source of sources) {
@@ -256,11 +340,17 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
 
   /**
    * Custom inspect for Node.js util.inspect() and console.log().
-   * Displays the class, optional label, and redacted value.
+   * Displays the class, optional label, redacted value, and expiry state.
+   *
+   * The redacted form stays exactly what the class policy produces: expiry is
+   * reported next to it rather than in place of it, so a custom redaction is
+   * never replaced by a lifecycle marker. Inspecting is not an access, so this
+   * does not fire `onExpire`.
    */
   [NODE_INSPECT_SYMBOL](): string {
     const klassLabel = this.label ? `${this.klass}:${this.label}` : this.klass;
-    return `SensitiveString<${klassLabel}> { ${this.toString()} }`;
+    const expired = this.#expiredDeadline(false) !== undefined ? ' EXPIRED' : '';
+    return `SensitiveString<${klassLabel}> { ${this.toString()}${expired} }`;
   }
 
   /**
@@ -320,6 +410,127 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     const value = this.#readRawValue('expose', ctx, maskAuditDetails(plan));
 
     return applyMask(value, plan, (raw) => policy.redact(raw));
+  }
+
+  /**
+   * The deadline after which this value can no longer be read, if it has one.
+   *
+   * A derived value carries the deadlines of every value it came from, and this
+   * reports the earliest of them: a substring of an expired OTP is expired, and
+   * a concatenation is only usable while both of its operands are.
+   *
+   * Returns a copy, so the deadline cannot be moved through it.
+   */
+  get expiresAt(): Date | undefined {
+    let earliest: number | undefined;
+
+    for (const state of this.#states) {
+      const { deadline } = state.expiry;
+
+      if (deadline !== undefined && (earliest === undefined || deadline < earliest)) {
+        earliest = deadline;
+      }
+    }
+
+    return earliest === undefined ? undefined : new Date(earliest);
+  }
+
+  /**
+   * Whether the deadline has passed. A value is not usable at its own deadline.
+   *
+   * The first detection fires the `onExpire` callback of every expired source.
+   */
+  isExpired(): boolean {
+    return this.#expiredDeadline(true) !== undefined;
+  }
+
+  /**
+   * Milliseconds until the deadline, `-1` once it has passed, or `undefined`
+   * when this value does not expire.
+   */
+  ttlRemaining(): number | undefined {
+    const expiresAt = this.expiresAt;
+
+    if (expiresAt === undefined) {
+      return undefined;
+    }
+
+    const remaining = expiresAt.getTime() - Date.now();
+    return remaining <= 0 ? -1 : remaining;
+  }
+
+  /**
+   * Whether `renew()` would be accepted right now.
+   *
+   * Renewal needs a deadline to extend, permission from the class policy and
+   * the construction options, an unexhausted renewal budget, and ownership of
+   * the deadline: a derived value cannot renew one it shares.
+   */
+  isRenewable(): boolean {
+    const own = this.#own;
+
+    if (own === undefined || own.expiry.deadline === undefined || !own.expiry.allowRenewal) {
+      return false;
+    }
+
+    const { maxRenewals, renewalCount } = own.expiry;
+    return maxRenewals === undefined || renewalCount < maxRenewals;
+  }
+
+  /**
+   * How many times this value has extended the deadline it owns.
+   *
+   * A derived value owns no deadline and reports `0`, however often the value
+   * it came from has been renewed.
+   */
+  get renewalCount(): number {
+    return this.#own?.expiry.renewalCount ?? 0;
+  }
+
+  /**
+   * Extend the deadline, when the class policy and the construction options
+   * allow it.
+   *
+   * An expired value extends from now rather than from its lapsed deadline, so
+   * a sliding session that missed a heartbeat is granted the full duration.
+   * Reviving a value this way is why `allowRenewal` defaults to `false` for
+   * `credential` and why a policy may forbid it outright.
+   *
+   * The extension is audited before it takes effect, so an audit sink that
+   * throws stops it, and a refused renewal leaves no record of one that never
+   * happened. Renewing is not a read: it does not disclose the value, and it
+   * works on an expired one.
+   *
+   * @param additionalTtl - Milliseconds to add. Must be positive.
+   * @param options - `maxExtension` clamps the resulting deadline.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   * @throws RenewalNotAllowedError If renewal is refused, or a cap leaves no room to extend.
+   * @throws RangeError If `additionalTtl` is not a positive, finite number.
+   *
+   * @example
+   * ```ts
+   * const session = new SensitiveString(token, 'sensitive', 'session', { ttl: 15 * 60_000 });
+   * session.renew(15 * 60_000, { maxExtension: absoluteSessionDeadline });
+   * ```
+   */
+  renew(additionalTtl: number, options: RenewalOptions = {}, ctx?: RevealContext): void {
+    const own = this.#own;
+
+    if (own === undefined) {
+      throw new RenewalNotAllowedError('derived', this.label);
+    }
+
+    const { expiry } = own;
+    const plan = planRenewal(expiry, additionalTtl, options, this.label);
+
+    const effectiveCtx = ctx ?? getCurrentRevealContext();
+    this.policy.checkRevealAllowed?.(effectiveCtx);
+    effectiveCtx?.auditReveal?.(this, renewAuditDetails(expiry, plan));
+
+    expiry.deadline = plan.next;
+    expiry.renewalCount++;
+    // The new deadline is a new expiration, so its own notification is due.
+    expiry.notified = false;
   }
 
   /**
@@ -765,25 +976,35 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    *
    * Intended for mTLS/encrypted transmission only.
    *
+   * A deadline travels with the value, so a token with five minutes left still
+   * has five minutes left on the other side. The receiver enforces it against
+   * its own clock: a receiver whose clock runs ahead of the sender's rejects the
+   * value early, which is the direction to fail in. Renewal permission and
+   * renewal counts do not travel, so a payload cannot grant the right to extend
+   * a credential's lifetime.
+   *
    * @param ctx - Optional context for audit/permission checks
+   * @throws ExpiredSensitiveValueError If the value has expired.
    */
   serialize(ctx?: RevealContext): SerializedSensitiveString {
     const value = this.#readRawValue('expose', ctx);
+    const expiresAt = this.expiresAt;
 
-    if (this.label !== undefined) {
-      return {
-        __sensitive: true as const,
-        klass: this.klass,
-        value,
-        label: this.label,
-      };
-    }
-
-    return {
+    const serialized: SerializedSensitiveString = {
       __sensitive: true as const,
       klass: this.klass,
       value,
     };
+
+    if (this.label !== undefined) {
+      serialized.label = this.label;
+    }
+
+    if (expiresAt !== undefined) {
+      serialized.expiresAt = expiresAt.toISOString();
+    }
+
+    return serialized;
   }
 
   /**
@@ -828,7 +1049,39 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     const label =
       'label' in serialized && typeof serialized.label === 'string' ? serialized.label : undefined;
 
-    return new SensitiveString(serialized.value, serialized.klass as C, label);
+    return new SensitiveString(
+      serialized.value,
+      serialized.klass as C,
+      label,
+      SensitiveString.#deserializeOptions(serialized)
+    );
+  }
+
+  /**
+   * Rebuild the construction options carried by a serialized form.
+   *
+   * Only the deadline crosses. Renewal permission and renewal counts are
+   * decided locally, by the receiving process's policy: taking them from a
+   * payload would let a sender declare a credential renewable.
+   */
+  static #deserializeOptions(serialized: object): SensitiveStringOptions | undefined {
+    if (!('expiresAt' in serialized) || serialized.expiresAt === undefined) {
+      return undefined;
+    }
+
+    if (typeof serialized.expiresAt !== 'string') {
+      throw new Error('Invalid SerializedSensitiveString: expiresAt must be an ISO 8601 string');
+    }
+
+    const expiresAt = new Date(serialized.expiresAt);
+
+    if (Number.isNaN(expiresAt.getTime())) {
+      throw new Error(
+        `Invalid SerializedSensitiveString: expiresAt '${serialized.expiresAt}' is not a valid date`
+      );
+    }
+
+    return { expiresAt };
   }
 
   /**

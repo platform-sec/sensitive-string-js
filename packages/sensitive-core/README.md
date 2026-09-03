@@ -55,6 +55,8 @@ const raw = apiKey.reveal({ name: 'api-call', reason: 'authenticating' });
 - **Built-in Patterns**: Anchored `patterns.email` structural validation
 - **Template Literals**: `st` builds a protected value from interpolated secrets, inheriting the
   most restrictive class
+- **Expiration**: `ttl` and `expiresAt` stop a value from being used past its deadline, and
+  derived values expire with the value they came from
 - **Path-Based Wrapping**: Wrap sensitive fields in complex objects by path
 - **Zero External Dependencies**: Only uses Node.js built-ins
 

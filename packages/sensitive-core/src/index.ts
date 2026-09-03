@@ -42,6 +42,8 @@ export type {
   MaskOptions,
   MaskStrategy,
   MaskAuditDetails,
+  RenewalOptions,
+  RenewAuditDetails,
   RevealAuditDetails,
   RevealContext,
   RevealDetails,
@@ -52,6 +54,10 @@ export { SENSITIVITY_PRECEDENCE } from './types.js';
 
 // Main class
 export { SensitiveString } from './sensitive-string.js';
+
+// Expiration
+export { ExpiredSensitiveValueError, RenewalNotAllowedError } from './ttl.js';
+export type { RenewalRefusal } from './ttl.js';
 
 // Anchored patterns for common sensitive-value formats
 export { patterns } from './patterns.js';

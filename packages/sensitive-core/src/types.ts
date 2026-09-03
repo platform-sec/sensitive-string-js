@@ -22,13 +22,53 @@ export const SENSITIVITY_PRECEDENCE: readonly SensitivityClass[] = [
 /**
  * Options shared by every SensitiveString feature.
  *
- * This interface is intentionally empty until an option-bearing feature is
- * implemented. It is defined centrally so features can add optional fields
- * without introducing competing constructor arguments. As an interface, it
- * can also be extended through declaration merging by integration packages.
+ * There is one options object rather than a fourth constructor argument per
+ * feature, so features compose instead of competing. As an interface, it can
+ * also be extended through declaration merging by integration packages.
  */
-// eslint-disable-next-line @typescript-eslint/no-empty-interface
-export interface SensitiveStringOptions {}
+export interface SensitiveStringOptions {
+  /**
+   * Lifetime in milliseconds, measured from construction.
+   *
+   * `0` means the value is already expired, which is the most conservative TTL
+   * a caller can ask for. Mutually exclusive with `expiresAt`.
+   */
+  ttl?: number;
+
+  /**
+   * Absolute deadline. Mutually exclusive with `ttl`.
+   *
+   * Read once, at construction, so mutating the Date afterwards does not move
+   * the deadline. A deadline in the past yields a value that is already expired.
+   */
+  expiresAt?: Date;
+
+  /**
+   * Whether `renew()` may extend the deadline.
+   *
+   * Defaults to `false` for `credential` and `true` for `sensitive`. A policy
+   * that sets `allowRenewal: false` forbids renewal outright, and this option
+   * cannot lift that.
+   */
+  allowRenewal?: boolean;
+
+  /** Total number of renewals allowed. Unlimited when unset. */
+  maxRenewals?: number;
+
+  /**
+   * Called once when expiry is first detected, on the value and on everything
+   * derived from it. Errors thrown by it are swallowed.
+   */
+  onExpire?: () => void;
+}
+
+/**
+ * Options for `SensitiveString.renew()`.
+ */
+export interface RenewalOptions {
+  /** Latest deadline this renewal may produce. The result is clamped to it. */
+  maxExtension?: Date;
+}
 
 /**
  * Built-in masking strategies for well-known value formats, plus `custom` for a
@@ -93,10 +133,26 @@ export interface MaskAuditDetails {
 }
 
 /**
- * What the audited operation was, so an audit sink can tell a full reveal from
- * a partial one.
+ * Audit record for a deadline extension through `renew()`.
+ *
+ * Deadlines are ISO 8601 strings rather than Dates, so a sink receives a record
+ * it can serialize directly and cannot use to move a deadline.
  */
-export type RevealDetails = RevealAuditDetails | MaskAuditDetails;
+export interface RenewAuditDetails {
+  readonly operation: 'renew';
+  /** The deadline before this renewal. */
+  readonly previousExpiresAt: string;
+  /** The deadline this renewal set. */
+  readonly expiresAt: string;
+  /** How many renewals this value has had, including this one. */
+  readonly renewalCount: number;
+}
+
+/**
+ * What the audited operation was, so an audit sink can tell a full reveal from
+ * a partial one, and either from a lifetime extension.
+ */
+export type RevealDetails = RevealAuditDetails | MaskAuditDetails | RenewAuditDetails;
 
 /**
  * Advisory metadata for sensitivity policies.
@@ -180,6 +236,39 @@ export interface SensitivityPolicy {
   allowMask?: boolean;
 
   /**
+   * Whether values of this class may be renewed.
+   *
+   * `false` is a prohibition that the `allowRenewal` construction option cannot
+   * lift. `true` makes the class renewable by default. Unset leaves the class
+   * default: credentials are not renewable, everything else is.
+   */
+  allowRenewal?: boolean;
+
+  /**
+   * Lifetime in milliseconds applied to values of this class that are
+   * constructed without `ttl` or `expiresAt`.
+   */
+  defaultTtl?: number;
+
+  /**
+   * Longest lifetime, in milliseconds from construction, any value of this
+   * class may have.
+   *
+   * It caps the deadline at construction, caps every renewal, and gives a
+   * deadline to a value that would otherwise have none, so no value of the
+   * class outlives it.
+   */
+  maxTtl?: number;
+
+  /**
+   * Reject construction of a value of this class that has no deadline.
+   *
+   * `defaultTtl` or `maxTtl` satisfy the requirement, so it only rejects a
+   * class that sets neither and a caller who passes neither.
+   */
+  requireExpiration?: boolean;
+
+  /**
    * Hook to validate whether reveal is allowed in the given context.
    * Throw an error to deny the reveal.
    */
@@ -210,4 +299,14 @@ export interface SerializedSensitiveString {
   value: string;
   /** Optional label for audit/compliance categorization */
   label?: string;
+  /**
+   * ISO 8601 deadline, when the value expires.
+   *
+   * A token with five minutes left still has five minutes left after crossing a
+   * service boundary, so the deadline travels with the value and the receiver
+   * enforces it against its own clock. Renewal permission and renewal counts
+   * deliberately do not travel: a receiver must not take "you may extend this
+   * credential's lifetime" from a payload.
+   */
+  expiresAt?: string;
 }

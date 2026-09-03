@@ -234,6 +234,14 @@ class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   
   // Comparison
   equals(other: string | SensitiveString, ctx?: RevealContext): boolean;
+
+  // Expiration
+  readonly expiresAt?: Date;
+  readonly renewalCount: number;
+  isExpired(): boolean;
+  ttlRemaining(): number | undefined;
+  isRenewable(): boolean;
+  renew(additionalTtl: number, options?: RenewalOptions, ctx?: RevealContext): void;
   
   // Manipulation
   concat(other: string | SensitiveString, ctx?: RevealContext): SensitiveString;
@@ -502,6 +510,113 @@ logger.info('User logged in', safeLog({ userId })); // structured field, redacte
 
 Values are never interpolated into SQL, sensitive or not. Use a parameterized query and reveal the
 parameter at the driver boundary.
+
+### Expiration (TTL)
+
+```typescript
+interface SensitiveStringOptions {
+  ttl?: number;           // milliseconds from construction
+  expiresAt?: Date;       // absolute deadline; mutually exclusive with ttl
+  allowRenewal?: boolean; // default: false for 'credential', true for 'sensitive'
+  maxRenewals?: number;
+  onExpire?: () => void;
+}
+
+interface RenewalOptions {
+  maxExtension?: Date;
+}
+```
+
+A one-time code, a reset token, or a short-lived credential should stop working at a deadline even
+if a long-running process still holds a reference to it. Tracking that by hand needs a check at
+every call site, and the one that is forgotten is the one that matters.
+
+```typescript
+const otp = new SensitiveString(code, 'credential', 'otp', { ttl: 5 * 60_000 });
+
+otp.reveal();       // works
+otp.ttlRemaining(); // 299_987
+otp.isExpired();    // false
+
+// ...five minutes later
+otp.isExpired();    // true
+otp.ttlRemaining(); // -1
+otp.reveal();       // throws ExpiredSensitiveValueError
+```
+
+The check lives in the single gate every path to the raw value goes through, so `equals()`,
+`mask()`, `serialize()`, and every string, regex, and template operation refuse an expired value
+alongside `reveal()`. Redaction and documented metadata do not: `toString()`, `toJSON()`,
+`length`, `klass`, and `label` keep working, because a value that can no longer be used still has
+to be safe to log.
+
+`ttl: 0` means "already expired", not "no TTL", and a value is not usable at its own deadline: the
+comparison is `now >= expiresAt`. `ttl` and `expiresAt` are mutually exclusive, and the `Date` is
+read once at construction, so mutating it afterwards moves nothing.
+
+Derived values carry the deadlines of everything they were built from, and expire with the first
+of them:
+
+```typescript
+const token = new SensitiveString(raw, 'credential', 'token', { ttl: 60_000 });
+
+token.substring(0, 8).isExpired();      // follows token
+st`Bearer ${token}`.isExpired();        // follows token
+shortLived.concat(longLived).expiresAt; // the earlier of the two
+```
+
+`renew()` extends a deadline when the class allows it. It is not a read, so it works on an expired
+value and extends from now rather than from the lapsed deadline, which is what a sliding session
+that missed a heartbeat needs. Reviving a value that way is also why `allowRenewal` defaults to
+`false` for `credential`. The extension is audited before it takes effect, so an audit sink that
+throws stops it, and a refused renewal leaves no record of one that never happened.
+
+```typescript
+const session = new SensitiveString(token, 'sensitive', 'session', { ttl: 15 * 60_000 });
+
+session.isRenewable(); // true
+session.renew(15 * 60_000, { maxExtension: absoluteSessionDeadline });
+session.renewalCount;  // 1
+```
+
+Only the value that owns a deadline may renew it. A derivative shares its sources' state by
+reference, so renewing through one would silently extend the value it came from, and every other
+derivative of it; `derived.renew()` throws `RenewalNotAllowedError` with `reason: 'derived'`.
+
+A policy can set expiration for a whole class:
+
+```typescript
+registerPolicy({
+  name: 'credential',
+  redact: (value) => '[REDACTED:credential]',
+  defaultTtl: 60 * 60_000,  // applied when the caller sets neither ttl nor expiresAt
+  maxTtl: 8 * 60 * 60_000,  // absolute cap, from construction, on the deadline and every renewal
+  requireExpiration: true,  // reject a value of this class that has no deadline
+  allowRenewal: false,      // a prohibition the allowRenewal option cannot lift
+}, { overwrite: true });
+```
+
+`maxTtl` is measured from construction, so it is an absolute lifetime rather than something a
+renewal can push forward. A renewal that the cap swallows entirely throws rather than reporting a
+success that changed nothing.
+
+The deadline crosses the wire, because a token with five minutes left still has five minutes left
+on the other side:
+
+```typescript
+const serialized = token.serialize();
+// { __sensitive: true, klass: 'credential', value: '...', expiresAt: '2026-01-01T00:05:00.000Z' }
+```
+
+The receiver enforces it against its own clock. Clock synchronization is the deployment's problem,
+not the library's; a receiver whose clock runs ahead of the sender's rejects the value early, which
+is the direction to fail in. Renewal permission and renewal counts deliberately do not travel, so a
+payload cannot grant the right to extend a credential's lifetime, and the receiving process's
+policy still applies its own `maxTtl` and `requireExpiration`.
+
+Expiration is a usability control on the values this process holds, not a cryptographic one. It
+stops code from using a stale secret; it does not erase the secret from memory, and it does not
+constrain a holder of the raw string that was already revealed.
 
 ### Zod Schemas
 

@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the `minMasked` floor, which defaults to 4 for `sensitive` and 8 for `credential`.
 - Added `RevealDetails` to the `auditReveal` callback and to `withAuditedReveals`, so an audit sink
   can tell a full reveal from a mask and see the options that produced it.
+- Added expiration: the `ttl`, `expiresAt`, `allowRenewal`, `maxRenewals`, and `onExpire`
+  construction options, the `expiresAt` and `renewalCount` properties, and the `isExpired()`,
+  `ttlRemaining()`, `isRenewable()`, and `renew()` methods.
+- Added the `ExpiredSensitiveValueError` and `RenewalNotAllowedError` error classes, so a caller can
+  tell a lapsed deadline from a policy denial and decide whether to fetch a fresh secret.
+- Added the `allowRenewal`, `defaultTtl`, `maxTtl`, and `requireExpiration` policy fields, which set
+  and cap expiration for a whole sensitivity class.
+- Added `expiresAt` to the serialized wire format, and a `renew` audit record carrying both
+  deadlines and the renewal count.
 
 ### Security
 
@@ -54,6 +63,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `strategy: 'custom'`, and its output is never measured against the floor.
 - Mask options are validated before the value is read, so a rejected call leaves no audit record
   for a mask that was never rendered.
+- Expiry is checked in the single gate every path to the raw value goes through, so `equals()`,
+  `mask()`, `serialize()`, and every string, regex, and template operation refuse an expired value
+  alongside `reveal()`. The check runs before authorization and before the audit hook, so a refusal
+  is never logged as a reveal, and it cannot be lifted by overriding or shadowing `isExpired()`.
+- Derived values carry the deadlines of every value they were built from and expire with the first
+  of them, so a substring of an expired value is expired and a concatenation is usable only while
+  both operands are.
+- Only the value that owns a deadline may renew it. A derivative shares its sources' state by
+  reference, so renewing through one would silently extend the value it came from.
+- `ttl: 0` means "already expired" rather than "no TTL", and a value is not usable at its own
+  deadline. A negative `ttl` is rejected rather than read as a deadline in the past.
+- A policy's `allowRenewal: false` is a prohibition that the construction option cannot lift, and
+  `maxTtl` is measured from construction, so no renewal can push an absolute lifetime forward.
+- A renewal is audited before it takes effect, so an audit sink that throws stops it, and a renewal
+  that a cap swallows entirely throws rather than reporting a success that changed nothing.
+- Renewal permission and renewal counts do not cross the wire, so a payload cannot grant the right
+  to extend a credential's lifetime; the receiving policy applies its own caps to a received
+  deadline.
+- An absolute deadline is read once, through the intrinsic `Date.prototype.getTime`, so neither
+  mutating the `Date` afterwards nor overriding its `getTime` moves a deadline the library accepted.
 
 ## [0.1.0] - 2024-XX-XX
 
