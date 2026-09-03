@@ -1,4 +1,5 @@
 import { SensitiveString } from './sensitive-string.js';
+import type { SensitivityClass } from './types.js';
 
 /**
  * Identify ordinary objects: plain objects, null-prototype objects, and class
@@ -267,4 +268,74 @@ export function containsSensitive(obj: unknown, seen = new WeakSet<object>()): b
   }
 
   return false;
+}
+
+/**
+ * Collect the sensitivity classes present anywhere in a value.
+ *
+ * The traversal matches {@link containsSensitive} exactly: arrays, Map keys and
+ * values, Set values, plain objects, and the own enumerable properties of class
+ * instances. It answers "which classes are in here" where `containsSensitive`
+ * answers "is anything in here", so a caller can act on `credential` without
+ * acting on `sensitive`.
+ *
+ * @param obj - The value to inspect
+ * @param found - Accumulator for the classes seen so far (internal use)
+ * @param seen - WeakSet to track circular references (internal use)
+ * @returns The set of sensitivity classes found, empty when there are none
+ *
+ * @example
+ * ```ts
+ * const classes = sensitiveClassesIn({ token: apiKey, email: userEmail });
+ * classes.has('credential'); // true
+ * ```
+ */
+export function sensitiveClassesIn(
+  obj: unknown,
+  found = new Set<SensitivityClass>(),
+  seen = new WeakSet<object>()
+): Set<SensitivityClass> {
+  if (obj === null || typeof obj !== 'object') {
+    return found;
+  }
+
+  if (obj instanceof SensitiveString) {
+    found.add((obj as SensitiveString<SensitivityClass>).klass);
+    return found;
+  }
+
+  if (seen.has(obj)) {
+    return found;
+  }
+  seen.add(obj);
+
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      sensitiveClassesIn(item, found, seen);
+    }
+    return found;
+  }
+
+  if (obj instanceof Map) {
+    for (const [key, value] of obj) {
+      sensitiveClassesIn(key, found, seen);
+      sensitiveClassesIn(value, found, seen);
+    }
+    return found;
+  }
+
+  if (obj instanceof Set) {
+    for (const value of obj) {
+      sensitiveClassesIn(value, found, seen);
+    }
+    return found;
+  }
+
+  if (isOrdinaryObject(obj)) {
+    for (const value of Object.values(obj)) {
+      sensitiveClassesIn(value, found, seen);
+    }
+  }
+
+  return found;
 }

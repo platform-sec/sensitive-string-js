@@ -93,8 +93,13 @@ export {
   safeStringify,
   createSensitiveSerializer,
   containsSensitive,
+  sensitiveClassesIn,
 } from './redact.js';
 export type { SafeStringifyOptions } from './redact.js';
+
+// Winston format
+export { sensitiveFormat } from './winston.js';
+export type { SensitiveFormatOptions, WinstonFormat, WinstonInfo } from './winston.js';
 
 // Path-based wrapping utilities
 export {

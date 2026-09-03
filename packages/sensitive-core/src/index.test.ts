@@ -14,6 +14,7 @@ import {
   safeLog,
   safeStringify,
   containsSensitive,
+  sensitiveClassesIn,
 } from './index.js';
 
 // Canary value for leak detection - if this appears in output, redaction failed
@@ -857,6 +858,49 @@ describe('Redaction Helpers', () => {
     expect(containsSensitive(new Set([new SensitiveString('x', 'credential')]))).toBe(true);
     expect(containsSensitive(new Map([['plain', 'value']]))).toBe(false);
     expect(containsSensitive(new Set(['plain']))).toBe(false);
+  });
+
+  it('test_sensitiveClassesIn', () => {
+    const mixed = {
+      token: new SensitiveString('secret', 'credential'),
+      email: new SensitiveString('a@b.c', 'sensitive'),
+      plain: 'value',
+    };
+
+    expect([...sensitiveClassesIn(mixed)].sort()).toEqual(['credential', 'sensitive']);
+    expect([...sensitiveClassesIn({ email: new SensitiveString('a@b.c', 'sensitive') })]).toEqual([
+      'sensitive',
+    ]);
+    expect(sensitiveClassesIn({ plain: 'value' }).size).toBe(0);
+    expect(sensitiveClassesIn(null).size).toBe(0);
+    expect(sensitiveClassesIn('string').size).toBe(0);
+  });
+
+  it('test_sensitiveClassesIn_walks_arrays_maps_sets_and_class_instances', () => {
+    class Entity {
+      token = new SensitiveString('x', 'credential');
+    }
+
+    expect([...sensitiveClassesIn([1, new SensitiveString('x', 'sensitive')])]).toEqual([
+      'sensitive',
+    ]);
+    expect([...sensitiveClassesIn(new Entity())]).toEqual(['credential']);
+    expect([...sensitiveClassesIn(new Map([['k', new SensitiveString('x', 'credential')]]))]).toEqual(
+      ['credential']
+    );
+    expect([...sensitiveClassesIn(new Set([new SensitiveString('x', 'sensitive')]))]).toEqual([
+      'sensitive',
+    ]);
+    expect([...sensitiveClassesIn(new Map([[new SensitiveString('x', 'credential'), 'v']]))]).toEqual(
+      ['credential']
+    );
+  });
+
+  it('test_sensitiveClassesIn_handles_circular_references', () => {
+    const circular: Record<string, unknown> = { token: new SensitiveString('x', 'credential') };
+    circular['self'] = circular;
+
+    expect([...sensitiveClassesIn(circular)]).toEqual(['credential']);
   });
 
   describe('class instances', () => {

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `sensitiveFormat()`, a winston format that redacts every `SensitiveString` in a log record
+  before a terminal format or a transport serializes it. Install it at the front of
+  `format.combine(...)`; in a later position the output string already exists and the format emits a
+  process warning saying so. It adds no runtime dependency, because winston's format contract is
+  satisfied structurally.
+- Added `dropClasses` to `sensitiveFormat()`, which discards a whole record that carries a given
+  sensitivity class rather than redacting it, so a transport can refuse credential-bearing records
+  outright. Its companion `stampClasses` records what a record carried before redaction erased the
+  evidence, which is what lets a transport-level check work behind a logger-level redaction.
+- Added `sensitiveClassesIn()`, which collects the sensitivity classes present anywhere in a
+  structure, where `containsSensitive()` only answers yes or no.
 - Added protected string transformations for trimming, case conversion, padding, slicing,
   splitting, replacement, and character access.
 - Added policy-controlled partial queries for prefix, suffix, containment, and index checks.

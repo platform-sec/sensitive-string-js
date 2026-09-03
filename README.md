@@ -696,8 +696,20 @@ safeStringify(obj: unknown, options?: { pretty?: boolean }): string;
 // Check for sensitive values
 containsSensitive(obj: unknown): boolean;
 
+// Collect the sensitivity classes present in a structure
+sensitiveClassesIn(obj: unknown): Set<SensitivityClass>;
+
 // Create logger serializer
 createSensitiveSerializer(): (value: unknown) => unknown;
+
+// Winston format
+sensitiveFormat(options?: {
+  dropClasses?: readonly SensitivityClass[];
+  redactSplat?: boolean;
+  stampClasses?: boolean;
+  warnOnLateInstall?: boolean;
+  onError?: (error: unknown) => void;
+}): WinstonFormat;
 ```
 
 ### Context Management
@@ -924,6 +936,49 @@ async login(
     tags: { ip: req.ip }
   }, () => this.authService.login(dto));
 }
+```
+
+### Logger Integration (Winston)
+
+```typescript
+import winston from 'winston';
+import { sensitiveFormat } from '@platform-sec/sensitive-string-core';
+
+const logger = winston.createLogger({
+  format: winston.format.combine(sensitiveFormat(), winston.format.json()),
+  transports: [new winston.transports.Console()],
+});
+
+logger.info('Processing request', { token: sensitiveToken });
+// {"level":"info","message":"Processing request","token":"[REDACTED:credential]"}
+```
+
+Install it at the **front** of `format.combine(...)`. In any later position the
+output string has already been built and redaction cannot change what is
+written; the format emits a process warning if it detects this.
+
+Winston's own formats already redact `SensitiveString`, because the class
+overrides `toString()`, `toJSON()`, and the inspect hook. The format matters for
+transports that serialize the record themselves rather than through those hooks,
+such as those writing to Elasticsearch, MongoDB, or an HTTP collector, and it
+makes the redacted text identical across every transport.
+
+A transport can also refuse records by sensitivity class outright:
+
+```typescript
+const logger = winston.createLogger({
+  // stampClasses records what was redacted, so the transport check below can
+  // still see it. Without it, redaction erases the evidence dropping needs.
+  format: winston.format.combine(sensitiveFormat({ stampClasses: true }), winston.format.json()),
+  transports: [
+    new winston.transports.File({ filename: 'audit.log' }),
+    new winston.transports.File({
+      filename: 'debug.log',
+      level: 'debug',
+      format: sensitiveFormat({ dropClasses: ['credential'] }),
+    }),
+  ],
+});
 ```
 
 ### Logger Integration (Pino)
