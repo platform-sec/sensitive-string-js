@@ -321,6 +321,79 @@ so it cannot be interrupted safely with a timeout on the current thread; isolati
 would require an asynchronous API and copying the raw value into another heap. Only use trusted,
 bounded-complexity patterns with these methods.
 
+### Template Literals
+
+```typescript
+sensitiveTemplate(
+  strings: TemplateStringsArray,
+  ...values: TemplateValue[]
+): SensitiveString<SensitivityClass>;
+
+sensitiveTemplate<K extends SensitivityClass>(
+  options: SensitiveTemplateOptions<K>
+): SensitiveTemplateTag<K>;
+
+const st = sensitiveTemplate;
+
+type TemplateValue = string | number | boolean | SensitiveString<SensitivityClass>;
+
+interface SensitiveTemplateOptions<K extends SensitivityClass = SensitivityClass> {
+  ctx?: RevealContext;
+  label?: string;
+  klass?: K;
+}
+```
+
+Building a URL or a connection string from several protected values otherwise takes a `reveal()`
+call per value and a hand-picked class. The `st` tag does both: every interpolated
+`SensitiveString` is read through `reveal()`, so policy checks and audit hooks run once per value,
+and the result inherits the most restrictive interpolated class through the same combination rule
+`concat()` uses.
+
+```typescript
+import { SensitiveString, st } from '@platform-sec/sensitive-string-core';
+
+const apiKey = new SensitiveString('sk_live_abc123', 'credential', 'api_key');
+const userId = new SensitiveString('user_456', 'sensitive', 'user_id');
+
+const url = st`https://api.example.com/users/${userId}?key=${apiKey}`;
+url.klass; // 'credential', inherited from apiKey
+String(url); // '[REDACTED:credential]'
+```
+
+The configured form adds an audit context, a label, and a class. The class may only be tightened:
+a `klass` less restrictive than the interpolated values is rejected before anything is revealed.
+Lowering a class remains the job of `reclassify()`, which audits the downgrade.
+
+```typescript
+const url = sensitiveTemplate({
+  ctx: { name: 'build-api-url', reason: 'constructing external API request' },
+  label: 'gateway_url',
+  klass: 'credential',
+})`https://gateway.example.com/charge?user=${userId}`;
+
+sensitiveTemplate({ klass: 'sensitive' })`key=${apiKey}`;
+// Error: klass 'sensitive' is less restrictive than interpolated class 'credential'
+```
+
+Only strings, numbers, booleans, and `SensitiveString` values may be interpolated. Everything else
+throws a `TypeError` naming the index and the runtime type, never the value, and the check runs
+before any value is revealed. Coercing an arbitrary object would embed `[object Object]` in a
+credential or hand the template an attacker-controlled `toString()`; the same rule rejects an
+instance from a duplicate copy of the package, which `instanceof` cannot recognize.
+
+The whole result is one protected value, plain parts included, so it redacts as a unit. That makes
+it the wrong tool for a log line:
+
+```typescript
+logger.info(String(st`User ${userId} logged in`)); // '[REDACTED:sensitive]'
+logger.info(`User ${userId} logged in`); // 'User [REDACTED:sensitive] logged in'
+logger.info('User logged in', safeLog({ userId })); // structured field, redacted
+```
+
+Values are never interpolated into SQL, sensitive or not. Use a parameterized query and reveal the
+parameter at the driver boundary.
+
 ### Zod Schemas
 
 ```typescript

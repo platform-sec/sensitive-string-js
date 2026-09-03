@@ -56,6 +56,34 @@ interface SensitiveStringState {
 }
 
 /**
+ * Package-internal derivation of a value from one or more existing values.
+ *
+ * An operation that builds on protected values must retain the state of every
+ * value it read, so a constraint such as a reveal counter is never dropped by
+ * deriving from it. That logic lives in the private `SensitiveString.#derived`,
+ * which is only reachable from inside the class body, so the class publishes it
+ * here for the sibling modules that build derived values.
+ *
+ * This binding is deliberately absent from `index.ts`, and the package `exports`
+ * map declares no deep entry, so it is not part of the published API.
+ *
+ * @internal
+ */
+export type DeriveSensitiveString = <D extends SensitivityClass>(
+  value: string,
+  klass: D,
+  label: string | undefined,
+  sources: readonly SensitiveString<SensitivityClass>[]
+) => SensitiveString<D>;
+
+/**
+ * Assigned once, from the static block at the end of the class body.
+ *
+ * @internal
+ */
+export let deriveSensitiveString: DeriveSensitiveString;
+
+/**
  * Secure wrapper for sensitive string data.
  *
  * Features:
@@ -164,6 +192,15 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
 
     derived.#states = Array.from(states);
     return derived;
+  }
+
+  static {
+    // The private access is deferred to call time on purpose. A CommonJS emit
+    // rewrites the class name inside the class body to a temporary that is only
+    // assigned once the class definition completes, so reading `#derived` here
+    // would fail the brand check.
+    deriveSensitiveString = (value, klass, label, sources) =>
+      SensitiveString.#derived(value, klass, label, sources);
   }
 
   /**

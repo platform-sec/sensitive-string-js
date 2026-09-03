@@ -50,6 +50,10 @@ export { SensitiveString } from './sensitive-string.js';
 // Anchored patterns for common sensitive-value formats
 export { patterns } from './patterns.js';
 
+// Template literals
+export { sensitiveTemplate, st } from './template.js';
+export type { TemplateValue, SensitiveTemplateOptions, SensitiveTemplateTag } from './template.js';
+
 // Policy management
 export {
   registerPolicy,

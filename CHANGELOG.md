@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added protected regular-expression matching, named-group extraction, and match iteration.
 - Added policy-controlled `test()` and `search()` regex queries and the anchored `patterns.email`
   helper.
+- Added the `sensitiveTemplate` tagged template and its `st` alias for building protected values
+  from template literals, with optional reveal context, label, and class.
 
 ### Security
 
@@ -26,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   receive sensitive values; native match metadata containing the complete input is not returned.
 - Regex queries follow `allowPartialQueries`, and credentials deny them by default to prevent
   caller-controlled pattern oracles.
+- Template literals reveal each interpolated value through the authorization and audit gate, inherit
+  the most restrictive class, and retain the state of every value they read.
+- The template `klass` option may only tighten the inherited class, and unsupported interpolations
+  are rejected with a `TypeError` that names the index and type but never the value, before any
+  value is revealed.
 
 ## [0.1.0] - 2024-XX-XX
 

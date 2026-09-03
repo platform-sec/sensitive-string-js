@@ -51,6 +51,8 @@ const raw = apiKey.reveal({ name: 'api-call', reason: 'authenticating' });
 - **Audit Context**: AsyncLocalStorage-based context propagation
 - **Protected Regex Operations**: Query, match, and extract groups without returning plain strings
 - **Built-in Patterns**: Anchored `patterns.email` structural validation
+- **Template Literals**: `st` builds a protected value from interpolated secrets, inheriting the
+  most restrictive class
 - **Path-Based Wrapping**: Wrap sensitive fields in complex objects by path
 - **Zero External Dependencies**: Only uses Node.js built-ins
 
