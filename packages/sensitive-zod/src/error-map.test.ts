@@ -195,11 +195,23 @@ describe('sensitiveSafeParse', () => {
   it('test_an_explicit_undefined_error_map_does_not_disable_the_default', () => {
     // Spreading the caller's params over the default would leave Zod resolving
     // the global map here, which is a fail-open.
-    const result = sensitiveSafeParse(z.enum(['a', 'b']), CANARY, { errorMap: undefined });
+    //
+    // `exactOptionalPropertyTypes` rejects a literal `errorMap: undefined`
+    // against `Partial<ParseParams>`, so the assertion is what lets the test
+    // express it. It models the callers who can actually reach this path:
+    // JavaScript, and TypeScript without that flag. The public signature stays
+    // `Partial<z.ParseParams>` deliberately, matching Zod's own.
+    const params = { errorMap: undefined } as unknown as Partial<z.ParseParams>;
+    const result = sensitiveSafeParse(z.enum(['a', 'b']), CANARY, params);
 
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.error.issues[0]?.message).not.toContain(CANARY);
+      // The absent canary alone does not prove the map applied, because
+      // redactZodError() scrubs the message afterwards either way. The map
+      // omits the "received" clause entirely, which the post-hoc scrub cannot
+      // do: it can only rewrite the value inside one.
+      expect(result.error.issues[0]?.message).not.toContain('received');
     }
   });
 
