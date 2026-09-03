@@ -57,5 +57,19 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-expressions': ['error', { allowTaggedTemplates: true }],
       'no-console': 'warn',
     },
+  },
+  {
+    // Fastify decides between callback style and promise style from the
+    // function itself: `async` is the marker that selects promise style, and a
+    // hook or handler written without it and without `done` stalls the request.
+    // `require-await` therefore fires on code whose `async` is load bearing,
+    // right across the package: the plugin function, whose async form is what
+    // turns an option error into a rejected `register()`, and every route
+    // handler in the suite. The hooks this package installs are callback style,
+    // which is where the rule would have had something to say.
+    files: ['packages/sensitive-fastify/**/*.ts'],
+    rules: {
+      '@typescript-eslint/require-await': 'off',
+    },
   }
 );

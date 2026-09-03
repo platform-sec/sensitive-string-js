@@ -17,6 +17,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `URL` through by reference. `redactInStructure()` remains the walk for log lines, where a
   plain-object copy is what a log wants. The NestJS `SensitiveResponseInterceptor` now delegates to
   it, which is how that interceptor gained the serialized-value case.
+- Added `@platform-sec/sensitive-string-fastify`, the Fastify integration. `sensitiveKeyword` is an
+  Ajv keyword: a `sensitive: { klass, label }` annotation on a string property in a body,
+  querystring, or params schema replaces that property with a `SensitiveString` during validation,
+  after the property's own `type`, `minLength`, and `format` checks have run on the raw string, and it
+  reaches nested objects, array items, and `$ref` schemas added with `fastify.addSchema`. It goes into
+  `Fastify({ ajv: { customOptions: { keywords: [sensitiveKeyword] } } })`, because Ajv is built with
+  the instance. `sensitivePlugin` covers what a schema cannot: a `body` field map through core's
+  `wrapSensitiveByPath` for routes without one, scoped by Fastify's own encapsulation and merged with
+  a route's `config.sensitive.body`; `headers`, which puts wrapped copies on
+  `request.sensitive.headers` and leaves `request.headers` byte-identical; `context`, a callback-style
+  hook whose `AsyncLocalStorage` scope covers every later hook, the handler, its `await`
+  continuations, and the error handler; and `responseFilter`, a `preSerialization` walk through
+  `redactCopy` for the serialized values and entity instances neither of Fastify's serializers
+  redacts on its own. A headers schema using the keyword is refused at route registration, because
+  there the keyword would replace the value in the raw Node headers object that Fastify itself reads
+  as strings. Fastify 5 only.
 - Added `@platform-sec/sensitive-string-express`, the Express integration. `sensitiveBody()` wraps
   configured `req.body` fields through core's `wrapSensitiveByPath`, scoped by the mount path;
   `sensitiveHeaders()` puts wrapped copies on `req.sensitive.headers` and leaves `req.headers`

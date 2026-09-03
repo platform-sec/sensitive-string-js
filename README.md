@@ -62,6 +62,9 @@ pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-nest
 # Express: body wrapping, header extraction, context, response redaction
 pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-express
 
+# Fastify: a schema keyword, field maps, header extraction, context, response redaction
+pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-fastify
+
 # Test utilities: canaries, leak assertions, matchers, audit mocks
 pnpm add -D @platform-sec/sensitive-string-testing
 
@@ -907,6 +910,41 @@ wrapped copies go on `req.sensitive.headers`.
 Express 4.21+ and 5 are both supported. See
 [packages/sensitive-express/README.md](packages/sensitive-express/README.md) for the full middleware
 order table and the header logging limitation.
+
+### Fastify Plugin
+
+From `@platform-sec/sensitive-string-fastify`. Two independent halves: an Ajv keyword that wraps
+during validation, and a plugin for everything a schema cannot express.
+
+```typescript
+// The keyword goes into the constructor: Ajv is built with the instance.
+const fastify = Fastify({ ajv: { customOptions: { keywords: [sensitiveKeyword] } } });
+
+await fastify.register(sensitivePlugin, {
+  context: (request) => ({ name: `${request.method} ${request.routeOptions.url}` }),
+  headers: { authorization: 'credential' },
+  responseFilter: true,
+});
+
+fastify.post('/api/auth/login', {
+  schema: {
+    body: {
+      type: 'object',
+      properties: {
+        email: { type: 'string', format: 'email', sensitive: { klass: 'sensitive' } },
+        password: { type: 'string', minLength: 8, sensitive: { klass: 'credential' } },
+      },
+    },
+  },
+}, handleLogin);
+```
+
+The keyword wraps a property after that property's own checks ran on the raw string, so `format` and
+`minLength` still reject as they did, and it reaches nested objects, array items, `$ref` schemas, the
+querystring, and params. Routes without a schema use the plugin's `body` field map instead, scoped by
+Fastify's own encapsulation rather than by a pattern option. Fastify 5 only. See
+[packages/sensitive-fastify/README.md](packages/sensitive-fastify/README.md) for the hook order table,
+the headers-schema rule, and the custom validator compiler limitation.
 
 ### Lint Rules
 
