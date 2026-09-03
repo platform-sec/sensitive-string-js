@@ -257,15 +257,45 @@ describe('no-credential-equality', () => {
         // A cast must not hide the comparison.
         {
           code: 'if ((password.reveal() as string) === input) { grant(); }',
-          errors: [{ messageId: 'useEquals' }],
+          errors: [
+            {
+              messageId: 'useEquals',
+              suggestions: [
+                {
+                  messageId: 'useEqualsSuggestion',
+                  output: 'if (password.equals(input)) { grant(); }',
+                },
+              ],
+            },
+          ],
         },
         {
           code: 'if (password!.reveal() === input) { grant(); }',
-          errors: [{ messageId: 'useEquals' }],
+          errors: [
+            {
+              messageId: 'useEquals',
+              suggestions: [
+                {
+                  messageId: 'useEqualsSuggestion',
+                  output: 'if (password!.equals(input)) { grant(); }',
+                },
+              ],
+            },
+          ],
         },
         {
           code: 'if (password.reveal() satisfies string === input) { grant(); }',
-          errors: [{ messageId: 'useEquals' }],
+          errors: [
+            {
+              messageId: 'useEquals',
+              suggestions: [
+                {
+                  messageId: 'useEqualsSuggestion',
+                  output: 'if (password.equals(input)) { grant(); }',
+                },
+              ],
+            },
+          ],
         },
       ],
     });

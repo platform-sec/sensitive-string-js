@@ -1,0 +1,61 @@
+import js from '@eslint/js';
+import prettier from 'eslint-config-prettier';
+import globals from 'globals';
+import tseslint from 'typescript-eslint';
+
+/**
+ * Flat config, the only format ESLint 9 reads.
+ *
+ * The shape differs from the `.eslintrc.cjs` it replaces in one way worth
+ * naming: an eslintrc applied to every file it was not told to ignore, whereas
+ * a flat config applies a block only to the `files` it matches. The type-aware
+ * rules therefore have to name the TypeScript glob explicitly, because
+ * pointing them at a file missing from `tsconfig.eslint.json` is an error
+ * rather than a skip.
+ */
+export default tseslint.config(
+  {
+    // Flat config has no `ignorePatterns`; a block holding only `ignores` is
+    // the global ignore list, and it has to name build output that the old
+    // `.eslintrc.cjs` never saw because eslintrc ignored `node_modules` and
+    // dotfiles on its own.
+    ignores: [
+      '**/dist/**',
+      '**/node_modules/**',
+      '**/coverage/**',
+      '**/codeql-db/**',
+      '**/*.js',
+      '**/*.mjs',
+      '**/*.cjs',
+      '**/*.d.ts',
+    ],
+  },
+  js.configs.recommended,
+  ...tseslint.configs.recommendedTypeChecked,
+  prettier,
+  {
+    files: ['**/*.ts'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: { ...globals.node, ...globals.es2022 },
+      parserOptions: {
+        project: ['./packages/*/tsconfig.eslint.json', './examples/tsconfig.eslint.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+      '@typescript-eslint/explicit-function-return-type': 'off',
+      '@typescript-eslint/explicit-module-boundary-types': 'off',
+      '@typescript-eslint/no-explicit-any': 'warn',
+      // `sensitiveTemplate` is a tagged-template API, so a suite that calls one
+      // purely to assert it throws is a real call, not a discarded expression.
+      '@typescript-eslint/no-unused-expressions': ['error', { allowTaggedTemplates: true }],
+      'no-console': 'warn',
+    },
+  }
+);

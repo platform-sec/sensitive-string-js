@@ -127,7 +127,16 @@ describe('explicit-class', () => {
       {
         code: 'new Secret(value);',
         options: [{ constructorNames: ['Secret'] }],
-        errors: [{ messageId: 'missingClass', data: { name: 'Secret' } }],
+        errors: [
+          {
+            messageId: 'missingClass',
+            data: { name: 'Secret' },
+            suggestions: [
+              { messageId: 'addClass', output: "new Secret(value, 'sensitive');" },
+              { messageId: 'addClass', output: "new Secret(value, 'credential');" },
+            ],
+          },
+        ],
       },
     ],
   });
@@ -138,7 +147,21 @@ describe('explicit-class', () => {
       invalid: [
         {
           code: 'const s = new SensitiveString(value as string);',
-          errors: [{ messageId: 'missingClass' }],
+          errors: [
+            {
+              messageId: 'missingClass',
+              suggestions: [
+                {
+                  messageId: 'addClass',
+                  output: "const s = new SensitiveString(value as string, 'sensitive');",
+                },
+                {
+                  messageId: 'addClass',
+                  output: "const s = new SensitiveString(value as string, 'credential');",
+                },
+              ],
+            },
+          ],
         },
       ],
     });

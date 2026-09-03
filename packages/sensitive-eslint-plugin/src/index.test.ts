@@ -59,7 +59,11 @@ function describeFinding(message: { ruleId: string | null; severity: number }): 
 
 /** The rule ids ESLint reports for a source under an eslintrc config. */
 function lintLegacy(code: string, config: Record<string, unknown>): string[] {
-  const linter = new Linter();
+  // The eslintrc presets are what an ESLint 8 consumer extends, so they have to
+  // be exercised through the legacy linter. ESLint 9 still ships it behind
+  // `configType`, and ESLint 10 removes it; when that floor moves, these two
+  // cases go with it.
+  const linter = new Linter({ configType: 'eslintrc' });
   linter.defineRules(
     Object.fromEntries(
       Object.entries(rules).map(([name, rule]) => [
@@ -78,7 +82,7 @@ function lintLegacy(code: string, config: Record<string, unknown>): string[] {
     .verify(code, {
       parserOptions: { ecmaVersion: 2022, sourceType: 'module' },
       ...withoutPluginName,
-    } as Linter.Config)
+    } as Linter.LegacyConfig)
     .map((message) => message.ruleId ?? '(fatal)');
 }
 

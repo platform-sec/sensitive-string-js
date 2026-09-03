@@ -9,33 +9,34 @@
  */
 import { describe, it, expect } from 'vitest';
 import { Linter } from 'eslint';
+import type { ESLint } from 'eslint';
 import { PLUGIN_NAMESPACE, configs, rules } from '../index.js';
 import type { RuleModule } from '../types.js';
 
 const CANARY = 'LEAKED_SECRET_abc123xyz';
 
-/** A linter with every rule of this plugin registered under its full name. */
-function createLinter(): Linter {
-  const linter = new Linter();
-  for (const [name, rule] of Object.entries(rules)) {
-    linter.defineRule(
-      `${PLUGIN_NAMESPACE}/${name}`,
-      rule as unknown as Parameters<Linter['defineRule']>[1]
-    );
-  }
-  return linter;
+/**
+ * Every finding for a source linted under the strict preset.
+ *
+ * Flat config carries the plugin object in the config itself, which is why
+ * there is no registration step: ESLint 9 removed `defineRule` from the flat
+ * linter, and a config naming its plugin inline replaces it.
+ */
+function lintStrictMessages(code: string): Linter.LintMessage[] {
+  const { rules: strictRules } = configs['strict'] as { rules: Linter.RulesRecord };
+
+  return new Linter().verify(code, {
+    languageOptions: { ecmaVersion: 2022, sourceType: 'module' },
+    plugins: { [PLUGIN_NAMESPACE]: { rules } as unknown as ESLint.Plugin },
+    rules: strictRules,
+  });
 }
 
 /** Every rule id reported for a source under the strict preset. */
 function lintStrict(code: string): string[] {
-  const { rules: strictRules } = configs['strict'] as { rules: Record<string, unknown> };
-
-  return createLinter()
-    .verify(code, {
-      parserOptions: { ecmaVersion: 2022, sourceType: 'module' },
-      rules: strictRules as Linter.RulesRecord,
-    })
-    .map((message) => (message.ruleId ?? '(fatal)').replace(`${PLUGIN_NAMESPACE}/`, ''));
+  return lintStrictMessages(code).map((message) =>
+    (message.ruleId ?? '(fatal)').replace(`${PLUGIN_NAMESPACE}/`, '')
+  );
 }
 
 describe('rule metadata', () => {
@@ -81,10 +82,7 @@ describe('rule metadata', () => {
     // suggestion without the flag throws, and a rule that sets the flag and
     // never suggests advertises an offer it does not keep.
     const source = `new SensitiveString(v);\nif (t.reveal() === input) { grant(); }\n`;
-    const messages = createLinter().verify(source, {
-      parserOptions: { ecmaVersion: 2022, sourceType: 'module' },
-      rules: (configs['strict'] as { rules: Linter.RulesRecord }).rules,
-    });
+    const messages = lintStrictMessages(source);
 
     const offering = new Set(
       messages
@@ -168,10 +166,7 @@ describe('canary', () => {
     // and those go in `suggestions`, not in the message.
     const source = `const s = new SensitiveString('${CANARY}', 'credential');\nconsole.log(s.reveal());\nif (s.reveal() === '${CANARY}') { grant(); }\nfetch(u, { body: '${CANARY}' });\n`;
 
-    const messages = createLinter().verify(source, {
-      parserOptions: { ecmaVersion: 2022, sourceType: 'module' },
-      rules: (configs['strict'] as { rules: Linter.RulesRecord }).rules,
-    });
+    const messages = lintStrictMessages(source);
 
     expect(messages.length).toBeGreaterThan(0);
     for (const message of messages) {

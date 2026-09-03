@@ -1,14 +1,13 @@
 /**
  * The slice of ESLint's rule API this plugin uses, declared structurally.
  *
- * ESLint's own types live in `@types/eslint`, which is a separate package on a
- * separate release train from `eslint` itself. Importing them here would put
- * that dependency into the emitted `.d.ts`, so every consumer would need it
- * installed to type-check against this plugin, and a consumer on ESLint 9 with
- * `@types/eslint@9` would be reading rule types from a different major than the
- * ones written against here. Declaring the shapes instead keeps the published
- * types self-contained, the same way the testing package declares
- * `pretty-format`'s plugin shape rather than depending on it.
+ * Where ESLint's own types come from depends on the major: ESLint 9 ships them
+ * in the package, while an ESLint 8 consumer installs `@types/eslint`. This
+ * plugin's peer range spans both, so importing either would put one major's
+ * declarations into the emitted `.d.ts` and make the other half of the range
+ * type-check against rule types it does not have. Declaring the shapes instead
+ * keeps the published types self-contained, the same way the testing package
+ * declares `pretty-format`'s plugin shape rather than depending on it.
  *
  * The types are also deliberately looser than ESLint's in one place: {@link
  * AstNode} carries nothing but `type`. A rule in this plugin has to run under

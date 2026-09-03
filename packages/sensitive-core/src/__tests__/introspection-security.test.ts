@@ -145,7 +145,6 @@ describe('Introspection Security', () => {
     });
 
     it('__proto__ does not expose value', () => {
-      // eslint-disable-next-line no-proto
       const proto = (s as unknown as { __proto__: unknown }).__proto__;
       // Note: The prototype object itself doesn't have enumerable properties
       // that would contain the value, but JSON.stringify might fail for other reasons
@@ -257,6 +256,9 @@ describe('Introspection Security', () => {
 
     it('valueOf() does not expose value', () => {
       const value = s.valueOf();
+      // Reaching the default stringification is the point: the assertion is
+      // that the fallback leaks nothing, so the rule's objection is the case.
+      // eslint-disable-next-line @typescript-eslint/no-base-to-string
       expect(String(value)).not.toContain(CANARY);
     });
 
@@ -265,6 +267,7 @@ describe('Introspection Security', () => {
         Symbol.toPrimitive
       ]?.('string');
       if (primitive !== undefined) {
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string
         expect(String(primitive)).not.toContain(CANARY);
       }
     });
@@ -354,6 +357,9 @@ describe('Introspection Security', () => {
   describe('Error and stack trace attacks', () => {
     it('throwing SensitiveString does not expose value', () => {
       try {
+        // Throwing a non-Error is the attack being tested: the assertion is
+        // that the value stays out of the stack trace either way.
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
         throw s;
       } catch (e) {
         expect(String(e)).not.toContain(CANARY);
@@ -474,7 +480,6 @@ describe('Introspection Security', () => {
 
   describe('Comparison attacks', () => {
     it('== comparison does not expose value', () => {
-      // eslint-disable-next-line eqeqeq
       const result = (s as unknown) == CANARY;
       expect(result).toBe(false); // Objects are not equal to strings
     });
