@@ -265,6 +265,39 @@ describe('Zod Integration', () => {
       expect(result.token.label).toBe('api_key');
     });
 
+    it('test_serialized_carries_the_deadline', () => {
+      const schema = z.object({ token: zSensitiveDeserialize('credential') });
+      const expiresAt = new Date(Date.now() + 60_000);
+
+      const sent = new SensitiveString(CANARY, 'credential', 'otp', { expiresAt }).serialize();
+      const { token } = schema.parse({ token: sent });
+
+      // Rebuilding the value here instead of deserializing it would drop the
+      // deadline, and an expiring token would arrive as one that never expires.
+      expect(token.expiresAt).toEqual(expiresAt);
+      expect(token.isExpired()).toBe(false);
+    });
+
+    it('test_serialized_rejects_an_unknown_class', () => {
+      const schema = z.object({ token: zSensitiveDeserialize() });
+
+      expect(() =>
+        schema.parse({
+          token: { __sensitive: true, klass: 'made-up', value: CANARY },
+        })
+      ).toThrow(/unknown sensitivity class/);
+    });
+
+    it('test_serialized_rejects_a_malformed_deadline', () => {
+      const schema = z.object({ token: zSensitiveDeserialize('credential') });
+
+      expect(() =>
+        schema.parse({
+          token: { __sensitive: true, klass: 'credential', value: CANARY, expiresAt: 'nope' },
+        })
+      ).toThrow(/not a valid date/);
+    });
+
     it('test_serialized_validates_marker', () => {
       const schema = z.object({
         token: zSensitiveDeserialize(),

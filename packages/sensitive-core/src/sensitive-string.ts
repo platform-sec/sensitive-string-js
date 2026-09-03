@@ -209,6 +209,27 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   }
 
   /**
+   * The earliest deadline among the values this one was built from, or
+   * undefined when none of them expires.
+   *
+   * Private on purpose: `serialize()` puts this on the wire, so it must not read
+   * an `expiresAt` getter that a subclass could override.
+   */
+  #earliestDeadline(): number | undefined {
+    let earliest: number | undefined;
+
+    for (const state of this.#states) {
+      const { deadline } = state.expiry;
+
+      if (deadline !== undefined && (earliest === undefined || deadline < earliest)) {
+        earliest = deadline;
+      }
+    }
+
+    return earliest;
+  }
+
+  /**
    * The earliest deadline this value has passed, or undefined while it is live.
    *
    * Private on purpose: the gate must not route its decision through the public
@@ -422,16 +443,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * Returns a copy, so the deadline cannot be moved through it.
    */
   get expiresAt(): Date | undefined {
-    let earliest: number | undefined;
-
-    for (const state of this.#states) {
-      const { deadline } = state.expiry;
-
-      if (deadline !== undefined && (earliest === undefined || deadline < earliest)) {
-        earliest = deadline;
-      }
-    }
-
+    const earliest = this.#earliestDeadline();
     return earliest === undefined ? undefined : new Date(earliest);
   }
 
@@ -449,13 +461,13 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * when this value does not expire.
    */
   ttlRemaining(): number | undefined {
-    const expiresAt = this.expiresAt;
+    const earliest = this.#earliestDeadline();
 
-    if (expiresAt === undefined) {
+    if (earliest === undefined) {
       return undefined;
     }
 
-    const remaining = expiresAt.getTime() - Date.now();
+    const remaining = earliest - Date.now();
     return remaining <= 0 ? -1 : remaining;
   }
 
@@ -988,7 +1000,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    */
   serialize(ctx?: RevealContext): SerializedSensitiveString {
     const value = this.#readRawValue('expose', ctx);
-    const expiresAt = this.expiresAt;
+    const deadline = this.#earliestDeadline();
 
     const serialized: SerializedSensitiveString = {
       __sensitive: true as const,
@@ -1000,8 +1012,8 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       serialized.label = this.label;
     }
 
-    if (expiresAt !== undefined) {
-      serialized.expiresAt = expiresAt.toISOString();
+    if (deadline !== undefined) {
+      serialized.expiresAt = new Date(deadline).toISOString();
     }
 
     return serialized;

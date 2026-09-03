@@ -608,11 +608,15 @@ const serialized = token.serialize();
 // { __sensitive: true, klass: 'credential', value: '...', expiresAt: '2026-01-01T00:05:00.000Z' }
 ```
 
-The receiver enforces it against its own clock. Clock synchronization is the deployment's problem,
-not the library's; a receiver whose clock runs ahead of the sender's rejects the value early, which
-is the direction to fail in. Renewal permission and renewal counts deliberately do not travel, so a
+The receiver enforces it against its own clock, whether it uses `SensitiveString.deserialize()` or
+the Zod `zSensitiveDeserialize()` schema. Clock synchronization is the deployment's problem, not the
+library's; a receiver whose clock runs ahead of the sender's rejects the value early, which is the
+direction to fail in. Renewal permission and renewal counts deliberately do not travel, so a
 payload cannot grant the right to extend a credential's lifetime, and the receiving process's
 policy still applies its own `maxTtl` and `requireExpiration`.
+
+A deadline must be a date a `Date` can represent. A finite but absurd `ttl` is rejected rather than
+accepted as a deadline that can never be reached, which would be no deadline at all.
 
 Expiration is a usability control on the values this process holds, not a cryptographic one. It
 stops code from using a stale secret; it does not erase the secret from memory, and it does not

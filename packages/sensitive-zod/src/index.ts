@@ -188,6 +188,12 @@ export function zSensitiveOptional<C extends SensitivityClass>(
  *
  * Useful for validating incoming payloads that were serialized with serialize().
  *
+ * Reconstruction is delegated to `SensitiveString.deserialize()`, so this path
+ * enforces exactly what the core wire format does: the sensitivity class must be
+ * registered, and a deadline carried by the payload is carried into the value.
+ * Rebuilding the value here instead would silently drop the deadline, which
+ * fails open: an expiring token would arrive as one that never expires.
+ *
  * @typeParam C - The expected sensitivity class
  * @param expectedKlass - Optional expected class (validates if provided)
  * @returns A Zod schema that parses serialized forms to SensitiveString
@@ -212,6 +218,7 @@ export function zSensitiveDeserialize<C extends SensitivityClass>(
     klass: z.ZodString;
     value: z.ZodString;
     label: z.ZodOptional<z.ZodString>;
+    expiresAt: z.ZodOptional<z.ZodString>;
   }>,
   SensitiveString<C>,
   {
@@ -219,6 +226,7 @@ export function zSensitiveDeserialize<C extends SensitivityClass>(
     klass: string;
     value: string;
     label?: string | undefined;
+    expiresAt?: string | undefined;
   }
 > {
   return z
@@ -227,12 +235,13 @@ export function zSensitiveDeserialize<C extends SensitivityClass>(
       klass: z.string(),
       value: z.string(),
       label: z.string().optional(),
+      expiresAt: z.string().optional(),
     })
     .transform((serialized): SensitiveString<C> => {
       if (expectedKlass && serialized.klass !== expectedKlass) {
         throw new Error(`Expected sensitivity class '${expectedKlass}', got '${serialized.klass}'`);
       }
-      return new SensitiveString(serialized.value, serialized.klass as C, serialized.label);
+      return SensitiveString.deserialize<C>(serialized);
     });
 }
 

@@ -123,6 +123,35 @@ describe('TTL and expiration', () => {
       ).toThrow(RangeError);
     });
 
+    it('rejects a ttl whose deadline no Date can represent', () => {
+      // Finite, so it passes the duration check, but the deadline it computes
+      // is an Invalid Date: it would never expire and would throw on serialize.
+      expect(
+        () => new SensitiveString('value', 'sensitive', undefined, { ttl: Number.MAX_VALUE })
+      ).toThrow(RangeError);
+      expect(() => new SensitiveString('value', 'sensitive', undefined, { ttl: 8.64e15 })).toThrow(
+        /representable date/
+      );
+
+      const largest = new SensitiveString('value', 'sensitive', undefined, {
+        ttl: 8_640_000_000_000_000 - START.getTime(),
+      });
+      expect(largest.expiresAt?.toISOString()).toBe('+275760-09-13T00:00:00.000Z');
+    });
+
+    it('lets a policy cap bring an over-large ttl back into range', () => {
+      registerPolicy(
+        { name: 'sensitive', redact: () => '[REDACTED:sensitive]', maxTtl: MINUTE },
+        { overwrite: true }
+      );
+
+      const value = new SensitiveString('value', 'sensitive', undefined, {
+        ttl: Number.MAX_VALUE,
+      });
+
+      expect(value.expiresAt).toEqual(new Date(START.getTime() + MINUTE));
+    });
+
     it('rejects a ttl that is not a number', () => {
       expect(
         () =>
@@ -369,6 +398,7 @@ describe('TTL and expiration', () => {
       expect(() => session.renew(-MINUTE)).toThrow(RangeError);
       expect(() => session.renew(Number.POSITIVE_INFINITY)).toThrow(RangeError);
       expect(() => session.renew('60000' as unknown as number)).toThrow(TypeError);
+      expect(() => session.renew(Number.MAX_VALUE)).toThrow(/representable date/);
       expect(() => session.renew(MINUTE, { maxExtension: 0 as unknown as Date })).toThrow(
         TypeError
       );

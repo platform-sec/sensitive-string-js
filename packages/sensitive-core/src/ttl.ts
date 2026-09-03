@@ -16,6 +16,17 @@ import type {
 const DATE_GET_TIME = Date.prototype.getTime;
 
 /**
+ * The largest time value ECMAScript can represent, from the Date specification.
+ *
+ * A duration is only bounded by the float range, so a deadline computed from one
+ * can land past this. Such a deadline is worse than useless: `new Date()` of it
+ * is an Invalid Date, `now < deadline` is true forever, and `toISOString()`
+ * throws when the value is serialized. A deadline that can never be reached is
+ * the same as no deadline at all, so it is rejected rather than accepted as one.
+ */
+const MAX_TIMESTAMP = 8_640_000_000_000_000;
+
+/**
  * Describe a rejected option without disclosing it.
  */
 function describeType(value: unknown): string {
@@ -146,6 +157,20 @@ function requireDeadline(value: unknown, name: string): number | undefined {
 }
 
 /**
+ * Reject a computed deadline that no Date can represent.
+ */
+function requireRepresentable(deadline: number, name: string): number {
+  if (deadline > MAX_TIMESTAMP) {
+    throw new RangeError(
+      `SensitiveString: ${name} puts the deadline past the largest representable date, ` +
+        new Date(MAX_TIMESTAMP).toISOString()
+    );
+  }
+
+  return deadline;
+}
+
+/**
  * Validate a renewal budget.
  */
 function requireCount(value: unknown, name: string): number | undefined {
@@ -264,6 +289,12 @@ export function planExpiry(
     deadline = deadline === undefined ? lifetimeCap : Math.min(deadline, lifetimeCap);
   }
 
+  // After the cap, which can bring an out-of-range deadline back into range. A
+  // class that caps its lifetime has already decided how long is too long.
+  if (deadline !== undefined) {
+    requireRepresentable(deadline, 'the requested lifetime');
+  }
+
   if (deadline === undefined && policy.requireExpiration === true) {
     throw new Error(
       `SensitiveString: sensitivity class '${klass}' requires an expiration; ` +
@@ -379,6 +410,8 @@ export function planRenewal(
   if (state.lifetimeCap !== undefined) {
     next = Math.min(next, state.lifetimeCap);
   }
+
+  requireRepresentable(next, 'additionalTtl');
 
   // Reporting success for a renewal a cap swallowed would leave the caller
   // believing an expired value is live again.

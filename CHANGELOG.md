@@ -83,6 +83,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deadline.
 - An absolute deadline is read once, through the intrinsic `Date.prototype.getTime`, so neither
   mutating the `Date` afterwards nor overriding its `getTime` moves a deadline the library accepted.
+- A finite but absurd `ttl` is rejected rather than accepted as a deadline past the largest date a
+  `Date` can represent, which would never be reached and would throw on `serialize()`.
+- `zSensitiveDeserialize()` reconstructs through `SensitiveString.deserialize()`, so the Zod
+  receiving path carries a deadline and rejects an unregistered sensitivity class exactly as the
+  core wire format does. It previously rebuilt the value and would have dropped the deadline,
+  turning an expiring token into one that never expires.
 
 ## [0.1.0] - 2024-XX-XX
 
