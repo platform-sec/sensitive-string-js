@@ -10,7 +10,7 @@ pnpm add @platform-sec/sensitive-string-zod zod
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 22.12+
 - Zod 3.22+
 - @platform-sec/sensitive-string-core (peer dependency)
 

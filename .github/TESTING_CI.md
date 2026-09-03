@@ -31,11 +31,11 @@ act -j lint
 # Run build
 act -j build
 
-# Run tests for Node 20
-act -j test --matrix node-version:20
-
 # Run tests for Node 22
 act -j test --matrix node-version:22
+
+# Run tests for Node 24
+act -j test --matrix node-version:24
 
 # Run coverage
 act -j coverage
@@ -74,7 +74,7 @@ The CI workflow includes these jobs:
 
 1. **Lint** - ESLint and Prettier formatting checks
 2. **Build** - Compiles TypeScript packages
-3. **Test** - Runs Vitest test suite on Node 20 and 22
+3. **Test** - Runs Vitest test suite on Node 22 and 24
 4. **Coverage** - Generates test coverage reports
 5. **Security Audit** - Vulnerability scanning and dependency verification
 
@@ -107,7 +107,7 @@ Error: Job 'JobName' failed
 # Before pushing, run the essential checks:
 act -j lint
 act -j build
-act -j test --matrix node-version:20
+act -j test --matrix node-version:22
 
 # Or run everything (will take longer):
 act push

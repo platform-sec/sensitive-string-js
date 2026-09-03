@@ -21,7 +21,7 @@ needs a spy takes `vi.fn` or `jest.fn` as an argument.
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 22.12+
 - Vitest or Jest, or any runner whose `expect` has `extend`
 
 ## Test secrets

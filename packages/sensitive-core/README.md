@@ -10,7 +10,7 @@ pnpm add @platform-sec/sensitive-string-core
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 22.12+
 - TypeScript 5.4+ (for best type inference)
 
 ## Quick Start

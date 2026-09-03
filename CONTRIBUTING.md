@@ -5,7 +5,7 @@ Thank you for considering contributing to SensitiveString! This document outline
 ## Development Setup
 
 1. **Prerequisites**
-   - Node.js 20+
+   - Node.js 22.12+
    - pnpm 9+
 
 2. **Clone and Install**

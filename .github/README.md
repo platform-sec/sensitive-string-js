@@ -8,7 +8,7 @@ This directory contains GitHub Actions workflows and security documentation for 
 
 **[`workflows/ci.yml`](workflows/ci.yml)**
 - Runs on every push and pull request
-- Jobs: lint, build, test (Node 20 & 22), coverage, security-audit
+- Jobs: lint, build, test (Node 22 & 24), coverage, security-audit
 - Ensures code quality and security baseline
 - [Local testing guide](TESTING_CI.md)
 
@@ -59,7 +59,7 @@ pnpm build
 # Test CI locally (optional)
 act -j lint
 act -j build
-act -j test --matrix node-version:20
+act -j test --matrix node-version:22
 ```
 
 **Adding dependencies:**

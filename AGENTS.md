@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This is a pnpm workspace for Node.js 20+ and TypeScript. Packages live under `packages/`:
+This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under `packages/`:
 
 - `packages/sensitive-core/src/` contains the redaction, policy, context, and wrapping APIs.
 - `packages/sensitive-zod/src/` contains the Zod integration and depends on the core package.
