@@ -12,6 +12,7 @@ on:
           - 'sensitive-core'
           - 'sensitive-decorators'
           - 'sensitive-eslint-plugin'
+          - 'sensitive-express'
           - 'sensitive-fastify'
           - 'sensitive-nestjs'
           - 'sensitive-testing'
