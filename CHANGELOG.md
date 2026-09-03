@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `@platform-sec/sensitive-string-decorators`, the framework-agnostic Stage 3 decorators.
+  `@Sensitive` wraps every value an auto-accessor field receives, including the field initializer
+  and a value hydrated onto the instance through an untyped path, and refuses one whose class is
+  less restrictive than the field's. `@WithRevealContext` runs a method inside a named reveal
+  context, nesting it over the ambient one so an outer audit sink keeps receiving records, and
+  covers generators and async generators by wrapping the iterator, since their bodies resume after
+  the context would otherwise have closed. Stage 3 only: NestJS applications get the same two names
+  from the NestJS package. Note that an `accessor` field is a prototype getter and setter pair
+  rather than an own property, so `JSON.stringify` omits it instead of redacting it; declare
+  `toJSON()` where the serialized shape matters.
 - Added `@platform-sec/sensitive-string-nestjs`, the NestJS integration. `@Sensitive` marks DTO
   properties, `SensitiveTransformPipe` wraps them after `ValidationPipe` has validated the plain
   strings, `SensitiveContextInterceptor` and `@WithRevealContext` establish the reveal context for

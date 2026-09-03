@@ -15,8 +15,10 @@ import { defineConfig } from 'vitest/config';
  * through swc, which emits the metadata, matching what `tsc` produces for the
  * published build.
  *
- * The rest of the repository keeps the esbuild path. No other package uses
- * decorators, so nothing there would benefit from the slower transform.
+ * The rest of the repository keeps the esbuild path, `sensitive-decorators`
+ * included: its decorators are Stage 3, which esbuild implements, and it reads
+ * no metadata, so it wants the transform the root `tsconfig.json` describes
+ * rather than the legacy one.
  */
 const NESTJS_TESTS = 'packages/sensitive-nestjs/src/**/*.test.ts';
 

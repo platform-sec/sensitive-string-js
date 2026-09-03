@@ -53,6 +53,9 @@ pnpm add @platform-sec/sensitive-string-core
 # With Zod integration
 pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-zod zod
 
+# Stage 3 decorators: declarative field wrapping and reveal context
+pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-decorators
+
 # NestJS: DTO decorators, transform pipe, context and response interceptors
 pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-nestjs
 
@@ -818,6 +821,48 @@ refused by a deadline or a policy raises `UnreadableSecretError` saying the chec
 
 See [packages/sensitive-testing/README.md](packages/sensitive-testing/README.md) for the full
 guide.
+
+### Decorators
+
+From `@platform-sec/sensitive-string-decorators`. Stage 3 decorators, so TypeScript 5.0+ with
+`experimentalDecorators` left off. No framework and no `reflect-metadata`.
+
+```typescript
+import { Sensitive, WithRevealContext } from '@platform-sec/sensitive-string-decorators';
+
+class User {
+  @Sensitive('sensitive', 'email') accessor email!: SensitiveString<'sensitive'>;
+  @Sensitive('credential') accessor passwordHash!: SensitiveString<'credential'>;
+}
+
+class PaymentProcessor {
+  @WithRevealContext({ name: 'payment-processing', reason: 'charging card' })
+  async processPayment(card: SensitiveString<'credential'>) {
+    return gateway.charge(card.reveal()); // audited under that context
+  }
+}
+```
+
+`@Sensitive` needs the `accessor` keyword, which is the only field form whose assignments a
+decorator can intercept: a plain field decorator sees the initializer and nothing after it. Every
+assignment is wrapped, including one that arrives through an untyped path such as
+`Object.assign(new User(), row)`. A value that is already a `SensitiveString` of the same or a
+stricter class is stored as it is; a looser one is refused, since a field declared `credential`
+must not hold a `sensitive` value.
+
+`@WithRevealContext` covers sync methods, async methods, generators, and async generators. It
+nests rather than substitutes, so an ambient `auditReveal` keeps receiving records from a method
+that only names itself. It names the operation and grants nothing: a policy's `checkRevealAllowed`
+still runs.
+
+One consequence of `accessor` to know before switching a field over: an auto-accessor is a
+prototype getter and setter pair, so the instance has no own enumerable property and
+`JSON.stringify` omits the field rather than redacting it. Declare `toJSON()` where the serialized
+shape matters. See
+[packages/sensitive-decorators/README.md](packages/sensitive-decorators/README.md).
+
+NestJS cannot run Stage 3 decorators, and gets the same two names from
+`@platform-sec/sensitive-string-nestjs` instead.
 
 ### Lint Rules
 

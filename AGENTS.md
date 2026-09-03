@@ -8,6 +8,11 @@ This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under 
 - `packages/sensitive-zod/src/` contains the Zod integration and depends on the core package.
 - `packages/sensitive-testing/src/` contains the test utilities: canary secrets, leak and redaction
   assertions, matchers, and audit mocks. It depends on the core package and on no test framework.
+- `packages/sensitive-decorators/src/` contains the framework-agnostic Stage 3 decorators:
+  `@Sensitive` for auto-accessor fields and `@WithRevealContext` for methods. It depends only on
+  the core package and compiles under the root `tsconfig.json`, which leaves `experimentalDecorators`
+  off. It shares two decorator names with `sensitive-nestjs` and no code, because the two decorator
+  models cannot be compiled together.
 - `packages/sensitive-nestjs/src/` contains the NestJS integration: the `@Sensitive` DTO decorator,
   the transform pipe, the context and response interceptors, and the parameter decorators. It is the
   one package compiled with `experimentalDecorators` and `emitDecoratorMetadata`, which NestJS
