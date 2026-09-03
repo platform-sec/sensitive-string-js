@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `URL` through by reference. `redactInStructure()` remains the walk for log lines, where a
   plain-object copy is what a log wants. The NestJS `SensitiveResponseInterceptor` now delegates to
   it, which is how that interceptor gained the serialized-value case.
+- Added `@platform-sec/sensitive-string-express`, the Express integration. `sensitiveBody()` wraps
+  configured `req.body` fields through core's `wrapSensitiveByPath`, scoped by the mount path;
+  `sensitiveHeaders()` puts wrapped copies on `req.sensitive.headers` and leaves `req.headers`
+  byte-identical, so `req.get()`, CORS, and authentication middleware keep working;
+  `sensitiveContext()` establishes the reveal context for every later middleware, the handler, its
+  `await` continuations, and any error handler; `sensitiveResponseFilter()` patches `res.json` and
+  `res.jsonp` to run `redactCopy` over the body, which covers serialized values and entity instances
+  that `toJSON()` cannot; and `stripParseErrorBody()` removes the raw request body that body-parser
+  attaches to the 400 it raises for a malformed payload. Field maps are validated when the
+  middleware is constructed, so a typo is a startup failure rather than a field that quietly stays a
+  plain string. Express 4.21+ and 5 are both supported, with the suite running on 5 and a smoke test
+  of the whole stack on 4.
 - Added `@platform-sec/sensitive-string-decorators`, the framework-agnostic Stage 3 decorators.
   `@Sensitive` wraps every value an auto-accessor field receives, including the field initializer
   and a value hydrated onto the instance through an untyped path, and refuses one whose class is

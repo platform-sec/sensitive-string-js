@@ -59,6 +59,9 @@ pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-deco
 # NestJS: DTO decorators, transform pipe, context and response interceptors
 pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-nestjs
 
+# Express: body wrapping, header extraction, context, response redaction
+pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-express
+
 # Test utilities: canaries, leak assertions, matchers, audit mocks
 pnpm add -D @platform-sec/sensitive-string-testing
 
@@ -880,6 +883,30 @@ shape matters. See
 
 NestJS cannot run Stage 3 decorators, and gets the same two names from
 `@platform-sec/sensitive-string-nestjs` instead.
+
+### Express Middleware
+
+From `@platform-sec/sensitive-string-express`. Five middleware, each closing one leak an Express
+application has by default.
+
+```typescript
+app.use(express.json());
+app.use(stripParseErrorBody());       // body-parser's 400 stops carrying the raw body
+app.use(sensitiveContext((req) => ({ name: `${req.method} ${req.path}` })));
+app.use(sensitiveHeaders({ fields: { authorization: 'credential' } }));
+app.use(sensitiveResponseFilter());   // serialized values and entity instances on the way out
+app.use('/api/auth', sensitiveBody({ fields: { password: 'credential', email: 'sensitive' } }));
+```
+
+`sensitiveBody` replaces configured strings in `req.body` with `SensitiveString` instances, so
+`console.log(req.body)` redacts. It therefore runs after body parsing and after anything that reads
+the body as strings: schema validators, passport-local, CSRF middleware. `sensitiveHeaders` does the
+opposite and leaves `req.headers` untouched, because Express and every auth middleware read it;
+wrapped copies go on `req.sensitive.headers`.
+
+Express 4.21+ and 5 are both supported. See
+[packages/sensitive-express/README.md](packages/sensitive-express/README.md) for the full middleware
+order table and the header logging limitation.
 
 ### Lint Rules
 

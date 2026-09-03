@@ -20,6 +20,13 @@ This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under 
   `tsconfig.json` instead. Its tests compile through swc rather than esbuild, because esbuild emits
   no decorator metadata and NestJS needs `design:paramtypes` to tell a pipe which DTO class a
   parameter has; `vitest.config.ts` scopes that transform to this package.
+- `packages/sensitive-express/src/` contains the Express integration: `sensitiveBody`,
+  `sensitiveHeaders`, `sensitiveContext`, `sensitiveResponseFilter`, and `stripParseErrorBody`. It
+  depends on the core package and on Express as peers, and compiles under the root
+  `tsconfig.json`. Its suite runs against Express 5, plus a smoke test against Express 4 through the
+  `express4` devDependency alias. That alias's ambient typings live in `packages/sensitive-express/types/`
+  rather than under `src`, because `.gitignore` and `pnpm clean` both treat a declaration file under a
+  package's `src` as build output.
 - `packages/sensitive-eslint-plugin/src/` contains the ESLint rules, their presets, and the
   parser-agnostic AST helpers they share. It has no runtime dependencies, not even on the core
   package: the rules read syntax, never types. Each rule's user-facing documentation is in
