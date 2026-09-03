@@ -22,6 +22,17 @@ const DEFAULT_CONTENT_TYPES = ['application/json', 'application/x-www-form-urlen
  * time), skips a non-string value instead of coercing it, and refuses to follow
  * a `__proto__`, `constructor`, or `prototype` path segment.
  *
+ * Because the wrap is a clone, the property is reassigned and the object that
+ * was there before survives holding the raw strings. Code that captured a
+ * reference to `req.body` before this middleware ran still reads plain
+ * credentials out of it afterwards, which is the sharp edge behind the ordering
+ * rule above: a logger registered earlier that keeps the reference and prints it
+ * from a `finish` listener prints the secret. Mutating in place would close
+ * that, at the cost of a second walk through the most security-sensitive
+ * function in core, and measurement put the clone at roughly the cost of the
+ * `JSON.parse` body-parser already performed on the same bytes, so the clone
+ * stands and the ordering rule carries the weight.
+ *
  * @param options - Field map and, optionally, the content types to process
  * @returns Express middleware
  * @throws TypeError If the field map is malformed, at construction

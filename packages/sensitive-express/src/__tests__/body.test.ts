@@ -301,6 +301,33 @@ describe('sensitiveBody', () => {
     expect(wrapped).toHaveLength(2000);
   });
 
+  it('documents the leak: a reference captured before the wrap still holds raw strings', async () => {
+    const captured = capture<Record<string, unknown>>();
+    const reread = capture<unknown>();
+    const { app } = createTestApp((app) => {
+      app.use(express.json());
+      app.use((req, _res, next) => {
+        // The shape the ordering rule exists to prevent: hold the object, read
+        // it after the wrapper has run.
+        captured.set(bodyOf(req));
+        next();
+      });
+      app.use(sensitiveBody({ fields: { password: 'credential' } }));
+      app.post('/test', (req, res) => {
+        reread.set(bodyOf(req)['password']);
+        res.sendStatus(200);
+      });
+    });
+
+    await request(app).post('/test').send({ password: CANARY }).expect(200);
+
+    // The wrap is a clone assigned over the property, so the earlier reference
+    // is the pre-wrap object and still has the plain string.
+    expect(captured.get()['password']).toBe(CANARY);
+    // Reading `req.body` again, rather than holding it, sees the wrapped value.
+    expect(reread.get()).toBeInstanceOf(SensitiveString);
+  });
+
   describe('configuration validation', () => {
     it('rejects an entry that is not a sensitivity class', () => {
       expect(() =>

@@ -87,8 +87,23 @@ before it:
 | Strategies that read the body (passport-local) | They pass `req.body.password` to `bcrypt.compare`, which throws on a non-string |
 | CSRF middleware reading `req.body._csrf` | Same reason |
 
-Anything that *logs* the request should run after it: a request logger placed before the wrapper
-sees plain strings.
+Anything that *logs* the request has to run after it, and this one is a leak rather than a
+nuisance. The wrap returns a clone, which the middleware assigns to `req.body`; the original object
+survives holding the raw strings. A middleware that runs earlier and captures a reference is still
+holding that original when it reads it later:
+
+```typescript
+app.use((req, res, next) => {
+  const body = req.body;                          // the pre-wrap object
+  res.on('finish', () => logger.info({ body }));  // logs the raw password
+  next();
+});
+app.use(sensitiveBody({ fields: AUTH_FIELDS }));  // too late for `body`
+```
+
+Reading `req.body` inside the listener instead of capturing it would be fine, because the property
+has been reassigned by then. Registering the logger after `sensitiveBody` is fine either way, and is
+the rule to follow.
 
 Applications validating with Zod can skip the ordering problem entirely. `sensitive-zod` schemas
 validate and wrap in one step, which makes `sensitiveBody` unnecessary for those routes.
