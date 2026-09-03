@@ -125,7 +125,12 @@ export function Sensitive<C extends SensitivityClass>(
   options?: SensitiveStringOptions
 ) {
   if (!isSensitivityClass(klass)) {
-    const received = typeof klass === 'string' ? `'${klass}'` : describeType(klass);
+    // Narrowed to `never` here, since the guard above excluded every member of
+    // the declared type. The check exists for a caller arriving from JavaScript
+    // or through `any`, so the value is inspected as the unknown it actually is
+    // at runtime.
+    const raw: unknown = klass;
+    const received = typeof raw === 'string' ? `'${raw}'` : describeType(raw);
 
     throw new TypeError(
       `@Sensitive: klass ${received} is not a sensitivity class; expected ` +

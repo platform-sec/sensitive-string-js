@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-empty-interface, @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-empty-object-type, @typescript-eslint/no-explicit-any */
 import type { Assertion as VitestAssertion, expect as vitestExpect } from 'vitest';
 import type { SensitiveMatchers } from './matchers.js';
 import type { SnapshotSerializerPlugin } from './serializer.js';

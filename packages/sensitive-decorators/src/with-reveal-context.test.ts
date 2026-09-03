@@ -381,6 +381,7 @@ describe('@WithRevealContext', () => {
         run(_a: number, _b: number): void {}
       }
 
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- only .name and .length are read; the method is never called
       const method = Handler.prototype.run;
 
       expect(method.name).toBe('run');

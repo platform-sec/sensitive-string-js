@@ -153,7 +153,7 @@ export type PspWebhookPayload = {
  * Typed JSON.parse helper for the sample PSP payload.
  */
 export const parsePspWebhookPayload = (body: string): PspWebhookPayload =>
-  JSON.parse(body) as unknown as PspWebhookPayload;
+  JSON.parse(body) as PspWebhookPayload;
 
 /**
  * Sample sensitive field configuration for a generic Payment Service Provider.

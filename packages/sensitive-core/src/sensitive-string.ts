@@ -27,12 +27,18 @@ import {
  */
 const NODE_INSPECT_SYMBOL = Symbol.for('nodejs.util.inspect.custom');
 
+/* eslint-disable @typescript-eslint/unbound-method --
+   Detaching these getters from RegExp.prototype is the point: a subclass or an
+   instance with an overridden `source` cannot influence what is read. Each is
+   annotated `this: RegExp` and invoked through .call() with the pattern as the
+   receiver, which is the binding the rule asks for. */
 const REGEXP_SOURCE_GETTER = Object.getOwnPropertyDescriptor(RegExp.prototype, 'source')?.get as (
   this: RegExp
 ) => string;
 const REGEXP_FLAGS_GETTER = Object.getOwnPropertyDescriptor(RegExp.prototype, 'flags')?.get as (
   this: RegExp
 ) => string;
+/* eslint-enable @typescript-eslint/unbound-method */
 
 /**
  * Copy a caller-provided regular expression into a plain RegExp.

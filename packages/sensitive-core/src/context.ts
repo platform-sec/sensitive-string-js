@@ -59,7 +59,7 @@ export function createChildContext(
 ): RevealContext {
   const current = getCurrentRevealContext();
   if (!current) {
-    return overrides as RevealContext;
+    return overrides;
   }
 
   return {

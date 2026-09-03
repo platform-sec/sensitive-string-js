@@ -2,7 +2,7 @@ import { SensitiveString } from '@platform-sec/sensitive-string-core';
 import type { SensitivityClass } from '@platform-sec/sensitive-string-core';
 import { CONTAINS_CHECK_CONTEXT, MATCHER_CONTEXT, rawValueOf } from './canary.js';
 import { describeType } from './describe-type.js';
-import { findRawValue } from './leak-scan.js';
+import { findRawValue, isSensitiveString } from './leak-scan.js';
 
 /**
  * What a matcher returns. Structurally the result type Vitest and Jest both
@@ -83,7 +83,7 @@ export const sensitiveMatchers = {
   },
 
   toHaveSensitivityClass(received: unknown, expected: SensitivityClass): MatcherResult {
-    if (!(received instanceof SensitiveString)) {
+    if (!isSensitiveString(received)) {
       return notASensitiveString(received);
     }
 

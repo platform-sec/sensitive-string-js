@@ -13,6 +13,7 @@ import type {
  * instance's overridden `getTime`, which could otherwise report one deadline to
  * the constructor and another to anything else that inspected the same object.
  */
+// eslint-disable-next-line @typescript-eslint/unbound-method -- detaching it is the point, per the note above; it is invoked with an explicit receiver via .call()
 const DATE_GET_TIME = Date.prototype.getTime;
 
 /**

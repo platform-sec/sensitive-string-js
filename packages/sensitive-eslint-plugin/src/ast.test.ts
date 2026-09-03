@@ -352,9 +352,7 @@ describe('ESLint compatibility shims', () => {
   });
 
   it('yields nothing when neither is present', () => {
-    expect(
-      getSourceCode({ options: [], report: () => {} } as unknown as RuleContext)
-    ).toBeUndefined();
+    expect(getSourceCode({ options: [], report: () => {} })).toBeUndefined();
   });
 
   it('prefers the ESLint 9 ancestors call, which does not warn', () => {
@@ -382,8 +380,6 @@ describe('ESLint compatibility shims', () => {
   });
 
   it('yields an empty list when neither is present', () => {
-    expect(
-      getAncestors({ options: [], report: () => {} } as unknown as RuleContext, target)
-    ).toEqual([]);
+    expect(getAncestors({ options: [], report: () => {} }, target)).toEqual([]);
   });
 });

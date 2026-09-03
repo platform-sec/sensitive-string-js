@@ -2,6 +2,16 @@ import { SensitiveString } from '@platform-sec/sensitive-string-core';
 import type { SensitivityClass } from '@platform-sec/sensitive-string-core';
 
 /**
+ * `instanceof SensitiveString` narrows to `SensitiveString<any>`, because the
+ * class is generic in its sensitivity class and the check says nothing about
+ * which one. The predicate names the union instead, so nothing downstream of
+ * the narrowing is typed `any`.
+ */
+export function isSensitiveString(value: unknown): value is SensitiveString<SensitivityClass> {
+  return value instanceof SensitiveString;
+}
+
+/**
  * Most values the walk will look at before it gives up.
  *
  * This is a guard against a hostile target, not a limit a real one reaches. A
@@ -245,7 +255,7 @@ function expand(
       break;
   }
 
-  expandObject(value as object, path, fragments, seen, stack);
+  expandObject(value, path, fragments, seen, stack);
 }
 
 function expandObject(
@@ -255,7 +265,7 @@ function expandObject(
   seen: WeakSet<object>,
   stack: WalkItem[]
 ): void {
-  if (obj instanceof SensitiveString) {
+  if (isSensitiveString(obj)) {
     // The raw value is unreachable from here, which is the point: a value that
     // is still wrapped has nothing for a leak search to find. What is recorded
     // is the rendering the class policy produces, so a redaction check can look
@@ -354,6 +364,7 @@ function collectOwnProperties(
       continue;
     }
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- read to test for presence, then invoked as getter.call(obj) below
     const getter = descriptor.get;
     if (getter === undefined) {
       continue;

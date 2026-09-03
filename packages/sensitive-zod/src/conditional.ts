@@ -151,13 +151,9 @@ export function zConditionalSensitive<
 
   // The branches are built from a runtime map, so their literal types are not
   // recoverable by inference. The declared return type states the union those
-  // branches produce; the cast is the seam between the two.
+  // branches produce; the cast on `options` is the seam between the two.
   return z.discriminatedUnion(
     config.discriminator,
     options as unknown as [z.ZodDiscriminatedUnionOption<D>, ...z.ZodDiscriminatedUnionOption<D>[]]
-  ) as unknown as z.ZodType<
-    ConditionalSensitiveOutput<D, V, M>,
-    z.ZodTypeDef,
-    ConditionalSensitiveInput<D, V, M>
-  >;
+  );
 }

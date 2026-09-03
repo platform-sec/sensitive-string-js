@@ -82,7 +82,7 @@ function lintLegacy(code: string, config: Record<string, unknown>): string[] {
     .verify(code, {
       parserOptions: { ecmaVersion: 2022, sourceType: 'module' },
       ...withoutPluginName,
-    } as Linter.LegacyConfig)
+    })
     .map((message) => message.ruleId ?? '(fatal)');
 }
 

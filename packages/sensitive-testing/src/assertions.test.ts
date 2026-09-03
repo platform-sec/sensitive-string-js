@@ -163,6 +163,7 @@ describe('expectNotLeaked', () => {
           name: 'sensitive',
           redact: () => '[REDACTED:sensitive]',
           checkRevealAllowed: () => {
+            // eslint-disable-next-line @typescript-eslint/only-throw-error -- a non-Error refusal is exactly what this test describes
             throw 'denied by string';
           },
         },
@@ -242,7 +243,9 @@ describe('expectRedacted', () => {
   it('accepts an object whose serialization redacts', () => {
     const email = createTestSecret('sensitive', 'email');
 
-    expect(() => expectRedacted(JSON.parse(JSON.stringify({ email })), email)).not.toThrow();
+    const roundTripped = JSON.parse(JSON.stringify({ email })) as object;
+
+    expect(() => expectRedacted(roundTripped, email)).not.toThrow();
   });
 
   it('accepts an object that still holds the wrapped value', () => {

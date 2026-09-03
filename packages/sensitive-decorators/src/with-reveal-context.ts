@@ -93,6 +93,7 @@ function copyContext(context: RevealContext): RevealContext {
   }
 
   if (context.auditReveal !== undefined) {
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- an audit sink is a callback carried on the context, and copying the reference is what building a detached copy of that context means
     copy.auditReveal = context.auditReveal;
   }
 
@@ -123,11 +124,13 @@ function resumeInContext(
   // has all three, so this is defensive: it keeps an iterator that arrived by
   // some other route failing the way it did, since `for...of` tests for
   // `return` before calling it and an unconditional one would throw instead.
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- read to test for presence, then invoked as finish.call(iterator, ...) below
   const finish = iterator.return;
   if (typeof finish === 'function') {
     wrapper['return'] = (value?: unknown) => run(() => finish.call(iterator, value));
   }
 
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- read to test for presence, then invoked as raise.call(iterator, ...) below
   const raise = iterator.throw;
   if (typeof raise === 'function') {
     wrapper['throw'] = (error?: unknown) => run(() => raise.call(iterator, error));

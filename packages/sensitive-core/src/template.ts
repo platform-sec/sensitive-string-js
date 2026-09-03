@@ -4,6 +4,16 @@ import { deriveSensitiveString, SensitiveString } from './sensitive-string.js';
 import { defaultCombineClasses, getPolicy } from './policy.js';
 
 /**
+ * `instanceof SensitiveString` narrows to `SensitiveString<any>`, because the
+ * class is generic in its sensitivity class and the check says nothing about
+ * which one. The predicate names the union instead, so nothing downstream of
+ * the narrowing is typed `any`.
+ */
+function isSensitiveString(value: unknown): value is SensitiveString<SensitivityClass> {
+  return value instanceof SensitiveString;
+}
+
+/**
  * A value that may be interpolated into a sensitive template.
  *
  * Everything else, including `null`, `undefined`, `bigint`, `symbol`, functions,
@@ -123,7 +133,7 @@ function planTemplate(
   const sources: SensitiveString<SensitivityClass>[] = [];
 
   values.forEach((value, index) => {
-    if (value instanceof SensitiveString) {
+    if (isSensitiveString(value)) {
       klass = combine(klass, value.klass);
       sources.push(value);
       return;
@@ -142,8 +152,12 @@ function planTemplate(
       // Naming a string cannot run caller code, so it is quoted. Anything else
       // is described by type: building the message must not invoke a
       // caller-supplied toString().
-      const received =
-        typeof options.klass === 'string' ? `'${options.klass}'` : describeType(options.klass);
+      // Narrowed to `never` here, since the guard above excluded every member
+      // of the declared type. The check exists for a caller arriving from
+      // JavaScript or through `any`, so the value is inspected as the unknown
+      // it actually is at runtime.
+      const raw: unknown = options.klass;
+      const received = typeof raw === 'string' ? `'${raw}'` : describeType(raw);
 
       throw new TypeError(
         `sensitiveTemplate: klass ${received} is not a sensitivity class; expected ` +
