@@ -116,8 +116,14 @@ not, and a sensitivity class cannot be guessed from syntax at all.
 
 ## Precision
 
-Every rule works from names, not types, so each has a shape it cannot see and a
-shape it reports too eagerly. Each rule's documentation ends with a "Known
+Every rule that asks for an argument treats an explicit `undefined` as the
+absence of one: `reveal(undefined)` and `new SensitiveString(v, undefined)`
+satisfy a signature and decide nothing, so accepting them would make passing
+`undefined` the shortest way to silence a rule while looking like compliance
+with it.
+
+Beyond that, every rule works from names, not types, so each has a shape it
+cannot see and a shape it reports too eagerly. Each rule's documentation ends with a "Known
 limits" section saying which. Two general points:
 
 - **A logger or HTTP client under an unfamiliar name is invisible.** Both rules

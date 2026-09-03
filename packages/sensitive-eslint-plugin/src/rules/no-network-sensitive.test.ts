@@ -67,6 +67,17 @@ describe('no-network-sensitive', () => {
         code: "fetch(url, { headers: { a: a.reveal({ name: 'h' }) }, body: b.reveal() });",
         errors: [{ messageId: 'noNetworkReveal' }],
       },
+      // A placeholder argument is not an audit context, so it must not be what
+      // lets the value onto the wire.
+      {
+        code: 'fetch(url, { body: secret.reveal(undefined) });',
+        errors: [{ messageId: 'noNetworkReveal' }],
+      },
+      {
+        code: 'fetch(url, { body: secret.reveal(void 0) });',
+        errors: [{ messageId: 'noNetworkReveal' }],
+      },
+
       // A client the project names itself.
       {
         code: 'apiClient.post(url, { token: token.reveal() });',

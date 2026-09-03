@@ -88,6 +88,34 @@ describe('explicit-class', () => {
         ],
       },
 
+      // A placeholder names no class. The suggestion overwrites it rather than
+      // inserting ahead of it, which would leave the `undefined` behind in the
+      // `label` position where it is accepted and means nothing.
+      {
+        code: 'new SensitiveString(value, undefined);',
+        errors: [
+          {
+            messageId: 'missingClass',
+            suggestions: [
+              { messageId: 'addClass', output: "new SensitiveString(value, 'sensitive');" },
+              { messageId: 'addClass', output: "new SensitiveString(value, 'credential');" },
+            ],
+          },
+        ],
+      },
+      {
+        code: 'new SensitiveString(value, void 0);',
+        errors: [
+          {
+            messageId: 'missingClass',
+            suggestions: [
+              { messageId: 'addClass', output: "new SensitiveString(value, 'sensitive');" },
+              { messageId: 'addClass', output: "new SensitiveString(value, 'credential');" },
+            ],
+          },
+        ],
+      },
+
       // No arguments at all is broken in a way a class does not fix, so it is
       // reported without a suggestion.
       {

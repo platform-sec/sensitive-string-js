@@ -17,6 +17,10 @@ Incorrect:
 ```js
 new SensitiveString(value);
 new core.SensitiveString(value);
+
+// A placeholder names no class. The suggestion overwrites it rather than
+// pushing it into the `label` position, where it is accepted and means nothing.
+new SensitiveString(value, undefined);
 ```
 
 Correct:

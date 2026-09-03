@@ -9,7 +9,11 @@
  * reach a rule as a string where a list belongs.
  */
 
-/** One positional option, as an object, or `undefined` if it is not one. */
+/**
+ * One positional option, as an object, or an empty one when it is absent or is
+ * not an object. Every reader below then falls back to its default, which is
+ * what an omitted option should do.
+ */
 export function optionObject(
   options: readonly unknown[],
   index: number

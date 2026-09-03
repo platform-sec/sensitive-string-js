@@ -156,7 +156,14 @@ export function operatorOf(node: AstNode): string | undefined {
   return typeof operator === 'string' ? operator : undefined;
 }
 
-/** A binary expression's operands, unwrapped, or `undefined` if it has none. */
+/**
+ * A binary expression's operands, or `undefined` if it has none.
+ *
+ * Returned exactly as written, not unwrapped. Detection does not need them
+ * unwrapped, because {@link asMethodCall} unwraps whatever it is handed, while
+ * a rule that quotes an operand back into a suggestion does need the text the
+ * author wrote: unwrapping first would silently drop a cast from the rewrite.
+ */
 export function operandsOf(
   node: AstNode
 ): { readonly left: AstNode; readonly right: AstNode } | undefined {
@@ -165,13 +172,29 @@ export function operandsOf(
   if (left === undefined || right === undefined) {
     return undefined;
   }
-  return { left: unwrap(left), right: unwrap(right) };
+  return { left, right };
 }
 
-/** A switch statement's discriminant, unwrapped, or `undefined`. */
+/** A switch statement's discriminant, as written, or `undefined`. */
 export function discriminantOf(node: AstNode): AstNode | undefined {
-  const discriminant = nodeField(node, 'discriminant');
-  return discriminant === undefined ? undefined : unwrap(discriminant);
+  return nodeField(node, 'discriminant');
+}
+
+/**
+ * Whether an argument is an explicit `undefined`, written either way.
+ *
+ * `reveal(undefined)` and `new SensitiveString(v, undefined)` satisfy a
+ * signature without deciding anything, so every rule that asks for an argument
+ * has to treat them as the absence of one. Otherwise the shortest way to
+ * silence any of those rules is to pass `undefined`, which reads like
+ * compliance and is not.
+ */
+export function isExplicitUndefined(node: AstNode): boolean {
+  const value = unwrap(node);
+  return (
+    identifierName(value) === 'undefined' ||
+    (value.type === 'UnaryExpression' && operatorOf(value) === 'void')
+  );
 }
 
 /** Whether a node is a spread, in either the ESTree or the legacy spelling. */
@@ -210,6 +233,40 @@ export interface MethodCall {
 }
 
 /**
+ * Whether any link of a member or call chain is optional.
+ *
+ * Checking only the call and the member access nearest it is not enough:
+ * `a?.b.reveal()` marks neither, because the `?.` sits one link further down,
+ * and the whole expression is still `undefined` when `a` is. Only `object` and
+ * `callee` are followed, so a `?.` inside an argument does not count.
+ */
+function hasOptionalLink(node: AstNode): boolean {
+  let current: AstNode | undefined = unwrap(node);
+
+  while (current !== undefined) {
+    if (field(current, 'optional') === true) {
+      return true;
+    }
+
+    if (current.type === 'MemberExpression') {
+      const object = nodeField(current, 'object');
+      current = object === undefined ? undefined : unwrap(object);
+      continue;
+    }
+
+    if (current.type === 'CallExpression') {
+      const callee = nodeField(current, 'callee');
+      current = callee === undefined ? undefined : unwrap(callee);
+      continue;
+    }
+
+    return false;
+  }
+
+  return false;
+}
+
+/**
  * A node read as a method call, or `undefined` if it is not one.
  *
  * `optional` is reported rather than ignored so a rule that rewrites code can
@@ -245,8 +302,7 @@ export function asMethodCall(node: AstNode): MethodCall | undefined {
     callee,
     receiver,
     method,
-    optional:
-      optionalOuter || field(call, 'optional') === true || field(callee, 'optional') === true,
+    optional: optionalOuter || hasOptionalLink(call),
   };
 }
 

@@ -9,12 +9,44 @@
  * cannot consume. Those are the failures a consumer meets first, so they are
  * checked here by running ESLint itself, in both config formats.
  */
+import { existsSync, readFileSync } from 'node:fs';
+import nodePath from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { Linter } from 'eslint';
 import plugin, { PLUGIN_NAMESPACE, configs, rules } from './index.js';
 import { lintFlat } from './__tests__/rule-tester.js';
 
 const CANARY = 'LEAKED_SECRET_abc123xyz';
+
+/**
+ * This package's own manifest.
+ *
+ * Located by walking up to the workspace root rather than from the module's own
+ * path, because neither `import.meta.url` nor `__dirname` exists under both the
+ * Vitest transform and the NodeNext CommonJS type-check, and the suite runs
+ * from the repository root and from the package directory alike.
+ */
+function readPluginManifest(): { readonly name: string; readonly version: string } {
+  let directory = process.cwd();
+
+  for (;;) {
+    if (existsSync(nodePath.join(directory, 'pnpm-workspace.yaml'))) {
+      const manifest = nodePath.join(
+        directory,
+        'packages',
+        'sensitive-eslint-plugin',
+        'package.json'
+      );
+      return JSON.parse(readFileSync(manifest, 'utf8')) as { name: string; version: string };
+    }
+
+    const parent = nodePath.dirname(directory);
+    if (parent === directory) {
+      throw new Error(`Could not find the workspace root above ${process.cwd()}.`);
+    }
+    directory = parent;
+  }
+}
 
 /** Code every preset must flag, carrying the raw value a miss would leak. */
 const LEAKY_SOURCE = `const secret = new SensitiveString('${CANARY}', 'credential');\nconsole.log(secret.reveal());\n`;
@@ -55,12 +87,18 @@ describe('plugin', () => {
     // Flat config imports the default; eslintrc requires the module and reads
     // its named exports. Both have to reach the same rules.
     expect(plugin.rules).toBe(rules);
-    expect(plugin.configs).toMatchObject(configs);
+    expect(plugin.configs).toBe(configs);
   });
 
-  it('declares its name and version for the config inspector', () => {
-    expect(plugin.meta.name).toBe('@platform-sec/eslint-plugin-sensitive-string');
-    expect(plugin.meta.version).toMatch(/^\d+\.\d+\.\d+$/);
+  it('declares the name and version the manifest does', () => {
+    // `meta` is written by hand, because reading the manifest from `src` would
+    // pull a file outside `rootDir` into the build. Nothing else would notice
+    // it drifting: a stale version shows up only in ESLint's config inspector
+    // and in the cache key it derives, both of them quiet failures.
+    const manifest = readPluginManifest();
+
+    expect(plugin.meta.name).toBe(manifest.name);
+    expect(plugin.meta.version).toBe(manifest.version);
   });
 
   it('is named by the specifier ESLint derives from the package name', () => {

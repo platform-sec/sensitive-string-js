@@ -7,6 +7,7 @@ import {
   callArguments,
   discriminantOf,
   getSourceCode,
+  isExplicitUndefined,
   operandsOf,
   operatorOf,
 } from '../ast.js';
@@ -33,6 +34,21 @@ const NEGATED_OPERATORS: ReadonlySet<string> = new Set(['!==', '!=']);
 function asRevealCall(node: AstNode): MethodCall | undefined {
   const call = asMethodCall(node);
   return call !== undefined && call.method === REVEAL_METHOD ? call : undefined;
+}
+
+/**
+ * The audit context a reveal carries, or `undefined` if it carries none.
+ *
+ * A placeholder `undefined` counts as none, so the rewrite does not copy
+ * `equals(other, undefined)` into the file and does not treat two reveals as
+ * having a context each when only one really does.
+ */
+function revealContext(reveal: MethodCall | undefined): AstNode | undefined {
+  if (reveal === undefined) {
+    return undefined;
+  }
+  const [context] = callArguments(reveal.call);
+  return context === undefined || isExplicitUndefined(context) ? undefined : context;
 }
 
 /**
@@ -81,7 +97,7 @@ function buildSuggestion(
     if (otherReveal.optional) {
       return undefined;
     }
-    if (callArguments(otherReveal.call).length > 0 && callArguments(reveal.call).length > 0) {
+    if (revealContext(reveal) !== undefined && revealContext(otherReveal) !== undefined) {
       return undefined;
     }
   }
@@ -92,9 +108,7 @@ function buildSuggestion(
   // `equals(other, ctx?)` takes the context in second position, so a context
   // written on either reveal survives the rewrite. Only one can, which is why
   // a pair that both carry one is declined above.
-  const contextArgument =
-    callArguments(reveal.call)[0] ??
-    (otherReveal === undefined ? undefined : callArguments(otherReveal.call)[0]);
+  const contextArgument = revealContext(reveal) ?? revealContext(otherReveal);
   const context = contextArgument === undefined ? '' : `, ${sourceCode.getText(contextArgument)}`;
 
   const call = `${receiver}.equals(${comparand}${context})`;
@@ -143,6 +157,8 @@ export const noCredentialEquality: RuleModule = {
           return;
         }
 
+        // Operands arrive exactly as written. `asRevealCall` unwraps for itself,
+        // and quoting an operand into a suggestion needs the author's text.
         // Whichever side reveals drives the rewrite. When both do, the left one
         // becomes the receiver, which reads the way the original did.
         const left = asRevealCall(operands.left);

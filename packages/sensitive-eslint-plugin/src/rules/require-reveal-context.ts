@@ -5,12 +5,12 @@ import {
   REVEAL_METHOD,
   asMethodCall,
   calleeChainNames,
+  calleeOf,
   callArguments,
   getAncestors,
-  identifierName,
+  isExplicitUndefined,
   isSpread,
   objectProperties,
-  operatorOf,
   staticKeyName,
   unwrap,
 } from '../ast.js';
@@ -45,25 +45,15 @@ function insideContextCall(
     if (ancestor.type !== 'CallExpression') {
       return false;
     }
-    const [called] = calleeChainNames(ancestor);
+
+    const callee = calleeOf(ancestor);
+    if (callee === undefined) {
+      return false;
+    }
+
+    const [called] = calleeChainNames(callee);
     return called !== undefined && contextFunctions.has(called);
   });
-}
-
-/**
- * Whether an argument stands for a real context.
- *
- * An explicit `undefined` is treated as no context at all. Writing
- * `reveal(undefined)` is how a caller satisfies a signature without deciding
- * anything, and letting it pass would make the rule trivial to silence while
- * looking like it had been addressed.
- */
-function isRealContext(argument: AstNode): boolean {
-  const value = unwrap(argument);
-  if (identifierName(value) === 'undefined') {
-    return false;
-  }
-  return !(value.type === 'UnaryExpression' && operatorOf(value) === 'void');
 }
 
 /**
@@ -123,7 +113,7 @@ export const requireRevealContext: RuleModule = {
         }
 
         const [first] = callArguments(node);
-        if (first === undefined || !isRealContext(first)) {
+        if (first === undefined || isExplicitUndefined(first)) {
           context.report({
             node,
             messageId: 'missingContext',

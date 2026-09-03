@@ -1,7 +1,13 @@
 /**
  * `explicit-class`: a sensitive value must be constructed with its class.
  */
-import { callArguments, calleeChainNames, calleeOf, hasSpreadArgument } from '../ast.js';
+import {
+  callArguments,
+  calleeChainNames,
+  calleeOf,
+  hasSpreadArgument,
+  isExplicitUndefined,
+} from '../ast.js';
 import { ruleDocs } from '../docs.js';
 import { nameListSchema, optionObject, readNameSet } from '../options.js';
 import type {
@@ -72,14 +78,23 @@ export const explicitClass: RuleModule = {
           return;
         }
 
+        // `new SensitiveString(v, undefined)` names no class either. Counting
+        // arguments alone would let the shortest way to silence this rule look
+        // like compliance with it.
         const args = callArguments(node);
-        if (args.length >= 2) {
+        const given = args[1];
+        const placeholder = given !== undefined && isExplicitUndefined(given);
+        if (given !== undefined && !placeholder) {
           return;
         }
 
-        // Offered only when there is a value argument to append to. With no
+        // Offered only when there is a value argument to anchor to. With no
         // arguments at all the call is already broken in a way no sensitivity
         // class fixes, and the report alone is the honest answer.
+        //
+        // A placeholder is overwritten rather than pushed along: inserting
+        // ahead of it would leave the `undefined` behind in the `label`
+        // position, where it is accepted and means nothing.
         const value = args[0];
         const suggestions: readonly SuggestionDescriptor[] =
           value === undefined
@@ -87,7 +102,10 @@ export const explicitClass: RuleModule = {
             : SENSITIVITY_CLASSES.map((klass) => ({
                 messageId: 'addClass',
                 data: { klass },
-                fix: (fixer) => fixer.insertTextAfter(value, `, '${klass}'`),
+                fix: (fixer) =>
+                  placeholder && given !== undefined
+                    ? fixer.replaceText(given, `'${klass}'`)
+                    : fixer.insertTextAfter(value, `, '${klass}'`),
               }));
 
         context.report({

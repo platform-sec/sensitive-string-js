@@ -8,6 +8,7 @@ import {
   calleeOf,
   findMethodCalls,
   getSourceCode,
+  isExplicitUndefined,
 } from '../ast.js';
 import { ruleDocs } from '../docs.js';
 import { nameListSchema, optionObject, readBoolean, readNameSet } from '../options.js';
@@ -105,7 +106,11 @@ export const noNetworkSensitive: RuleModule = {
 
         for (const argument of callArguments(node)) {
           for (const reveal of findMethodCalls(argument, revealMethods, visitorKeys)) {
-            const audited = callArguments(reveal).length > 0;
+            // An explicit `undefined` satisfies the signature and decides
+            // nothing, so it must not be what lets a secret onto the wire.
+            const [given] = callArguments(reveal);
+            const audited = given !== undefined && !isExplicitUndefined(given);
+
             if (allowWithContext && audited) {
               continue;
             }

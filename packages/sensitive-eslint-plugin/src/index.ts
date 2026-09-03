@@ -63,17 +63,19 @@ export const meta = {
   version: '0.1.0',
 } as const;
 
-const plugin: Plugin = { meta, rules, configs: {} };
-
 /**
  * The presets: `recommended` and `strict` for flat config,
  * `legacy-recommended` and `legacy-strict` for eslintrc.
  *
- * Assigned onto the plugin after it exists because a flat preset holds the
- * plugin object it configures.
+ * Filled in after the plugin exists, because a flat preset holds the plugin
+ * object it configures and the plugin holds its presets. The two names are one
+ * object, so a config reached through `plugin.configs` and one reached through
+ * this export cannot come apart.
  */
-export const configs: Record<string, unknown> = buildConfigs(plugin);
-Object.assign(plugin.configs, configs);
+export const configs: Record<string, unknown> = {};
+
+const plugin: Plugin = { meta, rules, configs };
+Object.assign(configs, buildConfigs(plugin));
 
 export {
   explicitClass,

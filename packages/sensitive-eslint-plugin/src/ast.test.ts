@@ -14,9 +14,12 @@ import {
   asMethodCall,
   calleeChainNames,
   childNodes,
+  discriminantOf,
   findMethodCalls,
   getAncestors,
   getSourceCode,
+  isExplicitUndefined,
+  operandsOf,
   staticKeyName,
   staticPropertyName,
   unwrap,
@@ -109,6 +112,56 @@ describe('asMethodCall', () => {
     ).toBeUndefined();
   });
 
+  it('sees a `?.` further down the chain than the call', () => {
+    // `a?.b.reveal()`: neither the call nor the member access nearest it is
+    // marked optional, yet the whole expression is `undefined` when `a` is.
+    const call = node({
+      type: 'CallExpression',
+      optional: false,
+      arguments: [],
+      callee: node({
+        type: 'MemberExpression',
+        computed: false,
+        optional: false,
+        property: node({ type: 'Identifier', name: 'reveal' }),
+        object: node({
+          type: 'MemberExpression',
+          computed: false,
+          optional: true,
+          property: node({ type: 'Identifier', name: 'b' }),
+          object: node({ type: 'Identifier', name: 'a' }),
+        }),
+      }),
+    });
+
+    expect(asMethodCall(call)?.optional).toBe(true);
+  });
+
+  it('does not count a `?.` inside an argument', () => {
+    const call = node({
+      type: 'CallExpression',
+      optional: false,
+      callee: node({
+        type: 'MemberExpression',
+        computed: false,
+        optional: false,
+        property: node({ type: 'Identifier', name: 'reveal' }),
+        object: node({ type: 'Identifier', name: 'a' }),
+      }),
+      arguments: [
+        node({
+          type: 'MemberExpression',
+          computed: false,
+          optional: true,
+          property: node({ type: 'Identifier', name: 'd' }),
+          object: node({ type: 'Identifier', name: 'c' }),
+        }),
+      ],
+    });
+
+    expect(asMethodCall(call)?.optional).toBe(false);
+  });
+
   it('yields nothing for a call with no callee', () => {
     expect(asMethodCall(node({ type: 'CallExpression', arguments: [] }))).toBeUndefined();
   });
@@ -122,6 +175,63 @@ describe('asMethodCall', () => {
     });
 
     expect(asMethodCall(node({ type: 'CallExpression', callee, arguments: [] }))).toBeUndefined();
+  });
+});
+
+describe('isExplicitUndefined', () => {
+  it.each([
+    ['the identifier', node({ type: 'Identifier', name: 'undefined' })],
+    [
+      'the void operator',
+      node({
+        type: 'UnaryExpression',
+        operator: 'void',
+        argument: node({ type: 'Literal', value: 0 }),
+      }),
+    ],
+    [
+      'either, behind a cast',
+      node({ type: 'TSAsExpression', expression: node({ type: 'Identifier', name: 'undefined' }) }),
+    ],
+  ])('recognises %s', (_label, value) => {
+    expect(isExplicitUndefined(value)).toBe(true);
+  });
+
+  it.each([
+    ['a named context', node({ type: 'Identifier', name: 'ctx' })],
+    ['an object literal', node({ type: 'ObjectExpression', properties: [] })],
+    ['null, which is not the same placeholder', node({ type: 'Literal', value: null })],
+    [
+      'another unary operator',
+      node({
+        type: 'UnaryExpression',
+        operator: '!',
+        argument: node({ type: 'Identifier', name: 'x' }),
+      }),
+    ],
+  ])('leaves %s alone', (_label, value) => {
+    expect(isExplicitUndefined(value)).toBe(false);
+  });
+});
+
+describe('operandsOf and discriminantOf', () => {
+  const inner = node({ type: 'Identifier', name: 'x' });
+  const cast = node({ type: 'TSAsExpression', expression: inner });
+
+  // Unwrapping here would be invisible until a rule quoted an operand back
+  // into a suggestion and silently dropped the cast from the rewrite.
+  it('returns operands as written, not unwrapped', () => {
+    const binary = node({ type: 'BinaryExpression', operator: '===', left: cast, right: inner });
+
+    expect(operandsOf(binary)?.left).toBe(cast);
+  });
+
+  it('returns the discriminant as written', () => {
+    expect(discriminantOf(node({ type: 'SwitchStatement', discriminant: cast }))).toBe(cast);
+  });
+
+  it('yields nothing for a node with no operands', () => {
+    expect(operandsOf(node({ type: 'Identifier', name: 'x' }))).toBeUndefined();
   });
 });
 

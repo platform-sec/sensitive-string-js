@@ -64,6 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enclosing `withRevealContext()`, with `requireReason: true` to also require the `reason` field.
 - Added the `recommended` and `strict` presets in flat form, and `legacy-recommended` and
   `legacy-strict` in eslintrc form, built from one list of rule settings so the two cannot drift.
+- Every rule that asks for an argument treats an explicit `undefined` as the absence of one, so
+  `reveal(undefined)` neither silences `no-network-sensitive` nor satisfies `require-reveal-context`,
+  and `new SensitiveString(v, undefined)` still reports a missing class.
 - Added `sensitiveSerializer` and `createSensitiveSerializer`, a snapshot serializer that renders a
   `SensitiveString` as `SensitiveString<class:label>`, with optional `{length}` and `{expired}`
   fields and a custom `format`. It is available from the package root and, for a runner that loads

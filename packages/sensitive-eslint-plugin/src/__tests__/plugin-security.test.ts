@@ -138,6 +138,18 @@ describe('no silent bypass', () => {
     ['builder chain', 'superagent.post(u).send(t.reveal());', 'no-network-sensitive'],
     ['placeholder context', 'secret.reveal(undefined);', 'require-reveal-context'],
     ['void placeholder', 'secret.reveal(void 0);', 'require-reveal-context'],
+    // Passing `undefined` satisfies a signature and decides nothing, so it is
+    // the cheapest way to make a rule that only counts arguments fall silent.
+    // Every rule that asks for an argument has to reject it, not just the one
+    // whose subject the argument is.
+    ['placeholder on the wire', 'fetch(u, { body: t.reveal(undefined) });', 'no-network-sensitive'],
+    [
+      'void placeholder on the wire',
+      'fetch(u, { body: t.reveal(void 0) });',
+      'no-network-sensitive',
+    ],
+    ['placeholder class', 'new SensitiveString(v, undefined);', 'explicit-class'],
+    ['void placeholder class', 'new SensitiveString(v, void 0);', 'explicit-class'],
     ['unrelated wrapper', 'withTransaction(() => secret.reveal());', 'require-reveal-context'],
     ['namespaced constructor', 'new core.SensitiveString(v);', 'explicit-class'],
   ];

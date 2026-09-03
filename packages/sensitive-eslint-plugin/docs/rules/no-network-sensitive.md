@@ -22,6 +22,9 @@ fetch(url, { body: secret.reveal() });
 axios.post(url, { token: token.reveal() });
 fetch(`https://api.example/?token=${token.reveal()}`);
 superagent.post(url).send({ token: token.reveal() });
+
+// A placeholder is not an audit context.
+fetch(url, { body: secret.reveal(undefined) });
 ```
 
 Correct:

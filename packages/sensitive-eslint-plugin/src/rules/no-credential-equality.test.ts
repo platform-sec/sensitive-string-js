@@ -147,6 +147,19 @@ describe('no-credential-equality', () => {
         ],
       },
 
+      // A placeholder context is dropped rather than copied into the rewrite.
+      {
+        code: 'if (token.reveal(undefined) === input) { grant(); }',
+        errors: [
+          {
+            messageId: 'useEquals',
+            suggestions: [
+              { messageId: 'useEqualsSuggestion', output: 'if (token.equals(input)) { grant(); }' },
+            ],
+          },
+        ],
+      },
+
       // A member-expression receiver survives the rewrite intact.
       {
         code: 'if (this.user.password.reveal() === input) { grant(); }',
@@ -191,6 +204,16 @@ describe('no-credential-equality', () => {
           code: 'if (token.reveal() === (a, b)) { grant(); }',
           errors: [{ messageId: 'useEquals', suggestions: [] }],
         },
+        // The `?.` is a link further down than the two nearest the call, and
+        // the expression is still `undefined` when `a` is.
+        {
+          code: 'if (a?.b.reveal() === input) { grant(); }',
+          errors: [{ messageId: 'useEquals', suggestions: [] }],
+        },
+        {
+          code: 'if (a?.b.c.reveal() === input) { grant(); }',
+          errors: [{ messageId: 'useEquals', suggestions: [] }],
+        },
       ],
     });
   });
@@ -215,6 +238,22 @@ describe('no-credential-equality', () => {
     runTypeScriptRuleTests('no-credential-equality', noCredentialEquality, {
       valid: ['const ok: boolean = password.equals(input);'],
       invalid: [
+        // The comparand is quoted back into the rewrite exactly as written, so
+        // a cast on the other side is not silently dropped from it.
+        {
+          code: 'if (password.reveal() === (input as string)) { grant(); }',
+          errors: [
+            {
+              messageId: 'useEquals',
+              suggestions: [
+                {
+                  messageId: 'useEqualsSuggestion',
+                  output: 'if (password.equals(input as string)) { grant(); }',
+                },
+              ],
+            },
+          ],
+        },
         // A cast must not hide the comparison.
         {
           code: 'if ((password.reveal() as string) === input) { grant(); }',

@@ -1,18 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe } from 'vitest';
 import { noLogReveal } from './no-log-reveal.js';
 import { runRuleTests, runTypeScriptRuleTests } from '../__tests__/rule-tester.js';
 
-/**
- * The value a leak would carry. No test asserts on it directly; it is here so a
- * failure message shows the string that would have reached a log line.
- */
-const CANARY = 'LEAKED_SECRET_abc123xyz';
-
 describe('no-log-reveal', () => {
-  it('names the canary in its fixtures so a leak is legible', () => {
-    expect(CANARY).toContain('LEAKED');
-  });
-
   runRuleTests('no-log-reveal', noLogReveal, {
     valid: [
       // The redacting paths are the fix the rule points at.
