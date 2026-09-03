@@ -8,6 +8,13 @@ This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under 
 - `packages/sensitive-zod/src/` contains the Zod integration and depends on the core package.
 - `packages/sensitive-testing/src/` contains the test utilities: canary secrets, leak and redaction
   assertions, matchers, and audit mocks. It depends on the core package and on no test framework.
+- `packages/sensitive-nestjs/src/` contains the NestJS integration: the `@Sensitive` DTO decorator,
+  the transform pipe, the context and response interceptors, and the parameter decorators. It is the
+  one package compiled with `experimentalDecorators` and `emitDecoratorMetadata`, which NestJS
+  requires, so it is excluded from the root `tsconfig.json` program and checked through its own
+  `tsconfig.json` instead. Its tests compile through swc rather than esbuild, because esbuild emits
+  no decorator metadata and NestJS needs `design:paramtypes` to tell a pipe which DTO class a
+  parameter has; `vitest.config.ts` scopes that transform to this package.
 - `packages/sensitive-eslint-plugin/src/` contains the ESLint rules, their presets, and the
   parser-agnostic AST helpers they share. It has no runtime dependencies, not even on the core
   package: the rules read syntax, never types. Each rule's user-facing documentation is in
@@ -23,7 +30,9 @@ Use pnpm 9; the preinstall hook rejects other package managers.
 
 - `pnpm install --frozen-lockfile` installs the exact dependency graph.
 - `pnpm build` compiles every workspace package to its `dist/` directory.
-- `pnpm exec tsc --noEmit` type-checks packages and examples together.
+- `pnpm exec tsc --noEmit` type-checks packages and examples together, apart from
+  `sensitive-nestjs`; that one is checked with `pnpm --filter @platform-sec/sensitive-string-nestjs
+  exec tsc --noEmit`.
 - `pnpm test` runs the Vitest suite once; `pnpm test:watch` supports local iteration.
 - `pnpm test:coverage` writes V8 text, JSON, and HTML coverage reports.
 - `pnpm lint` runs type-aware ESLint; `pnpm lint:fix` applies safe fixes.

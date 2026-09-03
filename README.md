@@ -53,6 +53,9 @@ pnpm add @platform-sec/sensitive-string-core
 # With Zod integration
 pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-zod zod
 
+# NestJS: DTO decorators, transform pipe, context and response interceptors
+pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-nestjs
+
 # Test utilities: canaries, leak assertions, matchers, audit mocks
 pnpm add -D @platform-sec/sensitive-string-testing
 

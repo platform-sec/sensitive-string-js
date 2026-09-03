@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `@platform-sec/sensitive-string-nestjs`, the NestJS integration. `@Sensitive` marks DTO
+  properties, `SensitiveTransformPipe` wraps them after `ValidationPipe` has validated the plain
+  strings, `SensitiveContextInterceptor` and `@WithRevealContext` establish the reveal context for
+  the request, `SensitiveResponseInterceptor` redacts response bodies before a serializer sees them,
+  and `@SensitiveHeader`, `@SensitiveParam`, and `@SensitiveQuery` wrap sensitive data that arrives
+  outside a DTO. The package ships legacy-signature decorators, since NestJS cannot run the Stage 3
+  ones the decorators package targets.
 - Added `sensitiveFormat()`, a winston format that redacts every `SensitiveString` in a log record
   before a terminal format or a transport serializes it. Install it at the front of
   `format.combine(...)`; in a later position the output string already exists and the format emits a
