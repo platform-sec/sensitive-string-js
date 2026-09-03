@@ -55,6 +55,9 @@ pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-zod 
 
 # Test utilities: canaries, leak assertions, matchers, audit mocks
 pnpm add -D @platform-sec/sensitive-string-testing
+
+# Lint rules for the mistakes the type system cannot catch
+pnpm add -D @platform-sec/eslint-plugin-sensitive-string
 ```
 
 ### Basic Usage
@@ -769,6 +772,40 @@ refused by a deadline or a policy raises `UnreadableSecretError` saying the chec
 
 See [packages/sensitive-testing/README.md](packages/sensitive-testing/README.md) for the full
 guide.
+
+### Lint Rules
+
+From `@platform-sec/eslint-plugin-sensitive-string`, a dev dependency. A type keeps a secret
+wrapped; it cannot stop `console.log(secret.reveal())`, because the reveal produces an ordinary
+string and logging a string is ordinary code. Five rules read the shape of the call instead.
+
+```js
+// eslint.config.js
+import sensitive from '@platform-sec/eslint-plugin-sensitive-string';
+
+export default [sensitive.configs.recommended];
+```
+
+| Rule | `recommended` | Catches |
+|---|---|---|
+| `no-log-reveal` | error | `console.log(x.reveal())`, `logger.info({ k: x.reveal() })` |
+| `no-credential-equality` | error | `x.reveal() === y`, `switch (x.reveal())` |
+| `no-network-sensitive` | error | `fetch(url, { body: x.reveal() })` |
+| `explicit-class` | warn | `new SensitiveString(v)` with no class |
+| `require-reveal-context` | warn | `x.reveal()` with no context and no enclosing `withRevealContext` |
+
+The three rules that catch a value escaping are errors. The two that ask for more auditability are
+warnings, because each has a shape it provably cannot see without type information: a context
+installed in a caller, a class supplied through a spread.
+
+No rule is auto-fixable. `no-credential-equality` and `explicit-class` offer editor suggestions
+instead, because every rewrite they would make changes behaviour: `equals()` can throw where
+`reveal()` did not, and a sensitivity class cannot be guessed from syntax.
+
+An eslintrc project uses `plugin:@platform-sec/sensitive-string/legacy-recommended`, and a project
+that must transmit only the serialized wire format uses the `strict` preset. See
+[packages/sensitive-eslint-plugin/README.md](packages/sensitive-eslint-plugin/README.md) for the
+options each rule takes and the limits each one has.
 
 ---
 

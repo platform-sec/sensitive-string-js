@@ -1,0 +1,154 @@
+/**
+ * End-to-end checks: the plugin loaded the way a project loads it.
+ *
+ * The rule suites exercise each rule against a `RuleTester`, which hands the
+ * rule straight to a linter and never reads the plugin's manifest, its presets,
+ * or its export shape. Everything that can be wrong about *packaging* a plugin
+ * is therefore invisible to them: a preset naming a rule that does not exist, a
+ * flat config holding the wrong object, an export shape one config format
+ * cannot consume. Those are the failures a consumer meets first, so they are
+ * checked here by running ESLint itself, in both config formats.
+ */
+import { describe, it, expect } from 'vitest';
+import { Linter } from 'eslint';
+import plugin, { PLUGIN_NAMESPACE, configs, rules } from './index.js';
+import { lintFlat } from './__tests__/rule-tester.js';
+
+const CANARY = 'LEAKED_SECRET_abc123xyz';
+
+/** Code every preset must flag, carrying the raw value a miss would leak. */
+const LEAKY_SOURCE = `const secret = new SensitiveString('${CANARY}', 'credential');\nconsole.log(secret.reveal());\n`;
+
+/** A finding as `severity rule-name`, with the plugin prefix stripped. */
+function describeFinding(message: { ruleId: string | null; severity: number }): string {
+  const name = (message.ruleId ?? '(fatal)').replace(`${PLUGIN_NAMESPACE}/`, '');
+  return `${message.severity === 2 ? 'error' : 'warn'} ${name}`;
+}
+
+/** The rule ids ESLint reports for a source under an eslintrc config. */
+function lintLegacy(code: string, config: Record<string, unknown>): string[] {
+  const linter = new Linter();
+  linter.defineRules(
+    Object.fromEntries(
+      Object.entries(rules).map(([name, rule]) => [
+        `${PLUGIN_NAMESPACE}/${name}`,
+        rule as unknown as Parameters<Linter['defineRule']>[1],
+      ])
+    )
+  );
+
+  // An eslintrc names its plugin by a specifier ESLint resolves from disk. The
+  // rules are registered directly here instead, which exercises the preset's
+  // rule settings without publishing the package first.
+  const { plugins: _plugins, ...withoutPluginName } = config;
+
+  return linter
+    .verify(code, {
+      parserOptions: { ecmaVersion: 2022, sourceType: 'module' },
+      ...withoutPluginName,
+    } as Linter.Config)
+    .map((message) => message.ruleId ?? '(fatal)');
+}
+
+describe('plugin', () => {
+  it('exports the same objects as a default and as named exports', () => {
+    // Flat config imports the default; eslintrc requires the module and reads
+    // its named exports. Both have to reach the same rules.
+    expect(plugin.rules).toBe(rules);
+    expect(plugin.configs).toMatchObject(configs);
+  });
+
+  it('declares its name and version for the config inspector', () => {
+    expect(plugin.meta.name).toBe('@platform-sec/eslint-plugin-sensitive-string');
+    expect(plugin.meta.version).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it('is named by the specifier ESLint derives from the package name', () => {
+    // ESLint strips `eslint-plugin-` from a package name to get the prefix a
+    // config writes. If these drift apart, every documented rule id is wrong.
+    expect(plugin.meta.name.replace('eslint-plugin-', '')).toBe(PLUGIN_NAMESPACE);
+  });
+
+  describe('TST-ESL-INT-005: flat config', () => {
+    it.each(['recommended', 'strict'])('%s loads and reports', async (name) => {
+      const reported = (await lintFlat(LEAKY_SOURCE, configs[name])).map(
+        (message) => message.ruleId
+      );
+
+      expect(reported).toContain(`${PLUGIN_NAMESPACE}/no-log-reveal`);
+      expect(reported).not.toContain(null);
+    });
+
+    it('reports nothing on code that keeps the value wrapped', async () => {
+      const clean = `const secret = new SensitiveString(raw, 'credential');\nconsole.log(secret);\n`;
+
+      expect(await lintFlat(clean, configs['recommended'])).toEqual([]);
+    });
+  });
+
+  describe('TST-ESL-INT-006: eslintrc config', () => {
+    it.each(['legacy-recommended', 'legacy-strict'])('%s loads and reports', (name) => {
+      const reported = lintLegacy(LEAKY_SOURCE, configs[name] as Record<string, unknown>);
+
+      expect(reported).toContain(`${PLUGIN_NAMESPACE}/no-log-reveal`);
+      expect(reported).not.toContain('(fatal)');
+    });
+  });
+
+  describe('TST-ESL-INT-001 and INT-002: what each preset catches', () => {
+    /** One file exercising three rules at once. */
+    const MIXED_SOURCE = `const secret = new SensitiveString(raw);\nconsole.log(secret.reveal());\n`;
+
+    async function findings(config: unknown): Promise<string[]> {
+      return (await lintFlat(MIXED_SOURCE, config)).map(describeFinding).sort();
+    }
+
+    it('recommended errors on the leak and warns on the two auditability gaps', async () => {
+      expect(await findings(configs['recommended'])).toEqual([
+        'error no-log-reveal',
+        'warn explicit-class',
+        'warn require-reveal-context',
+      ]);
+    });
+
+    it('strict raises the same three findings to errors', async () => {
+      expect(await findings(configs['strict'])).toEqual([
+        'error explicit-class',
+        'error no-log-reveal',
+        'error require-reveal-context',
+      ]);
+    });
+
+    it('strict, unlike recommended, rejects an audited reveal on the wire', async () => {
+      const send = `fetch(url, { headers: { Authorization: token.reveal({ name: 'auth' }) } });\n`;
+
+      expect(await lintFlat(send, configs['recommended'])).toEqual([]);
+      expect((await lintFlat(send, configs['strict'])).map((message) => message.ruleId)).toContain(
+        `${PLUGIN_NAMESPACE}/no-network-sensitive`
+      );
+    });
+  });
+
+  describe('TST-ESL-INT-003: TypeScript sources', () => {
+    it('reports through a cast that would hide the reveal from a shallower check', async () => {
+      const typescriptFiles = {
+        files: ['**/*.ts'],
+        languageOptions: {
+          parser: await import('@typescript-eslint/parser'),
+          parserOptions: { ecmaVersion: 2022, sourceType: 'module' },
+        },
+      };
+      const source = `declare const secret: SensitiveString<'credential'>;\nconsole.log(secret.reveal() as string);\n`;
+
+      const reported = (
+        await lintFlat(source, [typescriptFiles, configs['recommended']], 'sample.ts')
+      )
+        .map(describeFinding)
+        .sort();
+
+      // The cast is transparent to the rules, so the log is still an error and
+      // the contextless reveal is still a warning.
+      expect(reported).toEqual(['error no-log-reveal', 'warn require-reveal-context']);
+    });
+  });
+});

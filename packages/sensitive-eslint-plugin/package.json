@@ -1,0 +1,48 @@
+{
+  "name": "@platform-sec/eslint-plugin-sensitive-string",
+  "version": "0.1.0",
+  "description": "ESLint rules that catch the mistakes SensitiveString's type system cannot: logged reveals, timing-unsafe comparisons, and unaudited transmission",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "docs"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "eslint",
+    "eslintplugin",
+    "eslint-plugin",
+    "security",
+    "sensitive-data",
+    "redaction",
+    "static-analysis",
+    "typescript"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "peerDependencies": {
+    "eslint": ">=8.40.0"
+  },
+  "devDependencies": {
+    "@types/eslint": "^8.56.0",
+    "@types/node": "^20.14.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.57.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}

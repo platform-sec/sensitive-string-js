@@ -8,6 +8,10 @@ This is a pnpm workspace for Node.js 20+ and TypeScript. Packages live under `pa
 - `packages/sensitive-zod/src/` contains the Zod integration and depends on the core package.
 - `packages/sensitive-testing/src/` contains the test utilities: canary secrets, leak and redaction
   assertions, matchers, and audit mocks. It depends on the core package and on no test framework.
+- `packages/sensitive-eslint-plugin/src/` contains the ESLint rules, their presets, and the
+  parser-agnostic AST helpers they share. It has no runtime dependencies, not even on the core
+  package: the rules read syntax, never types. Each rule's user-facing documentation is in
+  `packages/sensitive-eslint-plugin/docs/rules/`.
 - Tests are colocated as `*.test.ts`; larger adversarial suites live in `src/__tests__/`.
 - `examples/` contains checked TypeScript usage examples. Shared compiler and test settings are in `tsconfig.base.json` and `vitest.config.ts`; CI and supply-chain automation live in `.github/`.
 

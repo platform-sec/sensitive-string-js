@@ -48,6 +48,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   assertions are built on, for a check the package does not already provide.
 - Added `UnreadableSecretError`, raised when a check could not read the value it was asked to look
   for, so a refused reveal is never mistaken for a clean result.
+- Added the `@platform-sec/eslint-plugin-sensitive-string` package, which has no runtime
+  dependencies and works under ESLint 8.40 or newer, in flat and eslintrc configs alike.
+- Added `no-log-reveal`, which reports a revealed or serialized value reaching a logger, at any
+  depth inside an argument, and recognises a logger reached through `this`, through a request
+  object, or through a builder call.
+- Added `no-credential-equality`, which reports `===`, `==`, `!==` and `!=` on a revealed value, and
+  a `switch` on one, with a suggestion rewriting the comparison to `.equals()` that carries any
+  reveal context into the second parameter.
+- Added `no-network-sensitive`, which reports an unaudited reveal in an HTTP request and allows one
+  that names its purpose, with `allowWithContext: false` to forbid both.
+- Added `explicit-class`, which reports `new SensitiveString(v)` with no sensitivity class and
+  suggests each class.
+- Added `require-reveal-context`, which reports a `reveal()` with no context argument and no
+  enclosing `withRevealContext()`, with `requireReason: true` to also require the `reason` field.
+- Added the `recommended` and `strict` presets in flat form, and `legacy-recommended` and
+  `legacy-strict` in eslintrc form, built from one list of rule settings so the two cannot drift.
 - Added `sensitiveSerializer` and `createSensitiveSerializer`, a snapshot serializer that renders a
   `SensitiveString` as `SensitiveString<class:label>`, with optional `{length}` and `{expired}`
   fields and a custom `format`. It is available from the package root and, for a runner that loads
