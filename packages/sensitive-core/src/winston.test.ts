@@ -80,7 +80,11 @@ describe('sensitiveFormat', () => {
       expect(written).not.toContain(CANARY);
       const parsed = record(lines);
       expect(parsed['deep']).toEqual({ deeper: { token: '[REDACTED:credential]' } });
-      expect(parsed['list']).toEqual([1, '[REDACTED:credential]', { token: '[REDACTED:credential]' }]);
+      expect(parsed['list']).toEqual([
+        1,
+        '[REDACTED:credential]',
+        { token: '[REDACTED:credential]' },
+      ]);
     });
 
     it('TST-WF-004: redacts when message is itself a SensitiveString', () => {
@@ -349,10 +353,7 @@ describe('sensitiveFormat', () => {
           sensitiveFormat({ stampClasses: true }),
           winston.format.json()
         ),
-        transports: [
-          sink(debug, sensitiveFormat({ dropClasses: ['credential'] })),
-          sink(audit),
-        ],
+        transports: [sink(debug, sensitiveFormat({ dropClasses: ['credential'] })), sink(audit)],
       });
 
       logger.info('credential record', { token: new SensitiveString(CANARY, 'credential') });
@@ -367,9 +368,7 @@ describe('sensitiveFormat', () => {
       const lines: string[] = [];
       const logger = winston.createLogger({
         format: winston.format.json(),
-        transports: [
-          sink(lines, sensitiveFormat({ dropClasses: ['credential'] })),
-        ],
+        transports: [sink(lines, sensitiveFormat({ dropClasses: ['credential'] }))],
       });
 
       logger.info('dropped', { token: new SensitiveString(CANARY, 'credential') });

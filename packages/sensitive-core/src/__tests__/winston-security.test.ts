@@ -162,9 +162,7 @@ describe('winston format security', () => {
         // printf does not call toJSON, so the failure happens in the
         // transport-level format rather than upstream.
         format: winston.format.printf((info) => `MSG:${String(info['message'])}`),
-        transports: [
-          sink(lines, sensitiveFormat({ onError, warnOnLateInstall: false })),
-        ],
+        transports: [sink(lines, sensitiveFormat({ onError, warnOnLateInstall: false }))],
       });
 
       logger.info('original output', { payload: new Exploding() });
@@ -326,9 +324,7 @@ describe('winston format security', () => {
     });
 
     it('TST-WF-ADV-008: an instance used as a Map key is redacted', () => {
-      const map = new Map<unknown, unknown>([
-        [new SensitiveString(CANARY, 'credential'), 'value'],
-      ]);
+      const map = new Map<unknown, unknown>([[new SensitiveString(CANARY, 'credential'), 'value']]);
 
       const lines: string[] = [];
       const records: WinstonInfo[] = [];
@@ -339,9 +335,9 @@ describe('winston format security', () => {
 
       logger.info('map key', { map });
 
-      expect(JSON.stringify([...((records[0]?.['map'] as Map<unknown, unknown>) ?? [])])).not.toContain(
-        CANARY
-      );
+      expect(
+        JSON.stringify([...((records[0]?.['map'] as Map<unknown, unknown>) ?? [])])
+      ).not.toContain(CANARY);
       expect(lines.join('')).not.toContain(CANARY);
     });
 

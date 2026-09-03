@@ -44,9 +44,7 @@ export interface PreprocessOptions {
  * set, a single function, or a list of functions run left to right.
  */
 export type PreprocessSpec =
-  | PreprocessOptions
-  | ((value: string) => string)
-  | ReadonlyArray<(value: string) => string>;
+  PreprocessOptions | ((value: string) => string) | ReadonlyArray<(value: string) => string>;
 
 /**
  * Turn a spec into a single function over the raw string.

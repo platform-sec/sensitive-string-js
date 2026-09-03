@@ -885,15 +885,15 @@ describe('Redaction Helpers', () => {
       'sensitive',
     ]);
     expect([...sensitiveClassesIn(new Entity())]).toEqual(['credential']);
-    expect([...sensitiveClassesIn(new Map([['k', new SensitiveString('x', 'credential')]]))]).toEqual(
-      ['credential']
-    );
+    expect([
+      ...sensitiveClassesIn(new Map([['k', new SensitiveString('x', 'credential')]])),
+    ]).toEqual(['credential']);
     expect([...sensitiveClassesIn(new Set([new SensitiveString('x', 'sensitive')]))]).toEqual([
       'sensitive',
     ]);
-    expect([...sensitiveClassesIn(new Map([[new SensitiveString('x', 'credential'), 'v']]))]).toEqual(
-      ['credential']
-    );
+    expect([
+      ...sensitiveClassesIn(new Map([[new SensitiveString('x', 'credential'), 'v']])),
+    ]).toEqual(['credential']);
   });
 
   it('test_sensitiveClassesIn_handles_circular_references', () => {
