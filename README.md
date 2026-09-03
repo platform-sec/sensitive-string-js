@@ -709,6 +709,12 @@ safeStringify(
   }
 ): string;
 
+// Copy a structure for a response body: every SensitiveString and every
+// serialize() result becomes its redaction, prototypes are kept so entity
+// toJSON() methods still run, shared references stay shared, and streams,
+// Buffer, Date, Map, Set, RegExp, and URL pass through by reference.
+redactCopy(value: unknown): unknown;
+
 // Check for sensitive values
 containsSensitive(obj: unknown): boolean;
 

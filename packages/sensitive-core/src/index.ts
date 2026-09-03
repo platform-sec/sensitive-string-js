@@ -96,6 +96,7 @@ export {
   sensitiveClassesIn,
 } from './redact.js';
 export type { SafeStringifyOptions } from './redact.js';
+export { redactCopy } from './redact-copy.js';
 
 // Winston format
 export { sensitiveFormat } from './winston.js';

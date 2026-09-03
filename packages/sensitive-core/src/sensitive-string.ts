@@ -60,6 +60,28 @@ function snapshotRegExp(pattern: RegExp, operation: string): RegExp {
 }
 
 /**
+ * Name the kind of value the constructor refused, and nothing of its content:
+ * the message may be logged, and an object or array can hold the secret that
+ * was meant to be protected.
+ */
+function describeNonString(value: unknown): string {
+  if (value === null || value === undefined) {
+    return String(value);
+  }
+
+  if (value instanceof SensitiveString) {
+    return 'a SensitiveString';
+  }
+
+  if (Array.isArray(value)) {
+    return 'an array';
+  }
+
+  const type = typeof value;
+  return type === 'object' ? 'an object' : `a ${type}`;
+}
+
+/**
  * The audit record every operation but `mask()` reports. Shared and frozen: it
  * is handed to caller-supplied audit hooks.
  */
@@ -181,10 +203,20 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param label - Optional label for audit/compliance (e.g., 'api_key', 'email')
    * @param options - Shared options for access constraints and feature behavior
    * @throws Error If both `ttl` and `expiresAt` are given, or the class policy requires an expiration and neither is.
-   * @throws TypeError If an option has the wrong type.
+   * @throws TypeError If `value` is not a string, or an option has the wrong type.
    * @throws RangeError If `ttl` is negative or `expiresAt` is an invalid Date.
    */
   constructor(value: string, klass: C, label?: string, options?: SensitiveStringOptions) {
+    // Anything but a string would still redact, and then fail far from here:
+    // a number breaks `equals()` inside Buffer.from, and an instance wrapped
+    // again reveals the inner instance instead of its value. Refusing at
+    // construction keeps a wrong value from surviving long enough to be trusted.
+    if (typeof value !== 'string') {
+      throw new TypeError(
+        `SensitiveString expects a string value; received ${describeNonString(value)}`
+      );
+    }
+
     this.#value = value;
     this.klass = klass;
     this.label = label;

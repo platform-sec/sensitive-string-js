@@ -250,6 +250,14 @@ describe('SensitiveResponseInterceptor', () => {
     expect(body).toEqual({ users: [{ email: '[REDACTED:sensitive]' }] });
   });
 
+  test('replaces a serialized value with the redaction of its class', async () => {
+    const token = new SensitiveString(CANARY, 'credential', 'token');
+    const body = (await redact({ token: token.serialize() })) as { token: unknown };
+
+    expect(body.token).toBe('[REDACTED:credential]');
+    expect(JSON.stringify(body)).not.toContain(CANARY);
+  });
+
   // TEST-NEST-EDGE-006
   test('keeps the prototype of a class instance', async () => {
     const entity = new UserEntity(

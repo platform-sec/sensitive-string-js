@@ -221,10 +221,13 @@ value.reveal({ name: 'auth-guard', reason: 'checking API key' });
 ## Response Redaction
 
 `SensitiveString.toJSON()` already redacts, so a JSON response is safe before this interceptor is
-involved. `SensitiveResponseInterceptor` covers the case where something serializes the body without
-`JSON.stringify`, and `ClassSerializerInterceptor` is the common one: its `instanceToPlain` copies
-the public `klass` and `label` fields of a `SensitiveString` and drops the `[REDACTED:...]` marker,
-so a client cannot tell a redacted field from a missing one.
+involved. `SensitiveResponseInterceptor` covers two cases `toJSON()` cannot. The first is something
+serializing the body without `JSON.stringify`, and `ClassSerializerInterceptor` is the common one: its
+`instanceToPlain` copies the public `klass` and `label` fields of a `SensitiveString` and drops the
+`[REDACTED:...]` marker, so a client cannot tell a redacted field from a missing one. The second is a
+`serialize()` result in the body. Its raw `value` is meant for service-to-service transport, and
+`JSON.stringify` emits it faithfully; the interceptor replaces the whole object with the redaction of
+the class it names.
 
 Register it after any serializer. Interceptors process responses innermost first and later
 registration is inner, so this order redacts before `instanceToPlain` runs:
@@ -234,10 +237,11 @@ registration is inner, so this order redacts before `instanceToPlain` runs:
 { provide: APP_INTERCEPTOR, useClass: SensitiveResponseInterceptor },
 ```
 
-The interceptor never mutates what the handler returned, since an entity may be shared with an ORM
-identity map or a cache. It returns copies that keep each object's prototype, passes `StreamableFile`,
-`Buffer`, `Date`, and streams through untouched, and preserves an object referenced twice as one
-shared reference rather than reporting the second occurrence as circular.
+The walk is core's `redactCopy`. It never mutates what the handler returned, since an entity may be
+shared with an ORM identity map or a cache. It returns copies that keep each object's prototype,
+passes `Buffer`, `Date`, `Map`, `Set`, `RegExp`, `URL`, and streams through untouched, and preserves
+an object referenced twice as one shared reference rather than reporting the second occurrence as
+circular. A `StreamableFile` returned from the handler is passed through before the walk.
 
 Values reachable only through a prototype getter are not visited by the walk. Those are still
 redacted by `toJSON()` during JSON serialization.

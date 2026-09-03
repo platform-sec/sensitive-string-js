@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `redactCopy()`, the walk a response body needs before a serializer other than
+  `JSON.stringify` sees it. It copies the structure with every `SensitiveString` replaced by its
+  redaction and every `serialize()` result, recognised by its `__sensitive: true` marker, replaced by
+  the redaction of the class it names, keeping each object's prototype so an entity `toJSON()` still
+  runs, preserving shared references, and passing streams, `Buffer`, `Date`, `Map`, `Set`, `RegExp`,
+  and `URL` through by reference. `redactInStructure()` remains the walk for log lines, where a
+  plain-object copy is what a log wants. The NestJS `SensitiveResponseInterceptor` now delegates to
+  it, which is how that interceptor gained the serialized-value case.
 - Added `@platform-sec/sensitive-string-decorators`, the framework-agnostic Stage 3 decorators.
   `@Sensitive` wraps every value an auto-accessor field receives, including the field initializer
   and a value hydrated onto the instance through an untyped path, and refuses one whose class is
@@ -22,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `@platform-sec/sensitive-string-nestjs`, the NestJS integration. `@Sensitive` marks DTO
   properties, `SensitiveTransformPipe` wraps them after `ValidationPipe` has validated the plain
   strings, `SensitiveContextInterceptor` and `@WithRevealContext` establish the reveal context for
-  the request, `SensitiveResponseInterceptor` redacts response bodies before a serializer sees them,
+  the request, `SensitiveResponseInterceptor` redacts response bodies, serialized values included, before a
+  serializer sees them,
   and `@SensitiveHeader`, `@SensitiveParam`, and `@SensitiveQuery` wrap sensitive data that arrives
   outside a DTO. The package ships legacy-signature decorators, since NestJS cannot run the Stage 3
   ones the decorators package targets.
@@ -126,6 +135,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `new SensitiveString()` throws a `TypeError` for a value that is not a string, naming the kind of
+  value and never its content. It accepted anything: a number redacted like a string and then threw
+  inside `equals()`, and an instance wrapped a second time revealed the inner instance rather than
+  the value. Every derived value goes through the same check, so a `map()` callback that returns a
+  non-string is refused as well. `fromOptional()` still maps `null`, `undefined`, and the empty
+  string to `null`.
 - The release workflow now reads the packages to release from `packages/` rather than from a
   hardcoded pair of steps per package. It offers all six in its dropdown, skips a package marked
   `private`, and carries `{dir, name, version}` through one output that every later step loops
