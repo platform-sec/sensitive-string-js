@@ -648,6 +648,37 @@ zSensitiveOptional(klass, label?)
 
 // Parse from serialized format
 zSensitiveDeserialize(expectedKlass?)
+
+// Collections, wrapping each element or value on its own
+zSensitiveArray(label?)
+zCredentialArray(label?)
+zSensitiveStringArray(klass, label?)
+zSensitiveRecord(label?)
+zCredentialRecord(label?)
+zSensitiveStringRecord(klass, label?)
+
+// Normalize before wrapping: normalize, validate, then wrap
+zSensitivePreprocess(spec, label?, stringSchema?)
+zCredentialPreprocess(spec, label?, stringSchema?)
+zSensitiveStringPreprocess(klass, spec, label?, stringSchema?)
+
+// A default produced as a raw string and wrapped by the schema
+zSensitiveDefault(klass, label, valueOrFactory)
+
+// Sensitivity decided by a sibling field
+zConditionalSensitive({ discriminator, valueField, conditions })
+
+// Refine on the raw value; the check reveals and is audited as one
+schema.refineSensitive(check, params?)
+refineSensitive(schema, check, params?)
+
+// Parse without echoing the input into the error
+sensitiveParse(schema, data, params?)
+sensitiveSafeParse(schema, data, params?)
+sensitiveSafeParseAsync(schema, data, params?)
+redactZodError(error)
+redactZodIssues(issues)
+installSensitiveErrorMap()
 ```
 
 ### Utility Functions
@@ -1079,21 +1110,31 @@ bcrypt.hash(password.reveal({ name: 'password-hash' }), 10);
 
 This is intentional, since it forces you to think about where secrets go, but it adds friction.
 
-#### No Refinements After Transform
+#### Refinements After Transform Are a Reveal
 
-Zod's `.refine()` runs after transforms, so you can't refine on the raw value:
+Zod's `.refine()` runs after the transform, so its callback gets a `SensitiveString` rather than a
+string, and a credential refuses the partial queries you would reach for:
 
 ```typescript
 // Throws by default because credential partial queries are disabled
 zCredential('api_key').refine(val => val.startsWith('sk-'))
 ```
 
-**Workaround:** Use `zSensitiveWithValidation`:
+Use `refineSensitive`, which reveals the value and is audited for it:
+
+```typescript
+zCredential('api_key').refineSensitive(raw => raw.startsWith('sk-'), {
+  message: 'Must start with sk-',
+})
+```
+
+A check that does not need the raw value at all is cheaper as validation before wrapping, where no
+reveal happens:
 
 ```typescript
 zSensitiveWithValidation(
   'credential',
-  z.string().refine(s => s.startsWith('sk-'), 'Must start with sk-'),
+  z.string().startsWith('sk-', 'Must start with sk-'),
   'api_key'
 )
 ```
@@ -1131,7 +1172,7 @@ For high-throughput scenarios, this overhead may matter.
 | Webhook payload handling | **Yes** - immediate protection |
 | Service-to-service with serialization | **Yes** - use serialize/deserialize |
 | High-throughput internal pipelines | **Maybe** - consider overhead |
-| Complex post-transform validation | **Avoid** - use validation-first pattern |
+| Complex post-transform validation | **Yes** - `refineSensitive`, or validate before wrapping |
 | Interop with string-expecting libraries | **Use carefully** - reveal at integration points |
 
 ---

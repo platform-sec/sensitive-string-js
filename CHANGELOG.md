@@ -72,8 +72,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fields and a custom `format`. It is available from the package root and, for a runner that loads
   a serializer by path, from the `/serializer` entry point.
 
+- Added collection helpers to the `zod` package: `zSensitiveArray`, `zCredentialArray`,
+  `zSensitiveStringArray`, `zSensitiveRecord`, `zCredentialRecord`, and `zSensitiveStringRecord`.
+  Each wraps a per-element schema in a plain `z.array` or `z.record`, so the collection combinators
+  still apply and a failing element reports its own index or key.
+- Added `refineSensitive`, both as a method on every schema the `zod` package builds and as a
+  standalone function, for a refinement whose predicate needs the raw string. It reads through
+  `reveal()`, so the ambient context authorizes it and its `auditReveal` hook records it. It
+  manufactures no context of its own: a policy that refuses a context-free reveal refuses this one
+  too. An async predicate works under `parseAsync` and is refused, not skipped, under `parse`.
+- Added `zSensitivePreprocess`, `zCredentialPreprocess`, and `zSensitiveStringPreprocess`, which
+  normalize the input, validate it, then wrap it. Trimming a wrapped value would mean revealing it;
+  doing it during the parse keeps the whole sequence on the raw string. Steps come from a
+  declarative option set, a function, or a list of functions.
+- Added `zSensitiveDefault`, which produces its fallback as a raw string and wraps it, so a
+  generated default is classified the same way a parsed one is. `null` and `''` do not trigger it.
+- Added `zConditionalSensitive`, which builds a discriminated union whose value field is classified
+  by a sibling field, so an unknown discriminator is rejected before the value is looked at. It
+  refuses a discriminator and a value field with the same name, which would otherwise collapse into
+  one object key and leave the schema classifying nothing.
+- Added `sensitiveErrorMap`, `installSensitiveErrorMap`, `redactZodError`, `redactZodIssues`,
+  `sensitiveParse`, `sensitiveSafeParse`, and `sensitiveSafeParseAsync`, which keep the input out of
+  validation errors. The parse helpers treat an explicit `errorMap: undefined` as no error map
+  rather than as one that disables the default.
+
 ### Fixed
 
+- `zSensitiveDeserialize` reports a class mismatch, an unregistered class, and a malformed payload
+  as Zod issues instead of throwing out of the transform. A throw there escaped `safeParse`, so a
+  caller who chose the non-throwing API got an exception anyway, from the one schema whose whole job
+  is handling a payload from another service.
 - Corrected the `exports` map in all three packages. Every one declared a `require` condition
   pointing at a `dist/*.cjs` file that `tsc` never emits, so `require()` of any package failed with
   `MODULE_NOT_FOUND`, and importing a package that depends on another failed the same way through
@@ -86,6 +114,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Zod puts the input into the issue for four codes: `invalid_enum_value` and `invalid_literal` in
+  `received`, `unrecognized_keys` in `keys`, and `custom` in `params`, with `invalid_union` nesting
+  any of them one level down. An error map cannot reach those fields, only the message, so the
+  `zod` package fixes both halves. `sensitiveSafeParse` applies the map and redacts the issues;
+  `installSensitiveErrorMap` covers schemas that never pass through it. The map is not installed on
+  import, because a library that rewrites a process's global Zod configuration behind the
+  application's back is worse than one that asks for a line of setup.
+- A sweep runs every schema factory in the `zod` package against a canary in every position it
+  accepts and scans the message, the issue objects, and both formatted shapes of the error. A
+  factory added to the package without an entry in the sweep fails the suite.
 - The leak walk has no depth limit. A limit stops in the middle of a structure the walk could
   otherwise finish, and a leak below the cut reads as no leak at all; the walk uses an explicit
   stack so depth costs heap rather than call frames. A node budget bounds a hostile target that

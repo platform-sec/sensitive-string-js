@@ -288,6 +288,26 @@ describe('Zod Integration', () => {
       ).toThrow(/unknown sensitivity class/);
     });
 
+    it('test_serialized_reports_failures_through_safeParse', () => {
+      const schema = z.object({ token: zSensitiveDeserialize('credential') });
+
+      // Every rejection is a Zod issue. A throw out of the transform would
+      // escape safeParse and surprise a caller who chose the non-throwing API.
+      for (const token of [
+        { __sensitive: true, klass: 'sensitive', value: CANARY },
+        { __sensitive: true, klass: 'made-up', value: CANARY },
+        { __sensitive: true, klass: 'credential', value: CANARY, expiresAt: 'nope' },
+      ]) {
+        const result = schema.safeParse({ token });
+
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.issues[0]?.path).toEqual(['token']);
+          expect(JSON.stringify(result.error)).not.toContain(CANARY);
+        }
+      }
+    });
+
     it('test_serialized_rejects_a_malformed_deadline', () => {
       const schema = z.object({ token: zSensitiveDeserialize('credential') });
 
