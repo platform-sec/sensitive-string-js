@@ -124,6 +124,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   validation errors. The parse helpers treat an explicit `errorMap: undefined` as no error map
   rather than as one that disables the default.
 
+### Changed
+
+- The release workflow now reads the packages to release from `packages/` rather than from a
+  hardcoded pair of steps per package. It offers all six in its dropdown, skips a package marked
+  `private`, and carries `{dir, name, version}` through one output that every later step loops
+  over. `decorators`, `eslint-plugin`, `nestjs`, and `testing` could not be released before this,
+  and `all` released only `core` and `zod` while reporting success. Tags take the package's npm
+  name, so `@platform-sec/eslint-plugin-sensitive-string` no longer has to match its directory.
+  Workflow inputs reach the scripts through the environment rather than `${{ }}` interpolation.
+
 ### Fixed
 
 - `zSensitiveDeserialize` reports a class mismatch, an unregistered class, and a malformed payload

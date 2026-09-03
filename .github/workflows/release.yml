@@ -10,6 +10,10 @@ on:
         options:
           - 'all'
           - 'sensitive-core'
+          - 'sensitive-decorators'
+          - 'sensitive-eslint-plugin'
+          - 'sensitive-nestjs'
+          - 'sensitive-testing'
           - 'sensitive-zod'
       version_bump:
         description: 'Version bump type'
@@ -84,9 +88,14 @@ jobs:
     permissions:
       contents: read
     outputs:
-      core_version: ${{ steps.versions.outputs.core_version }}
-      zod_version: ${{ steps.versions.outputs.zod_version }}
-      release_packages: ${{ steps.versions.outputs.release_packages }}
+      # One JSON array of {dir, name, version} rather than an output per
+      # package, because every consumer below loops over it. Adding a package
+      # is then a directory under `packages/` and a line in the choice list
+      # above, rather than an edit in eight places. Those eight places are why
+      # `decorators`, `eslint-plugin`, `nestjs`, and `testing` were
+      # unreleasable for as long as they were.
+      released: ${{ steps.versions.outputs.released }}
+      release_tag: ${{ steps.versions.outputs.release_tag }}
       hashes: ${{ steps.hash.outputs.hashes }}
     steps:
       - name: Harden Runner
@@ -117,64 +126,70 @@ jobs:
 
       - name: Bump versions
         id: versions
+        env:
+          # Through the environment rather than interpolated into the script.
+          # Both are `choice` inputs today, so neither can carry a shell
+          # metacharacter, but a run block that expands `${{ }}` is the shape
+          # that stops being safe the moment an input becomes free text.
+          BUMP_TYPE: ${{ inputs.version_bump }}
+          SELECTED: ${{ inputs.packages }}
         run: |
-          BUMP_TYPE="${{ inputs.version_bump }}"
-          PACKAGES="${{ inputs.packages }}"
+          set -euo pipefail
 
           bump_version() {
-            local pkg_path=$1
-            local current_version=$(jq -r '.version' "$pkg_path/package.json")
+            local current=$1
             local IFS='.'
-            read -ra parts <<< "$current_version"
+            read -ra parts <<< "$current"
             local major=${parts[0]}
             local minor=${parts[1]}
             local patch=${parts[2]}
 
             case "$BUMP_TYPE" in
-              major)
-                major=$((major + 1))
-                minor=0
-                patch=0
-                ;;
-              minor)
-                minor=$((minor + 1))
-                patch=0
-                ;;
-              patch)
-                patch=$((patch + 1))
-                ;;
+              major) major=$((major + 1)); minor=0; patch=0 ;;
+              minor) minor=$((minor + 1)); patch=0 ;;
+              patch) patch=$((patch + 1)) ;;
             esac
 
             echo "${major}.${minor}.${patch}"
           }
 
-          RELEASE_PACKAGES=""
+          RELEASED='[]'
 
-          # Bump sensitive-core if selected
-          if [[ "$PACKAGES" == "all" || "$PACKAGES" == "sensitive-core" ]]; then
-            CORE_VERSION=$(bump_version "packages/sensitive-core")
-            jq --arg v "$CORE_VERSION" '.version = $v' packages/sensitive-core/package.json > tmp.json
-            mv tmp.json packages/sensitive-core/package.json
-            echo "core_version=$CORE_VERSION" >> "$GITHUB_OUTPUT"
-            RELEASE_PACKAGES="sensitive-core"
-            echo "Updated sensitive-core to $CORE_VERSION"
-          fi
-
-          # Bump sensitive-zod if selected
-          if [[ "$PACKAGES" == "all" || "$PACKAGES" == "sensitive-zod" ]]; then
-            ZOD_VERSION=$(bump_version "packages/sensitive-zod")
-            jq --arg v "$ZOD_VERSION" '.version = $v' packages/sensitive-zod/package.json > tmp.json
-            mv tmp.json packages/sensitive-zod/package.json
-            echo "zod_version=$ZOD_VERSION" >> "$GITHUB_OUTPUT"
-            if [[ -n "$RELEASE_PACKAGES" ]]; then
-              RELEASE_PACKAGES="$RELEASE_PACKAGES,sensitive-zod"
-            else
-              RELEASE_PACKAGES="sensitive-zod"
+          # Sorted, so the release tag and every summary below are
+          # deterministic rather than dependent on directory order.
+          for dir in $(find packages -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort); do
+            if [[ "$SELECTED" != "all" && "$SELECTED" != "$dir" ]]; then
+              continue
             fi
-            echo "Updated sensitive-zod to $ZOD_VERSION"
+
+            manifest="packages/$dir/package.json"
+
+            # `all` must not try to publish a package that opted out.
+            if [[ "$(jq -r '.private // false' "$manifest")" == "true" ]]; then
+              echo "Skipping $dir, which is marked private"
+              continue
+            fi
+
+            name=$(jq -r '.name' "$manifest")
+            version=$(bump_version "$(jq -r '.version' "$manifest")")
+
+            jq --arg v "$version" '.version = $v' "$manifest" > tmp.json
+            mv tmp.json "$manifest"
+
+            RELEASED=$(jq -c \
+              --arg dir "$dir" --arg name "$name" --arg version "$version" \
+              '. + [{dir: $dir, name: $name, version: $version}]' <<< "$RELEASED")
+
+            echo "Updated $name to $version"
+          done
+
+          if [[ "$(jq -r 'length' <<< "$RELEASED")" == "0" ]]; then
+            echo "No publishable package matched '$SELECTED'" >&2
+            exit 1
           fi
 
-          echo "release_packages=$RELEASE_PACKAGES" >> "$GITHUB_OUTPUT"
+          echo "released=$RELEASED" >> "$GITHUB_OUTPUT"
+          echo "release_tag=v$(jq -r '.[0].version' <<< "$RELEASED")" >> "$GITHUB_OUTPUT"
 
       - name: Build packages
         run: pnpm build
@@ -183,21 +198,15 @@ jobs:
         run: pnpm test
 
       - name: Pack npm tarballs
+        env:
+          RELEASED: ${{ steps.versions.outputs.released }}
         run: |
+          set -euo pipefail
           mkdir -p dist-tarballs
-          PACKAGES="${{ inputs.packages }}"
 
-          if [[ "$PACKAGES" == "all" || "$PACKAGES" == "sensitive-core" ]]; then
-            cd packages/sensitive-core
-            pnpm pack --pack-destination ../../dist-tarballs
-            cd ../..
-          fi
-
-          if [[ "$PACKAGES" == "all" || "$PACKAGES" == "sensitive-zod" ]]; then
-            cd packages/sensitive-zod
-            pnpm pack --pack-destination ../../dist-tarballs
-            cd ../..
-          fi
+          for dir in $(jq -r '.[].dir' <<< "$RELEASED"); do
+            (cd "packages/$dir" && pnpm pack --pack-destination ../../dist-tarballs)
+          done
 
           ls -la dist-tarballs/
 
@@ -205,7 +214,10 @@ jobs:
         id: hash
         run: |
           cd dist-tarballs
-          echo "hashes=$(sha256sum *.tgz | base64 -w0)" >> "$GITHUB_OUTPUT"
+          # `--` so a tarball whose name began with a dash could not be read
+          # as an option. The SLSA subject names stay exactly as they are,
+          # which `./*.tgz` would have changed.
+          echo "hashes=$(sha256sum -- *.tgz | base64 -w0)" >> "$GITHUB_OUTPUT"
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
@@ -322,13 +334,14 @@ jobs:
           path: artifacts
 
       - name: Restore package.json versions
+        env:
+          RELEASED: ${{ needs.prepare.outputs.released }}
         run: |
-          if [[ -f artifacts/packages/sensitive-core/package.json ]]; then
-            cp artifacts/packages/sensitive-core/package.json packages/sensitive-core/package.json
-          fi
-          if [[ -f artifacts/packages/sensitive-zod/package.json ]]; then
-            cp artifacts/packages/sensitive-zod/package.json packages/sensitive-zod/package.json
-          fi
+          set -euo pipefail
+
+          for dir in $(jq -r '.[].dir' <<< "$RELEASED"); do
+            cp "artifacts/packages/$dir/package.json" "packages/$dir/package.json"
+          done
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -336,38 +349,31 @@ jobs:
       - name: Build packages
         run: pnpm build
 
-      - name: Publish sensitive-core
-        if: contains(needs.prepare.outputs.release_packages, 'sensitive-core')
-        run: |
-          cd packages/sensitive-core
-          pnpm publish --access public --no-git-checks --provenance
+      - name: Publish packages
         env:
+          RELEASED: ${{ needs.prepare.outputs.released }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
 
-      - name: Publish sensitive-zod
-        if: contains(needs.prepare.outputs.release_packages, 'sensitive-zod')
-        run: |
-          cd packages/sensitive-zod
-          pnpm publish --access public --no-git-checks --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          for dir in $(jq -r '.[].dir' <<< "$RELEASED"); do
+            (cd "packages/$dir" && pnpm publish --access public --no-git-checks --provenance)
+          done
 
       - name: Generate publish summary
+        env:
+          RELEASED: ${{ needs.prepare.outputs.released }}
         run: |
-          echo "## 📦 Published Packages" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          set -euo pipefail
 
-          if [[ "${{ needs.prepare.outputs.core_version }}" != "" ]]; then
-            echo "- **@platform-sec/sensitive-string-core** v${{ needs.prepare.outputs.core_version }}" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          if [[ "${{ needs.prepare.outputs.zod_version }}" != "" ]]; then
-            echo "- **@platform-sec/sensitive-string-zod** v${{ needs.prepare.outputs.zod_version }}" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**npm provenance:** Enabled" >> $GITHUB_STEP_SUMMARY
-          echo "**Sigstore signing:** Verified" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## 📦 Published Packages"
+            echo ""
+            jq -r '.[] | "- **\(.name)** v\(.version)"' <<< "$RELEASED"
+            echo ""
+            echo "**npm provenance:** Enabled"
+            echo "**Sigstore signing:** Verified"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Create GitHub release with tags
   create-release:
@@ -398,47 +404,41 @@ jobs:
       - name: Create tags and release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASED: ${{ needs.prepare.outputs.released }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
         run: |
-          # Configure git
+          set -euo pipefail
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          RELEASE_NOTES="## Release Notes\n\n"
-          RELEASE_NOTES+="### Packages Released\n\n"
+          # One tag per released package, named for the package rather than
+          # the directory: `eslint-plugin-sensitive-string` does not follow
+          # from `sensitive-eslint-plugin`, so the name travels in the output.
+          while IFS= read -r tag; do
+            git tag -a "$tag" -m "Release $tag"
+            git push origin "$tag"
+          done < <(jq -r '.[] | "\(.name)@\(.version)"' <<< "$RELEASED")
 
-          # Create tags for released packages
-          if [[ "${{ needs.prepare.outputs.core_version }}" != "" ]]; then
-            TAG="@platform-sec/sensitive-string-core@${{ needs.prepare.outputs.core_version }}"
-            git tag -a "$TAG" -m "Release $TAG"
-            git push origin "$TAG"
-            RELEASE_NOTES+="- **@platform-sec/sensitive-string-core** v${{ needs.prepare.outputs.core_version }}\n"
-          fi
-
-          if [[ "${{ needs.prepare.outputs.zod_version }}" != "" ]]; then
-            TAG="@platform-sec/sensitive-string-zod@${{ needs.prepare.outputs.zod_version }}"
-            git tag -a "$TAG" -m "Release $TAG"
-            git push origin "$TAG"
-            RELEASE_NOTES+="- **@platform-sec/sensitive-string-zod** v${{ needs.prepare.outputs.zod_version }}\n"
-          fi
-
-          RELEASE_NOTES+="\n### Security\n\n"
-          RELEASE_NOTES+="- Packages signed with Sigstore cosign (keyless)\n"
-          RELEASE_NOTES+="- npm provenance enabled\n"
-          RELEASE_NOTES+="\n### Verification\n\n"
-          RELEASE_NOTES+='```bash\n'
-          RELEASE_NOTES+="# Verify signature with cosign\n"
-          RELEASE_NOTES+="cosign verify-blob --signature <package>.sig --certificate <package>.pem <package>.tgz\n"
-          RELEASE_NOTES+='```\n'
-
-          # Determine release tag
-          if [[ "${{ needs.prepare.outputs.core_version }}" != "" ]]; then
-            RELEASE_TAG="v${{ needs.prepare.outputs.core_version }}"
-          else
-            RELEASE_TAG="v${{ needs.prepare.outputs.zod_version }}"
-          fi
-
-          # Create GitHub release
-          echo -e "$RELEASE_NOTES" > release_notes.md
+          {
+            echo "## Release Notes"
+            echo ""
+            echo "### Packages Released"
+            echo ""
+            jq -r '.[] | "- **\(.name)** v\(.version)"' <<< "$RELEASED"
+            echo ""
+            echo "### Security"
+            echo ""
+            echo "- Packages signed with Sigstore cosign (keyless)"
+            echo "- npm provenance enabled"
+            echo ""
+            echo "### Verification"
+            echo ""
+            echo '```bash'
+            echo "# Verify signature with cosign"
+            echo "cosign verify-blob --signature <package>.sig --certificate <package>.pem <package>.tgz"
+            echo '```'
+          } > release_notes.md
 
           gh release create "$RELEASE_TAG" \
             --title "Release $RELEASE_TAG" \
@@ -455,25 +455,23 @@ jobs:
     if: ${{ inputs.dry_run == true }}
     steps:
       - name: Generate dry run summary
+        env:
+          RELEASED: ${{ needs.prepare.outputs.released }}
         run: |
-          echo "## 🧪 Dry Run Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "This was a dry run. No packages were published." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Packages that would be released:" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          set -euo pipefail
 
-          if [[ "${{ needs.prepare.outputs.core_version }}" != "" ]]; then
-            echo "- **@platform-sec/sensitive-string-core** v${{ needs.prepare.outputs.core_version }}" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          if [[ "${{ needs.prepare.outputs.zod_version }}" != "" ]]; then
-            echo "- **@platform-sec/sensitive-string-zod** v${{ needs.prepare.outputs.zod_version }}" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Signed packages are available as workflow artifacts." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "To publish for real, re-run this workflow with **dry_run** unchecked." >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## 🧪 Dry Run Summary"
+            echo ""
+            echo "This was a dry run. No packages were published."
+            echo ""
+            echo "### Packages that would be released:"
+            echo ""
+            jq -r '.[] | "- **\(.name)** v\(.version)"' <<< "$RELEASED"
+            echo ""
+            echo "### Artifacts"
+            echo ""
+            echo "Signed packages are available as workflow artifacts."
+            echo ""
+            echo "To publish for real, re-run this workflow with **dry_run** unchecked."
+          } >> "$GITHUB_STEP_SUMMARY"
