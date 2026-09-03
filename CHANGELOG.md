@@ -56,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MODULE_NOT_FOUND`, and importing a package that depends on another failed the same way through
   the dependency. The build emits CommonJS `.js`, which one `default` condition serves for both
   `require` and `import`.
+- Added `pnpm check:packaging`, which loads every built package by its own name through both
+  `require` and `import` and checks that each path a manifest names exists and survives packing. The
+  unit suite imports by relative path, so nothing exercised a manifest and three broken ones went
+  unnoticed. It runs in CI after the build.
 
 ### Security
 

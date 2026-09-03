@@ -25,7 +25,15 @@ Thank you for considering contributing to SensitiveString! This document outline
    pnpm test
    ```
 
-5. **Timing analysis** (optional, not part of `pnpm test`)
+5. **Packaging check** (after a build)
+   ```bash
+   pnpm check:packaging
+   ```
+   Loads every built package by its own name through both `require` and
+   `import`. The unit suite imports by relative path, so nothing else in the
+   repository exercises a package manifest.
+
+6. **Timing analysis** (optional, not part of `pnpm test`)
    ```bash
    pnpm test:timing
    ```

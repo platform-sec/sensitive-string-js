@@ -24,8 +24,11 @@ Use pnpm 9; the preinstall hook rejects other package managers.
 - `pnpm test:coverage` writes V8 text, JSON, and HTML coverage reports.
 - `pnpm lint` runs type-aware ESLint; `pnpm lint:fix` applies safe fixes.
 - `pnpm format` formats package TypeScript sources with Prettier.
+- `pnpm check:packaging` loads every built package by its own name through both `require` and
+  `import`, and checks that each path a manifest names exists and survives packing. Run it after
+  `pnpm build`; the unit suite imports by relative path and never exercises a manifest.
 
-Before opening a PR, run build, lint, tests, and the root type-check.
+Before opening a PR, run build, lint, tests, the root type-check, and the packaging check.
 
 ## Coding Style & Naming Conventions
 

@@ -25,6 +25,7 @@
     "lint": "eslint packages/*/src/**/*.ts",
     "lint:fix": "eslint packages/*/src/**/*.ts --fix",
     "format": "prettier --write \"packages/*/src/**/*.ts\"",
+    "check:packaging": "node scripts/check-packaging.mjs",
     "clean": "rm -rf packages/*/dist packages/*/.turbo node_modules/.cache && find packages/*/src -name '*.js' -delete 2>/dev/null; find packages/*/src -name '*.d.ts' -delete 2>/dev/null; find packages/*/src -name '*.js.map' -delete 2>/dev/null; true",
     "codeql:download": "codeql pack download codeql/javascript-queries",
     "codeql:create": "codeql database create codeql-db --language=javascript --source-root=. --overwrite",
