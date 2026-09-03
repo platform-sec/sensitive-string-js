@@ -14,6 +14,32 @@ import { getCurrentRevealContext } from './context.js';
  */
 const NODE_INSPECT_SYMBOL = Symbol.for('nodejs.util.inspect.custom');
 
+const REGEXP_SOURCE_GETTER = Object.getOwnPropertyDescriptor(RegExp.prototype, 'source')?.get as (
+  this: RegExp
+) => string;
+const REGEXP_FLAGS_GETTER = Object.getOwnPropertyDescriptor(RegExp.prototype, 'flags')?.get as (
+  this: RegExp
+) => string;
+
+/**
+ * Copy a caller-provided regular expression into a plain RegExp.
+ *
+ * RegExp subclasses and instances with overridden `exec` or symbol methods must
+ * not receive a sensitive value. Taking a snapshot also prevents these methods
+ * from mutating the caller's `lastIndex`.
+ */
+function snapshotRegExp(pattern: RegExp, operation: string): RegExp {
+  try {
+    // Calling the intrinsic getters verifies the RegExp internal slots, works
+    // across realms, and bypasses an instance's overridden `source`/`flags`.
+    const source = REGEXP_SOURCE_GETTER.call(pattern);
+    const flags = REGEXP_FLAGS_GETTER.call(pattern);
+    return new RegExp(source, flags);
+  } catch {
+    throw new TypeError(`SensitiveString.${operation} requires a regular expression`);
+  }
+}
+
 /**
  * How a caller uses the raw value determines authorization and auditing.
  * Safe reads only feed redaction or intentionally public metadata. Comparisons
@@ -153,7 +179,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    */
   #readPartialQueryValue(ctx?: RevealContext): string {
     const policy = this.policy;
-    const allowPartialQueries = policy.allowPartialQueries ?? (this.klass === 'sensitive');
+    const allowPartialQueries = policy.allowPartialQueries ?? this.klass === 'sensitive';
 
     if (!allowPartialQueries) {
       throw new Error(`Partial queries are not allowed for sensitivity class '${this.klass}'`);
@@ -428,6 +454,120 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   }
 
   /**
+   * Test whether a regular expression matches the value.
+   *
+   * Regex tests are partial queries and are disabled for credentials by default
+   * because caller-controlled patterns can form a powerful content oracle.
+   *
+   * @param pattern - Regular expression to test.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  test(pattern: RegExp, ctx?: RevealContext): boolean {
+    const regex = snapshotRegExp(pattern, 'test');
+    return regex.test(this.#readPartialQueryValue(ctx));
+  }
+
+  /**
+   * Find the index of the first regular-expression match.
+   *
+   * This is a partial query and is disabled for credentials by default.
+   *
+   * @param pattern - Regular expression to search for.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  search(pattern: RegExp, ctx?: RevealContext): number {
+    const regex = snapshotRegExp(pattern, 'search');
+    return this.#readPartialQueryValue(ctx).search(regex);
+  }
+
+  /**
+   * Return regular-expression matches as protected values.
+   *
+   * Native match metadata such as `input` is intentionally omitted because it
+   * contains the complete raw value. Unmatched optional captures are omitted.
+   *
+   * @param pattern - Regular expression to match.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  match(pattern: RegExp, ctx?: RevealContext): SensitiveString<C>[] | null {
+    const regex = snapshotRegExp(pattern, 'match');
+    const matches = this.#readRawValue('expose', ctx).match(regex);
+
+    if (matches === null) {
+      return null;
+    }
+
+    return matches
+      .filter((match): match is string => match !== undefined)
+      .map((match) => SensitiveString.#derived(match, this.klass, this.label, [this]));
+  }
+
+  /**
+   * Return named regular-expression groups as protected values.
+   *
+   * A successful match without named groups returns an empty, null-prototype
+   * object. Named groups that did not participate in the match are omitted.
+   *
+   * @param pattern - Regular expression containing optional named groups.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  matchGroups(pattern: RegExp, ctx?: RevealContext): Record<string, SensitiveString<C>> | null {
+    const regex = snapshotRegExp(pattern, 'matchGroups');
+    const match = regex.exec(this.#readRawValue('expose', ctx));
+
+    if (match === null) {
+      return null;
+    }
+
+    const groups = Object.create(null) as Record<string, SensitiveString<C>>;
+
+    for (const [group, value] of Object.entries(match.groups ?? {})) {
+      if (value === undefined) {
+        continue;
+      }
+
+      const label = this.label !== undefined ? `${this.label}:${group}` : group;
+      Object.defineProperty(groups, group, {
+        value: SensitiveString.#derived(value, this.klass, label, [this]),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+
+    return groups;
+  }
+
+  /**
+   * Return every regular-expression match as an iterator of protected arrays.
+   *
+   * The pattern must have the global (`g`) flag, matching native String.matchAll
+   * requirements. Match metadata containing the complete input is omitted.
+   *
+   * @param pattern - Global regular expression to match.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   */
+  matchAll(pattern: RegExp, ctx?: RevealContext): IterableIterator<SensitiveString<C>[]> {
+    const regex = snapshotRegExp(pattern, 'matchAll');
+
+    if (!regex.global) {
+      throw new TypeError('SensitiveString.matchAll requires a global regular expression');
+    }
+
+    const matches = this.#readRawValue('expose', ctx).matchAll(regex);
+    const protect = (match: RegExpMatchArray): SensitiveString<C>[] =>
+      match
+        .filter((part): part is string => part !== undefined)
+        .map((part) => SensitiveString.#derived(part, this.klass, this.label, [this]));
+
+    return (function* protectedMatches(): IterableIterator<SensitiveString<C>[]> {
+      for (const match of matches) {
+        yield protect(match);
+      }
+    })();
+  }
+
+  /**
    * Split the value into protected parts.
    *
    * @param separator - String or regular expression used to divide the value.
@@ -435,9 +575,11 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param ctx - Optional reveal context for authorization and auditing.
    */
   split(separator: string | RegExp, limit?: number, ctx?: RevealContext): SensitiveString<C>[] {
+    const safeSeparator =
+      typeof separator === 'string' ? separator : snapshotRegExp(separator, 'split');
     const value = this.#readRawValue('expose', ctx);
     return value
-      .split(separator, limit)
+      .split(safeSeparator, limit)
       .map((part) => SensitiveString.#derived(part, this.klass, this.label, [this]));
   }
 
@@ -460,7 +602,9 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       throw new TypeError('SensitiveString replacement value must be a string');
     }
 
-    return this.#transform((value) => value.replace(searchValue, replaceValue), ctx);
+    const safeSearchValue =
+      typeof searchValue === 'string' ? searchValue : snapshotRegExp(searchValue, 'replace');
+    return this.#transform((value) => value.replace(safeSearchValue, replaceValue), ctx);
   }
 
   /**
@@ -482,7 +626,14 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       throw new TypeError('SensitiveString replacement value must be a string');
     }
 
-    return this.#transform((value) => value.replaceAll(searchValue, replaceValue), ctx);
+    const safeSearchValue =
+      typeof searchValue === 'string' ? searchValue : snapshotRegExp(searchValue, 'replaceAll');
+
+    if (safeSearchValue instanceof RegExp && !safeSearchValue.global) {
+      throw new TypeError('SensitiveString.replaceAll requires a global regular expression');
+    }
+
+    return this.#transform((value) => value.replaceAll(safeSearchValue, replaceValue), ctx);
   }
 
   /**

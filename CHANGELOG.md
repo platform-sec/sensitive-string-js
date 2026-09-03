@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added protected string transformations for trimming, case conversion, padding, slicing,
   splitting, replacement, and character access.
 - Added policy-controlled partial queries for prefix, suffix, containment, and index checks.
+- Added protected regular-expression matching, named-group extraction, and match iteration.
+- Added policy-controlled `test()` and `search()` regex queries and the anchored `patterns.email`
+  helper.
 
 ### Security
 
@@ -19,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Partial queries are denied for credentials by default to prevent character-by-character oracle
   attacks.
 - Replacement callbacks are rejected because they would receive raw matched content.
+- Regex instances are snapshotted before raw access so overridden `exec` and symbol hooks cannot
+  receive sensitive values; native match metadata containing the complete input is not returned.
+- Regex queries follow `allowPartialQueries`, and credentials deny them by default to prevent
+  caller-controlled pattern oracles.
 
 ## [0.1.0] - 2024-XX-XX
 

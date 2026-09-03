@@ -47,6 +47,9 @@ export { SENSITIVITY_PRECEDENCE } from './types.js';
 // Main class
 export { SensitiveString } from './sensitive-string.js';
 
+// Anchored patterns for common sensitive-value formats
+export { patterns } from './patterns.js';
+
 // Policy management
 export {
   registerPolicy,

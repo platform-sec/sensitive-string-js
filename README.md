@@ -259,6 +259,16 @@ class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   indexOf(search: string, position?: number, ctx?: RevealContext): number;
   lastIndexOf(search: string, position?: number, ctx?: RevealContext): number;
   
+  // Regular expressions
+  test(pattern: RegExp, ctx?: RevealContext): boolean;
+  search(pattern: RegExp, ctx?: RevealContext): number;
+  match(pattern: RegExp, ctx?: RevealContext): SensitiveString<C>[] | null;
+  matchGroups(
+    pattern: RegExp,
+    ctx?: RevealContext
+  ): Record<string, SensitiveString<C>> | null;
+  matchAll(pattern: RegExp, ctx?: RevealContext): IterableIterator<SensitiveString<C>[]>;
+
   // Classification
   reclassify<D extends SensitivityClass>(
     newKlass: D,
@@ -284,6 +294,32 @@ other exposing operations. Partial queries reveal facts about a value, so they a
 controlled by `SensitivityPolicy.allowPartialQueries`. They are allowed for `sensitive` values and
 denied for `credential` values by default. Replacement callbacks are not supported because they
 would receive raw matched text.
+
+Regular-expression `test()` and `search()` are partial queries under the same policy. A
+caller-controlled regex is a powerful content oracle, so these methods should not be enabled for
+credentials without a specific reason. `match()`, `matchGroups()`, and `matchAll()` instead return
+protected derivatives and are authorized and audited transformations. Match arrays intentionally
+omit native metadata such as `input`, which contains the complete raw value, and omit optional
+captures that did not participate. Named groups receive labels such as `email:domain`; an unlabeled
+source uses the group name itself. The returned group record has a null prototype, matching native
+named-group records and preventing special group names from altering an object prototype.
+
+```typescript
+import { patterns, SensitiveString } from '@platform-sec/sensitive-string-core';
+
+const email = new SensitiveString('user@example.com', 'sensitive', 'email');
+
+email.test(patterns.email); // true
+email.search(/@/); // 4
+email.matchGroups(/^(?<local>[^@]+)@(?<domain>[^@]+)$/);
+// { local: SensitiveString<label=email:local>, domain: SensitiveString<label=email:domain> }
+```
+
+`patterns.email` is anchored and constructed without ambiguous nested repetition. Caller-supplied
+patterns are not checked for catastrophic backtracking. JavaScript regex execution is synchronous,
+so it cannot be interrupted safely with a timeout on the current thread; isolating it in a worker
+would require an asynchronous API and copying the raw value into another heap. Only use trusted,
+bounded-complexity patterns with these methods.
 
 ### Zod Schemas
 

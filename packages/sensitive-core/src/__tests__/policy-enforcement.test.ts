@@ -96,6 +96,26 @@ describe('Policy Enforcement Security', () => {
       execute: (s, ctx) => s.lastIndexOf('test', undefined, ctx),
     },
     {
+      name: 'test()',
+      execute: (s, ctx) => s.test(/test/, ctx),
+    },
+    {
+      name: 'search()',
+      execute: (s, ctx) => s.search(/test/, ctx),
+    },
+    {
+      name: 'match()',
+      execute: (s, ctx) => s.match(/test/, ctx),
+    },
+    {
+      name: 'matchGroups()',
+      execute: (s, ctx) => s.matchGroups(/(?<value>test)/, ctx),
+    },
+    {
+      name: 'matchAll()',
+      execute: (s, ctx) => s.matchAll(/test/g, ctx),
+    },
+    {
       name: 'split()',
       execute: (s, ctx) => s.split('-', undefined, ctx),
     },
