@@ -75,7 +75,13 @@ export interface FlatLintMessage {
   readonly ruleId: string | null;
   readonly severity: number;
   readonly message: string;
-  readonly suggestions?: readonly unknown[];
+  /**
+   * Present only on a message the rule attached suggestions to. Spelled
+   * with an explicit `undefined` because `exactOptionalPropertyTypes` keeps
+   * an optional marker from implying it, and ESLint's own `LintMessage`
+   * declares the property as present-and-undefined.
+   */
+  readonly suggestions?: readonly unknown[] | undefined;
 }
 
 /**
