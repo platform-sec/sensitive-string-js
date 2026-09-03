@@ -1,15 +1,14 @@
 /**
  * Constant-Time Comparison Verification Tests
  *
- * Statistical timing tests to verify constant-time behavior for credential comparisons.
- * These tests help detect timing side-channel vulnerabilities.
+ * Deterministic tests for the constant-time comparison path: that the policy
+ * requires it for credentials, and that `equals()` answers correctly whatever
+ * the comparand.
  *
- * Note: Timing tests can be flaky in CI environments due to scheduling variance.
- * They're primarily useful for development and should be run with `continue-on-error: true` in CI.
+ * The statistical measurements that were here live in
+ * `timing-analysis.timing.test.ts`, which `pnpm test:timing` runs. A wall clock
+ * assertion belongs behind an opt-in, not in the suite that gates a release.
  */
-
-// Timing diagnostics are intentional output from these statistical tests.
-/* eslint-disable no-console */
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SensitiveString, getPolicy, resetPolicies } from '../index.js';
@@ -86,161 +85,27 @@ describe('Constant-Time Comparison Security', () => {
     });
   });
 
-  describe('timing analysis', () => {
-    // These tests measure timing differences to verify constant-time behavior.
-    // They're statistical in nature and may have false positives/negatives.
+  describe('comparison correctness across lengths', () => {
+    const SECRET = 'a'.repeat(64);
 
-    const ITERATIONS = 500;
-    const SECRET = 'a'.repeat(64); // 64-char secret
-
-    // Strings with differences at different positions
-    const EARLY_MISMATCH = 'b' + 'a'.repeat(63); // First char different
-    const LATE_MISMATCH = 'a'.repeat(63) + 'b'; // Last char different
-    const COMPLETE_MATCH = 'a'.repeat(64); // Exact match
-
-    function measureComparison(
-      sensitive: SensitiveString<'credential'>,
-      comparand: string,
-      iterations: number
-    ): number[] {
-      const times: number[] = [];
-
-      // Warmup - important for JIT optimization
-      for (let i = 0; i < 100; i++) {
-        sensitive.equals(comparand);
-      }
-
-      // Measure
-      for (let i = 0; i < iterations; i++) {
-        const start = process.hrtime.bigint();
-        sensitive.equals(comparand);
-        const end = process.hrtime.bigint();
-        times.push(Number(end - start));
-      }
-
-      return times;
-    }
-
-    function median(arr: number[]): number {
-      const sorted = [...arr].sort((a, b) => a - b);
-      const mid = Math.floor(sorted.length / 2);
-      return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
-    }
-
-    function percentile(arr: number[], p: number): number {
-      const sorted = [...arr].sort((a, b) => a - b);
-      const index = Math.ceil((p / 100) * sorted.length) - 1;
-      return sorted[Math.max(0, index)]!;
-    }
-
-    function mean(arr: number[]): number {
-      return arr.reduce((a, b) => a + b, 0) / arr.length;
-    }
-
-    function stdDev(arr: number[]): number {
-      const avg = mean(arr);
-      const squareDiffs = arr.map((value) => Math.pow(value - avg, 2));
-      return Math.sqrt(mean(squareDiffs));
-    }
-
-    it('credential equals() shows no significant timing difference based on match position', () => {
+    it('rejects comparands of every length without regard to timing', () => {
       const s = new SensitiveString(SECRET, 'credential');
 
-      const earlyTimes = measureComparison(s, EARLY_MISMATCH, ITERATIONS);
-      const lateTimes = measureComparison(s, LATE_MISMATCH, ITERATIONS);
-      const matchTimes = measureComparison(s, COMPLETE_MATCH, ITERATIONS);
-
-      const earlyMedian = median(earlyTimes);
-      const lateMedian = median(lateTimes);
-      const matchMedian = median(matchTimes);
-
-      // Calculate coefficient of variation for timing difference
-      // A constant-time implementation should have similar medians
-      const maxDiff = Math.max(
-        Math.abs(earlyMedian - lateMedian),
-        Math.abs(earlyMedian - matchMedian),
-        Math.abs(lateMedian - matchMedian)
-      );
-
-      const avgMedian = (earlyMedian + lateMedian + matchMedian) / 3;
-      const percentDiff = (maxDiff / avgMedian) * 100;
-
-      // Log timing data for debugging
-      console.log('Timing analysis (credential class):');
-      console.log('  Early mismatch:', {
-        median: earlyMedian.toFixed(0),
-        p95: percentile(earlyTimes, 95).toFixed(0),
-        stdDev: stdDev(earlyTimes).toFixed(0),
-      });
-      console.log('  Late mismatch:', {
-        median: lateMedian.toFixed(0),
-        p95: percentile(lateTimes, 95).toFixed(0),
-        stdDev: stdDev(lateTimes).toFixed(0),
-      });
-      console.log('  Exact match:', {
-        median: matchMedian.toFixed(0),
-        p95: percentile(matchTimes, 95).toFixed(0),
-        stdDev: stdDev(matchTimes).toFixed(0),
-      });
-      console.log('  Max percent diff:', percentDiff.toFixed(2) + '%');
-
-      // Allow up to 30% timing variance (generous for CI environments)
-      // A vulnerable implementation would typically show 50%+ difference
-      // Note: This is a statistical test and may have false positives
-      expect(percentDiff).toBeLessThan(30);
-    });
-
-    it('sensitive class may show timing difference (not constant-time)', () => {
-      // This test documents that sensitive class doesn't use constant-time
-      // comparison, which is expected behavior
-      const s = new SensitiveString(SECRET, 'sensitive');
-
-      const earlyTimes = measureComparison(
-        s as unknown as SensitiveString<'credential'>,
-        EARLY_MISMATCH,
-        ITERATIONS
-      );
-      const lateTimes = measureComparison(
-        s as unknown as SensitiveString<'credential'>,
-        LATE_MISMATCH,
-        ITERATIONS
-      );
-
-      const earlyMedian = median(earlyTimes);
-      const lateMedian = median(lateTimes);
-
-      // Log for informational purposes
-      console.log('Timing analysis (sensitive class - not constant-time):');
-      console.log('  Early mismatch median:', earlyMedian.toFixed(0));
-      console.log('  Late mismatch median:', lateMedian.toFixed(0));
-
-      // We don't assert timing difference here since the optimizer might
-      // make regular comparison appear constant-time in some cases
-      expect(true).toBe(true); // Placeholder assertion
-    });
-
-    it('different length comparisons complete (length is allowed to leak)', () => {
-      const s = new SensitiveString(SECRET, 'credential');
-
-      // Length checks can be non-constant-time (documented behavior)
-      // This test verifies the comparison still works correctly
-      const shortTimes = measureComparison(s, 'short', ITERATIONS);
-      const sameLengthTimes = measureComparison(s, 'x'.repeat(64), ITERATIONS);
-      const longTimes = measureComparison(s, 'x'.repeat(128), ITERATIONS);
-
-      const shortMedian = median(shortTimes);
-      const sameMedian = median(sameLengthTimes);
-      const longMedian = median(longTimes);
-
-      console.log('Length-based timing (may vary - documented behavior):');
-      console.log('  Short (5 chars):', shortMedian.toFixed(0));
-      console.log('  Same length (64 chars):', sameMedian.toFixed(0));
-      console.log('  Long (128 chars):', longMedian.toFixed(0));
-
-      // Just verify the comparisons complete correctly
+      // A length mismatch returns before the constant-time comparison, which
+      // the threat model documents as unavoidable leakage. What matters here is
+      // that the answer is still correct.
       expect(s.equals('short')).toBe(false);
       expect(s.equals('x'.repeat(64))).toBe(false);
       expect(s.equals('x'.repeat(128))).toBe(false);
+      expect(s.equals(SECRET)).toBe(true);
+    });
+
+    it('rejects a mismatch wherever it falls in the value', () => {
+      const s = new SensitiveString(SECRET, 'credential');
+
+      expect(s.equals('b' + 'a'.repeat(63))).toBe(false);
+      expect(s.equals('a'.repeat(63) + 'b')).toBe(false);
+      expect(s.equals('a'.repeat(32) + 'b' + 'a'.repeat(31))).toBe(false);
     });
   });
 

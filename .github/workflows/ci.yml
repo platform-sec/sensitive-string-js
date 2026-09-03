@@ -171,6 +171,12 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+      # Wall clock measurements. Informational: a shared runner's scheduling
+      # decides the verdict, so this reports and never gates.
+      - name: Run timing analysis
+        run: pnpm test:timing
+        continue-on-error: true
+
   coverage:
     name: Test Coverage
     runs-on: ubuntu-latest

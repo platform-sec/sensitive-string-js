@@ -25,6 +25,14 @@ Thank you for considering contributing to SensitiveString! This document outline
    pnpm test
    ```
 
+5. **Timing analysis** (optional, not part of `pnpm test`)
+   ```bash
+   pnpm test:timing
+   ```
+   Statistical measurements of the constant-time comparison path. Their verdict
+   depends on how busy the machine is, so they inform rather than gate. Run them
+   on an idle machine when changing `equals()`.
+
 ## Code Guidelines
 
 ### Security Requirements

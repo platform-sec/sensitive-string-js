@@ -21,6 +21,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:timing": "vitest run --config vitest.timing.config.ts",
     "lint": "eslint packages/*/src/**/*.ts",
     "lint:fix": "eslint packages/*/src/**/*.ts --fix",
     "format": "prettier --write \"packages/*/src/**/*.ts\"",
