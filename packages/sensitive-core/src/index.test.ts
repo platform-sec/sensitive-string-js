@@ -91,6 +91,7 @@ describe('SensitiveString', () => {
       const s = new SensitiveString(CANARY, 'credential');
 
       // Direct interpolation without explicit String() - tests ToPrimitive chain
+      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- the implicit coercion is the subject of this test
       const result = `Value is: ${s}`;
 
       expect(result).not.toContain(CANARY);
@@ -447,11 +448,16 @@ describe('SensitiveString', () => {
     it('test_type_coercion_attack', () => {
       const s = new SensitiveString(CANARY, 'credential');
 
-      // Direct coercion attempts on SensitiveString (not pre-stringified)
+      // Direct coercion attempts on SensitiveString (not pre-stringified).
+      // These rules flag the exact implicit coercions under test, so the list
+      // stays as written: pre-stringifying to satisfy them would check a path
+      // an attacker has no reason to take.
+      /* eslint-disable @typescript-eslint/restrict-template-expressions, @typescript-eslint/restrict-plus-operands */
       const stringConstructor = String(s);
       const templateLiteral = `${s}`;
       const plusEmptyString = s + '';
       const emptyStringPlus = '' + s;
+      /* eslint-enable @typescript-eslint/restrict-template-expressions, @typescript-eslint/restrict-plus-operands */
       const arrayJoin = [s].join('');
       const arrayJoinWithSeparator = ['a', s, 'b'].join('-');
 
@@ -475,6 +481,7 @@ describe('SensitiveString', () => {
       const s = new SensitiveString(CANARY, 'credential');
 
       // Error messages often interpolate values for debugging
+      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- the implicit coercion is the subject of this test
       const error = new Error(`Authentication failed with token ${s}`);
 
       expect(error.message).not.toContain(CANARY);
@@ -491,6 +498,7 @@ describe('SensitiveString', () => {
       const apiKey = new SensitiveString(CANARY, 'credential', 'api_key');
 
       // Dangerous pattern: building URLs with query params
+      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- the implicit coercion is the subject of this test
       const url = `https://api.example.com/data?key=${apiKey}&format=json`;
 
       expect(url).not.toContain(CANARY);
@@ -819,6 +827,131 @@ describe('Redaction Helpers', () => {
 
     expect(json).toContain('\n');
     expect(json).toContain('  ');
+  });
+
+  // JSON.stringify returns undefined for these, and safeStringify is declared
+  // as returning a string. A caller that trusts the declaration does
+  // .includes() or .length on the result, so returning undefined here throws in
+  // whatever logging path called it.
+  it.each([
+    ['undefined', undefined],
+    ['a function', () => 'x'],
+    ['a class constructor', class Holder {}],
+    ['a symbol', Symbol('token')],
+  ])('test_safeStringify_returns_a_string_for_%s', (_label, value) => {
+    const json = safeStringify(value);
+
+    expect(typeof json).toBe('string');
+    expect(json).toBe('null');
+    expect(() => {
+      JSON.parse(json);
+    }).not.toThrow();
+  });
+
+  it('test_safeStringify_returns_a_string_when_a_replacer_drops_the_root', () => {
+    const json = safeStringify(
+      { secret: new SensitiveString(CANARY, 'credential') },
+      { replacer: () => undefined }
+    );
+
+    expect(typeof json).toBe('string');
+    expect(json).toBe('null');
+  });
+
+  // A class constructor's string form is its source text. Falling back to
+  // String() would put a static field's initializer into the output.
+  it('test_safeStringify_does_not_fall_back_to_source_text', () => {
+    class Holder {
+      static token = CANARY;
+    }
+
+    const json = safeStringify(Holder);
+
+    expect(json).not.toContain(CANARY);
+  });
+
+  // JSON.stringify throws a TypeError on a BigInt rather than skipping it, so
+  // one `id: 1n` in a payload would take down the logging call.
+  it('test_safeStringify_converts_a_bigint_rather_than_throwing', () => {
+    expect(() => JSON.stringify({ id: 1n })).toThrow(TypeError);
+
+    expect(safeStringify(1n)).toBe('"1"');
+    expect(safeStringify({ id: 1n, nested: { ids: [2n, 3n] } })).toBe(
+      '{"id":"1","nested":{"ids":["2","3"]}}'
+    );
+  });
+
+  // Number() would round anything past 2^53, so the decimal string has to come
+  // from the BigInt itself.
+  it('test_safeStringify_does_not_round_a_large_bigint', () => {
+    const big = 9007199254740993n;
+
+    expect(safeStringify({ id: big })).toBe('{"id":"9007199254740993"}');
+    expect(String(Number(big))).not.toBe(big.toString());
+  });
+
+  it('test_safeStringify_still_redacts_alongside_a_bigint', () => {
+    const json = safeStringify({
+      id: 42n,
+      token: new SensitiveString(CANARY, 'credential'),
+    });
+
+    expect(json).not.toContain(CANARY);
+    expect(json).toContain('[REDACTED:credential]');
+    expect(json).toContain('"42"');
+  });
+
+  // The caller's replacer runs first and sees the real BigInt; the conversion
+  // runs on what that replacer returned, so a replacer emitting its own BigInt
+  // is still covered.
+  it('test_safeStringify_converts_a_bigint_returned_by_a_replacer', () => {
+    const seen: unknown[] = [];
+    const json = safeStringify(
+      { id: 1n },
+      {
+        replacer: (key, value) => {
+          if (key === 'id') {
+            seen.push(value);
+            return 7n;
+          }
+          return value;
+        },
+      }
+    );
+
+    expect(seen).toEqual([1n]);
+    expect(json).toBe('{"id":"7"}');
+  });
+
+  // A replacer handed straight to JSON.stringify receives the holder as `this`,
+  // so wrapping it must not drop that.
+  it('test_safeStringify_replacer_keeps_its_this_binding', () => {
+    const holders: unknown[] = [];
+    safeStringify(
+      { outer: { inner: 1 } },
+      {
+        replacer: function (this: unknown, key, value) {
+          if (key === 'inner') {
+            holders.push(this);
+          }
+          return value;
+        },
+      }
+    );
+
+    expect(holders).toEqual([{ inner: 1 }]);
+  });
+
+  // Installing a replacer unconditionally must not change output for callers
+  // who passed none.
+  it.each([
+    ['a nested object', { a: 1, b: { c: null }, d: [1, 2] }],
+    ['a sparse array', [1, undefined, 3]],
+    ['a date', { at: new Date(0) }],
+    ['dropped keys', { keep: 1, drop: undefined }],
+  ])('test_safeStringify_output_is_unchanged_for_%s', (_label, value) => {
+    expect(safeStringify(value)).toBe(JSON.stringify(value));
+    expect(safeStringify(value, { pretty: true })).toBe(JSON.stringify(value, null, 2));
   });
 
   it('test_containsSensitive', () => {

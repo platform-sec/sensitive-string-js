@@ -136,6 +136,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `safeStringify()` returns the string its signature promises. It forwarded `JSON.stringify`'s
+  `undefined`, which is what that function returns for a value JSON cannot represent: `undefined`
+  itself, a function, a class constructor, a symbol, or a root dropped by a caller's replacer.
+  TypeScript's own lib declares `JSON.stringify` as returning `string`, so nothing flagged the
+  mismatch and a caller who believed the declaration failed on the result rather than at the call.
+  Those values now serialize as `'null'`, which is what `JSON.stringify` already substitutes for
+  them in array position, so the return stays parseable. Deliberately not `String()`: a function's
+  string form is its source text, which would put a static field's initializer into the output this
+  function exists to keep safe.
+- `safeStringify()` no longer throws on a `BigInt`. `JSON.stringify` rejects one with a `TypeError`
+  rather than skipping it, so a single `id: 1n` anywhere in a payload took down the logging call
+  that was meant to be the safe one. A `BigInt` now serializes as its decimal string, which is
+  lossless where `Number()` would silently round anything past 2^53. A caller's `replacer` still
+  runs first and sees the real value, so it can choose its own representation, and it keeps
+  receiving the holder object as `this`.
 - `zSensitiveDeserialize` reports a class mismatch, an unregistered class, and a malformed payload
   as Zod issues instead of throwing out of the transform. A throw there escaped `safeParse`, so a
   caller who chose the non-throwing API got an exception anyway, from the one schema whose whole job

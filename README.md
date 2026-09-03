@@ -696,8 +696,18 @@ redactInStructure(obj: unknown): unknown;
 // Alias for logging context
 safeLog(obj: unknown): unknown;
 
-// Safe JSON stringify
-safeStringify(obj: unknown, options?: { pretty?: boolean }): string;
+// Safe JSON stringify. Always returns a string: a BigInt becomes its decimal
+// string, and a value JSON cannot represent at all (undefined, a function, a
+// symbol) becomes 'null', where JSON.stringify alone would throw or hand back
+// an undefined its own type declaration denies. The replacer runs first, and
+// receives the holder as `this`, exactly as JSON.stringify's does.
+safeStringify(
+  obj: unknown,
+  options?: {
+    pretty?: boolean;
+    replacer?: (key: string, value: unknown) => unknown;
+  }
+): string;
 
 // Check for sensitive values
 containsSensitive(obj: unknown): boolean;

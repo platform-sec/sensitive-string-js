@@ -46,11 +46,11 @@ function everyRendering(holder: object): string[] {
     util.inspect(holder, { depth: null, showHidden: true }),
     // `JSON.stringify` returns undefined for a class rather than a string, and
     // a rendering that produced nothing still has to be checked, not skipped.
-    // `safeStringify` is declared as returning a string but forwards that
-    // undefined, so the static-field case needs the same fallback.
+    // `safeStringify` needs no such fallback: it substitutes 'null' for the
+    // values JSON cannot represent, so it returns the string it declares.
     JSON.stringify(holder) ?? '',
     JSON.stringify({ wrapper: holder }) ?? '',
-    safeStringify(holder) ?? '',
+    safeStringify(holder),
     Object.keys(holder).join(','),
     Object.values(holder).map(String).join(','),
     Object.entries(holder).flat().map(String).join(','),

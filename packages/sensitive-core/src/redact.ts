@@ -124,7 +124,7 @@ export function redactInStructure(obj: unknown, seen = new WeakSet<object>()): u
   // Objects that define their own JSON form (URL, Buffer, user classes):
   // redact that form. A toJSON() that returns the object itself is walked
   // like any other class instance.
-  if ('toJSON' in obj && typeof (obj as { toJSON: unknown }).toJSON === 'function') {
+  if ('toJSON' in obj && typeof obj.toJSON === 'function') {
     const json: unknown = (obj as { toJSON: () => unknown }).toJSON();
     return json === obj ? redactOwnProperties(obj, seen) : redactInStructure(json, seen);
   }
@@ -137,7 +137,13 @@ export function redactInStructure(obj: unknown, seen = new WeakSet<object>()): u
   }
 
   // Exotic objects (typed arrays, promises, boxed primitives, RegExp, ...):
-  // fall back to the string representation
+  // fall back to the string representation.
+  //
+  // no-base-to-string reads this as the useless '[object Object]' case, but
+  // isOrdinaryObject() returning false is exactly the guarantee that it is not:
+  // anything still carrying Object's default tag went to redactOwnProperties
+  // above, so what reaches here has its own toString or Symbol.toStringTag.
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string
   return String(obj);
 }
 
@@ -168,11 +174,56 @@ export interface SafeStringifyOptions {
 }
 
 /**
+ * Convert the values JSON.stringify rejects outright.
+ *
+ * A BigInt is the one primitive it throws a TypeError on rather than skipping,
+ * so a single `id: 1n` anywhere in a payload takes down the logging call that
+ * was meant to be the safe one. The decimal string is the conventional
+ * substitute and is lossless, unlike Number(), which silently rounds anything
+ * past 2^53. A BigInt has no source text to leak the way a function does.
+ */
+function toJsonSafe(value: unknown): unknown {
+  return typeof value === 'bigint' ? value.toString() : value;
+}
+
+/**
+ * Wrap the caller's replacer, if any, so the conversion runs on whatever that
+ * replacer returned.
+ *
+ * Order matters: a caller's replacer is free to hand back a BigInt of its own,
+ * so the conversion has to come last to hold. Running it first would also hide
+ * the real value from a replacer that wanted to inspect it.
+ *
+ * Installing a replacer unconditionally is safe: an identity replacer produces
+ * byte-identical output to passing null, and JSON.stringify applies it to the
+ * root value too, so a bare BigInt is covered as well as a nested one. The
+ * `function` expression, rather than an arrow, preserves the holder object as
+ * `this`, which is what a replacer passed straight to JSON.stringify receives.
+ */
+function jsonSafeReplacer(
+  replacer: SafeStringifyOptions['replacer']
+): (this: unknown, key: string, value: unknown) => unknown {
+  if (!replacer) {
+    return (_key, value) => toJsonSafe(value);
+  }
+
+  return function (this: unknown, key: string, value: unknown): unknown {
+    return toJsonSafe(replacer.call(this, key, value));
+  };
+}
+
+/**
  * Safely stringify a value to JSON with all sensitive data redacted.
+ *
+ * Always returns a string and never throws on the input's shape: a BigInt
+ * becomes its decimal string, and a value JSON cannot represent at all becomes
+ * 'null'. Both are cases where JSON.stringify alone would take a logging call
+ * down or hand back an undefined that its own type declaration denies.
  *
  * @param obj - The value to stringify
  * @param options - Stringify options
- * @returns JSON string with redacted sensitive values
+ * @returns JSON string with redacted sensitive values, or the string 'null'
+ *          for a value JSON cannot represent
  *
  * @example
  * ```ts
@@ -187,11 +238,20 @@ export function safeStringify(obj: unknown, options: SafeStringifyOptions = {}):
   const redacted = redactInStructure(obj);
   const space = options.pretty ? 2 : undefined;
 
-  if (options.replacer) {
-    return JSON.stringify(redacted, options.replacer, space);
-  }
+  const json = JSON.stringify(redacted, jsonSafeReplacer(options.replacer), space);
 
-  return JSON.stringify(redacted, null, space);
+  // JSON.stringify returns undefined, not a string, for the values JSON cannot
+  // represent: undefined itself, functions (a class constructor among them),
+  // and symbols. A replacer that drops the root does the same. TypeScript's
+  // own lib declares the return as `string` and hides this, so a caller that
+  // believed the declaration would fail on the result rather than at the call.
+  //
+  // 'null' is what JSON.stringify already substitutes for these same values in
+  // array position, so the fallback keeps the return parseable as JSON and
+  // leaks nothing. Deliberately not String(redacted): a function's string form
+  // is its source text, which would put a static field's initializer, secret
+  // literals and all, into output this function exists to keep safe.
+  return json ?? 'null';
 }
 
 /**
