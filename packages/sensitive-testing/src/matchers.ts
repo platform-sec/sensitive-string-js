@@ -1,6 +1,7 @@
 import { SensitiveString } from '@platform-sec/sensitive-string-core';
 import type { SensitivityClass } from '@platform-sec/sensitive-string-core';
 import { CONTAINS_CHECK_CONTEXT, MATCHER_CONTEXT, rawValueOf } from './canary.js';
+import { describeType } from './describe-type.js';
 import { findRawValue } from './leak-scan.js';
 
 /**
@@ -225,23 +226,6 @@ function notASensitiveString(received: unknown): MatcherResult {
     pass: false,
     message: () => `Expected a SensitiveString, but got ${describeType(received)}.`,
   };
-}
-
-/**
- * Name a value by its type, never by its content: this runs on whatever the
- * assertion received, which may be the plain-string copy of a secret.
- */
-function describeType(received: unknown): string {
-  if (received === null) {
-    return 'null';
-  }
-
-  if (typeof received === 'object') {
-    const prototype: unknown = Object.getPrototypeOf(received);
-    return prototype === null ? 'an object with no prototype' : received.constructor.name;
-  }
-
-  return typeof received;
 }
 
 function quote(value: string | undefined): string {

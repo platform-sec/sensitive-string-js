@@ -6,6 +6,7 @@
  * - `createTestSecret` builds unique, conspicuous canary values.
  * - `expectNotLeaked` and `expectRedacted` assert the core security property.
  * - `sensitiveMatchers` adds matchers to Vitest or Jest.
+ * - `sensitiveSerializer` keeps snapshots readable without recording a value.
  * - `mockRevealContext` and `createMockAuditLog` record what was accessed.
  *
  * The package depends on no test framework. The matchers are a plain object
@@ -50,6 +51,10 @@ export type { RedactionOptions } from './assertions.js';
 // Matchers
 export { sensitiveMatchers, setupSensitiveMatchers } from './matchers.js';
 export type { SensitiveMatchers, MatcherResult } from './matchers.js';
+
+// Snapshot serializer
+export { sensitiveSerializer, createSensitiveSerializer } from './serializer.js';
+export type { SensitiveSerializerOptions, SnapshotSerializerPlugin } from './serializer.js';
 
 // Mocks
 export { mockRevealContext, createMockAuditLog } from './mocks.js';

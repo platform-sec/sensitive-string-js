@@ -13,6 +13,10 @@
     "./vitest": {
       "types": "./dist/vitest.d.ts",
       "default": "./dist/vitest.js"
+    },
+    "./serializer": {
+      "types": "./dist/serializer.d.ts",
+      "default": "./dist/serializer.js"
     }
   },
   "files": [
@@ -28,6 +32,7 @@
     "vitest",
     "jest",
     "matchers",
+    "snapshot",
     "security",
     "sensitive-data",
     "typescript"

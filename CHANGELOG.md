@@ -48,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   assertions are built on, for a check the package does not already provide.
 - Added `UnreadableSecretError`, raised when a check could not read the value it was asked to look
   for, so a refused reveal is never mistaken for a clean result.
+- Added `sensitiveSerializer` and `createSensitiveSerializer`, a snapshot serializer that renders a
+  `SensitiveString` as `SensitiveString<class:label>`, with optional `{length}` and `{expired}`
+  fields and a custom `format`. It is available from the package root and, for a runner that loads
+  a serializer by path, from the `/serializer` entry point.
 
 ### Fixed
 

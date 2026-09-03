@@ -181,6 +181,69 @@ declare global {
 }
 ```
 
+## Snapshot serializer
+
+```typescript
+// vitest.setup.ts
+import { expect } from 'vitest';
+import { sensitiveSerializer } from '@platform-sec/sensitive-string-testing';
+
+expect.addSnapshotSerializer(sensitiveSerializer);
+```
+
+```javascript
+// jest.config.js
+module.exports = {
+  snapshotSerializers: ['@platform-sec/sensitive-string-testing/serializer'],
+};
+```
+
+A snapshot then keeps the shape of the structure and says what each sensitive
+field is, without recording what it holds:
+
+```
+{
+  "id": 1,
+  "email": SensitiveString<sensitive:email>,
+  "apiKey": SensitiveString<credential:api_key>,
+  "phone": SensitiveString<sensitive>,
+}
+```
+
+Without a serializer the same snapshot records whatever the class policy's
+`redact()` returns, which loses the label, differs between projects, and changes
+when a policy does. The rendering here is built from the class and the label,
+which are public metadata. It never calls `reveal()`, never reads the policy,
+and has no format placeholder for the value, so a value cannot reach a snapshot
+through it even under a policy registered with `skipRedactValidation`.
+
+For a different rendering:
+
+```typescript
+import { createSensitiveSerializer } from '@platform-sec/sensitive-string-testing';
+
+createSensitiveSerializer({ showLength: true });
+// SensitiveString<credential:api_key:len=32>
+
+createSensitiveSerializer({ showExpiration: true });
+// SensitiveString<credential:otp:EXPIRED>
+
+createSensitiveSerializer({ format: '<{class}{label}>' });
+// <credential:api_key>
+```
+
+`showLength` and `showExpiration` are off by default. A snapshot is committed to
+version control, so the length of a credential is more than the class and the
+label say about it, and whether a value is expired depends on when the test ran,
+which makes a stored snapshot that records it stable only while the deadline
+stays on the same side of the clock.
+
+A `format` supersedes both options: the placeholders written in it decide what
+appears. They are `{class}`, `{label}`, `{length}` and `{expired}`, and each
+carries its own separator so the optional ones collapse cleanly. There is none
+for the value, and an unknown one is rejected when the serializer is built
+rather than passed through into every snapshot in the suite.
+
 ## Audit mocks
 
 ```typescript
@@ -237,7 +300,6 @@ option, which is a reason to keep real secrets out of that option.
 
 ## Not included yet
 
-- A snapshot serializer, which is roadmap item 5.2 and belongs in this package.
 - `createSingleUseSecret`, which needs the reveal counters from roadmap item
   1.4. There is nothing to exhaust until those exist.
 - Streaming leak monitors, deferred by the design document.
