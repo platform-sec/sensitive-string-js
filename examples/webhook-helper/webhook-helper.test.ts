@@ -52,8 +52,7 @@ const SAMPLE_WEBHOOK_BODY = JSON.stringify({
   },
 });
 
-const parseSampleWebhook = (body: string): PspWebhookPayload =>
-  parsePspWebhookPayload(body);
+const parseSampleWebhook = (body: string): PspWebhookPayload => parsePspWebhookPayload(body);
 
 describe('parseAndProtectWebhook', () => {
   it('should parse and wrap sensitive fields atomically', () => {
@@ -208,17 +207,14 @@ describe('unprotectWebhook', () => {
       PSP_SENSITIVE_FIELDS
     );
 
-    withRevealContext(
-      { name: 'test', reason: 'Testing unwrap' },
-      () => {
-        const unprotected = unprotectWebhook(protected_, PSP_SENSITIVE_FIELDS);
+    withRevealContext({ name: 'test', reason: 'Testing unwrap' }, () => {
+      const unprotected = unprotectWebhook(protected_, PSP_SENSITIVE_FIELDS);
 
-        // Should be back to plain strings
-        expect(unprotected.notification.metadata.cardLastFour).toBe('4242');
-        expect(unprotected.notification.metadata.webhookSignature).toBe('dGVzdC1zaWduYXR1cmU=');
-        expect(unprotected.notification.transaction.gatewayReference).toBe('gw_ref_789');
-      }
-    );
+      // Should be back to plain strings
+      expect(unprotected.notification.metadata.cardLastFour).toBe('4242');
+      expect(unprotected.notification.metadata.webhookSignature).toBe('dGVzdC1zaWduYXR1cmU=');
+      expect(unprotected.notification.transaction.gatewayReference).toBe('gw_ref_789');
+    });
   });
 
   it('should audit reveals when context provided', () => {
@@ -292,11 +288,7 @@ describe('PSP_SENSITIVE_FIELDS configuration', () => {
 describe('error handling', () => {
   it('should propagate parse errors', () => {
     expect(() => {
-      parseAndProtectWebhook(
-        'invalid json',
-        parseSampleWebhook,
-        PSP_SENSITIVE_FIELDS
-      );
+      parseAndProtectWebhook('invalid json', parseSampleWebhook, PSP_SENSITIVE_FIELDS);
     }).toThrow();
   });
 

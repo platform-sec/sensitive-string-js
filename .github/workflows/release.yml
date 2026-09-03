@@ -69,7 +69,7 @@ jobs:
         run: pnpm lint
 
       - name: Check formatting
-        run: pnpm format --check
+        run: pnpm format:check
 
       - name: Build packages
         run: pnpm build
