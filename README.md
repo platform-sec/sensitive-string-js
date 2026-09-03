@@ -52,6 +52,9 @@ pnpm add @platform-sec/sensitive-string-core
 
 # With Zod integration
 pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-zod zod
+
+# Test utilities: canaries, leak assertions, matchers, audit mocks
+pnpm add -D @platform-sec/sensitive-string-testing
 ```
 
 ### Basic Usage
@@ -691,6 +694,81 @@ getPolicy(name: SensitivityClass): SensitivityPolicy;
 // Class combination logic
 defaultCombineClasses(a: SensitivityClass, b: SensitivityClass): SensitivityClass;
 ```
+
+### Testing Utilities
+
+From `@platform-sec/sensitive-string-testing`, a dev dependency. It depends on no test framework:
+the matchers are a plain object you hand to `expect.extend`, and anything that needs a spy takes
+`vi.fn` or `jest.fn` as an argument.
+
+```typescript
+import {
+  createTestSecret,
+  expectNotLeaked,
+  expectRedacted,
+  setupSensitiveMatchers,
+  mockRevealContext,
+} from '@platform-sec/sensitive-string-testing';
+
+setupSensitiveMatchers(expect);
+
+it('does not leak the key into the response', async () => {
+  const apiKey = createTestSecret('credential', 'api_key');
+
+  const response = await handler(apiKey);
+
+  expect(apiKey).toHaveSensitivityClass('credential');
+  expectNotLeaked(apiKey, response, logger.entries);
+  expectRedacted(logger.lastLine, apiKey);
+});
+```
+
+```typescript
+// Canary values, unique per call and conspicuous in output
+createTestSecret(klass?, label?, options?): SensitiveString;
+createExpiredSecret(klass?, label?, options?): SensitiveString;
+createExpiringSecret(klass, label, ttlMs, options?): SensitiveString;
+
+// Assertions
+expectNotLeaked(secret: SensitiveString, ...targets: unknown[]): void;
+expectRedacted(output: string | object, secret: SensitiveString, options?): void;
+
+// Matchers, registered with expect.extend or setupSensitiveMatchers
+expect(value).toBeSensitiveString();
+expect(value).toHaveSensitivityClass('credential');
+expect(value).toHaveLabel('api_token');
+expect(value).toRevealAs('abc123');
+expect(value).toBeExpired();
+expect(output).toContainSensitive(secret);
+
+// Audit mocks
+mockRevealContext(name: string, options?: { fn?, reason?, tags? }): MockRevealContext;
+createMockAuditLog(name?: string): MockAuditLog;
+```
+
+`expectNotLeaked` walks each target rather than calling `JSON.stringify` on it. `JSON.stringify`
+asks an object what it wants to show, which is the wrong question for a leak check: a `toJSON` that
+omits a field hides a raw copy still sitting on the object. The walk reads own properties instead,
+including non-enumerable ones and values behind getters, and it decodes `Buffer` contents. A value
+still wrapped in a `SensitiveString` is not a leak and is not reported as one.
+
+The walk covers the places a copy hides rather than only the places a serializer looks: an `Error`'s
+`message` and `stack`, a `match()` result's `input`, a raw value used as an object key, and bytes
+written into a `Buffer`.
+
+`expectRedacted` checks that the raw value is absent and that the rendering the class policy
+actually produces is present, read from the instance rather than assumed to be `[REDACTED:class]`.
+A custom policy therefore passes without the test knowing its format.
+
+No failure message from this package contains the value it guards. A leak report names the class,
+the label, and the path, and quotes the surrounding text with the value replaced by
+`[LEAKED VALUE]`, because an assertion message ends up in a CI log.
+
+A leak check never reports "no leak" because it gave up. The walk has no depth limit, and a reveal
+refused by a deadline or a policy raises `UnreadableSecretError` saying the check did not run.
+
+See [packages/sensitive-testing/README.md](packages/sensitive-testing/README.md) for the full
+guide.
 
 ---
 

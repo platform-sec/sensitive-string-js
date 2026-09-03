@@ -1,0 +1,48 @@
+{
+  "name": "@platform-sec/sensitive-string-testing",
+  "version": "0.1.0",
+  "description": "Test secrets, leak assertions, matchers, and audit mocks for SensitiveString",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./vitest": {
+      "types": "./dist/vitest.d.ts",
+      "default": "./dist/vitest.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "testing",
+    "vitest",
+    "jest",
+    "matchers",
+    "security",
+    "sensitive-data",
+    "typescript"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "peerDependencies": {
+    "@platform-sec/sensitive-string-core": "^0.1.0"
+  },
+  "devDependencies": {
+    "@platform-sec/sensitive-string-core": "workspace:*",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}

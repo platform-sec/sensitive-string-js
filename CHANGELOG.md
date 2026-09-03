@@ -31,9 +31,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and cap expiration for a whole sensitivity class.
 - Added `expiresAt` to the serialized wire format, and a `renew` audit record carrying both
   deadlines and the renewal count.
+- Added the `@platform-sec/sensitive-string-testing` package, which depends on no test framework
+  and works with Vitest and Jest alike.
+- Added `createTestSecret`, which builds unique, conspicuous canary values and accepts every
+  `SensitiveStringOptions` field, plus the `createExpiredSecret` and `createExpiringSecret`
+  factories for the two shapes tests need most.
+- Added the `expectNotLeaked` and `expectRedacted` assertions, and the `LeakageDetectedError` they
+  throw, which names the class, the label, and the path a value was found at.
+- Added the `sensitiveMatchers` object and `setupSensitiveMatchers`, providing
+  `toBeSensitiveString`, `toHaveSensitivityClass`, `toHaveLabel`, `toRevealAs`, `toBeExpired`, and
+  `toContainSensitive`, usable asymmetrically as well, with a ready-made Vitest type augmentation at
+  the `/vitest` entry point.
+- Added `mockRevealContext` and `createMockAuditLog` for asserting on audit behavior. Both take a
+  spy factory such as `vi.fn` rather than detecting a framework at runtime.
+- Added `collectFragments`, `findRawValue`, and `joinFragments`, the leak-scanning primitives the
+  assertions are built on, for a check the package does not already provide.
+- Added `UnreadableSecretError`, raised when a check could not read the value it was asked to look
+  for, so a refused reveal is never mistaken for a clean result.
+
+### Fixed
+
+- Corrected the `exports` map in all three packages. Every one declared a `require` condition
+  pointing at a `dist/*.cjs` file that `tsc` never emits, so `require()` of any package failed with
+  `MODULE_NOT_FOUND`, and importing a package that depends on another failed the same way through
+  the dependency. The build emits CommonJS `.js`, which one `default` condition serves for both
+  `require` and `import`.
 
 ### Security
 
+- The leak walk has no depth limit. A limit stops in the middle of a structure the walk could
+  otherwise finish, and a leak below the cut reads as no leak at all; the walk uses an explicit
+  stack so depth costs heap rather than call frames. A node budget bounds a hostile target that
+  fabricates work without end.
+- A reveal refused by a deadline or a policy raises `UnreadableSecretError` naming the value and the
+  cause, rather than surfacing an unrelated error from inside an assertion about output where it
+  would read as a clean result.
+- Leak checks walk their targets instead of calling `JSON.stringify`, which asks each object what it
+  wants to show. A `toJSON` that omits a field, a non-enumerable property, a value behind a getter,
+  and a copy written into a `Buffer` are all reached; a value still wrapped in a `SensitiveString`
+  is not reported.
+- A wrapper whose rendering contains the whole raw value is reported as a leak rather than trusted,
+  so a policy registered with `skipRedactValidation` cannot make a leak assertion pass.
+- No failure message from the testing package contains the value it guards. A leak report replaces
+  the value with `[LEAKED VALUE]`, and a failed `toRevealAs` reports the redacted rendering and the
+  length, because an assertion message ends up in a CI log.
+- `expectRedacted` checks the rendering the class policy actually produces, read from the instance,
+  rather than hardcoding `[REDACTED:class]`, so it holds under a custom policy and fails when a
+  policy stops redacting.
+- `toRevealAs` reveals through the instance, so an expired value or a policy denial fails the
+  assertion rather than passing on a value the code under test could not have read.
+- Values the testing package generated are remembered by object identity so a leak check needs no
+  reveal, which keeps it out of the caller's audit context and lets it run on an expired secret. The
+  registry adds no property to the instance and is unreachable from outside the package.
 - String transformations preserve sensitivity state and invoke reveal authorization and auditing.
 - Partial queries are denied for credentials by default to prevent character-by-character oracle
   attacks.
