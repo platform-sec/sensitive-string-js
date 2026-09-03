@@ -49,6 +49,8 @@ const raw = apiKey.reveal({ name: 'api-call', reason: 'authenticating' });
 - **Sensitivity Classification**: `sensitive` and `credential` (use labels for finer categorization)
 - **Constant-Time Comparison**: Timing-safe equality for credentials
 - **Audit Context**: AsyncLocalStorage-based context propagation
+- **Partial Masking**: `mask()` shows a bounded part of a value for support and debugging, under
+  the same authorization and audit hooks as `reveal()`
 - **Protected Regex Operations**: Query, match, and extract groups without returning plain strings
 - **Built-in Patterns**: Anchored `patterns.email` structural validation
 - **Template Literals**: `st` builds a protected value from interpolated secrets, inheriting the

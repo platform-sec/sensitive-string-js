@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   helper.
 - Added the `sensitiveTemplate` tagged template and its `st` alias for building protected values
   from template literals, with optional reveal context, label, and class.
+- Added `mask()` for partial masking, with positional `showFirst` / `showLast` options and the
+  `email`, `phone`, `card`, `ssn`, `uuid`, and `custom` strategies.
+- Added the `minMasked` floor, which defaults to 4 for `sensitive` and 8 for `credential`.
+- Added `RevealDetails` to the `auditReveal` callback and to `withAuditedReveals`, so an audit sink
+  can tell a full reveal from a mask and see the options that produced it.
 
 ### Security
 
@@ -33,6 +38,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The template `klass` option may only tighten the inherited class, and unsupported interpolations
   are rejected with a `TypeError` that names the index and type but never the value, before any
   value is revealed.
+- Masking is a partial reveal: it runs the same authorization and audit hooks as `reveal()`, and it
+  follows `allowMask`, which credentials deny by default.
+- The `minMasked` floor may be raised but not lowered, and a rendering that cannot hide that many
+  characters falls back to the class's full redaction.
+- A format strategy applied to a value that is not of that format redacts instead of degrading to a
+  positional view, which would disclose a fixed prefix of whatever the value actually is. Counting
+  digits is not enough to recognize a card: a hex token holds twelve or more of them among its
+  letters.
+- The `card` strategy is the only definition of card masking in this repository. It shows the
+  six-digit BIN and the last four digits, which is the PCI-DSS maximum.
+- The `email` strategy masks the domain as well as the local part, since a full domain leaks the
+  employer or provider, and it hides a one-character local part completely.
+- `customStrategy` receives the raw value, so it is rejected unless the caller names
+  `strategy: 'custom'`, and its output is never measured against the floor.
+- Mask options are validated before the value is read, so a rejected call leaves no audit record
+  for a mask that was never rendered.
 
 ## [0.1.0] - 2024-XX-XX
 

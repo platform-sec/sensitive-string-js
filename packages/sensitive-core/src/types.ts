@@ -31,6 +31,74 @@ export const SENSITIVITY_PRECEDENCE: readonly SensitivityClass[] = [
 export interface SensitiveStringOptions {}
 
 /**
+ * Built-in masking strategies for well-known value formats, plus `custom` for a
+ * caller-supplied one.
+ */
+export type MaskStrategy = 'email' | 'phone' | 'card' | 'ssn' | 'uuid' | 'custom';
+
+/**
+ * Options for `SensitiveString.mask()`.
+ *
+ * Positional options (`showFirst`, `showLast`) and `strategy` are mutually
+ * exclusive: a strategy decides what it shows, so combining the two would
+ * silently ignore a caller's attempt to narrow the result.
+ */
+export interface MaskOptions {
+  /** Leading characters to leave visible. Positional masking only. */
+  showFirst?: number;
+  /** Trailing characters to leave visible. Positional masking only. */
+  showLast?: number;
+  /** Replacement character for hidden characters. Exactly one code point. Defaults to `'*'`. */
+  maskChar?: string;
+  /**
+   * Minimum characters the result must hide.
+   *
+   * Defaults to 4 for `sensitive` and 8 for `credential`. A caller may raise
+   * the floor but not lower it, and a rendering that cannot reach it falls back
+   * to full redaction.
+   */
+  minMasked?: number;
+  /** Format-aware strategy to apply instead of positional masking. */
+  strategy?: MaskStrategy;
+  /**
+   * Formatter for `strategy: 'custom'`.
+   *
+   * ⚠️ Receives the RAW value. This is a reveal in all but name: the floor
+   * cannot be measured against output the library did not produce.
+   */
+  customStrategy?: (value: string) => string;
+}
+
+/**
+ * Audit record for a full reveal.
+ */
+export interface RevealAuditDetails {
+  readonly operation: 'reveal';
+}
+
+/**
+ * Audit record for a partial reveal through `mask()`.
+ *
+ * `customStrategy` is deliberately absent: an audit sink should not receive a
+ * function whose source it might serialize into a log.
+ */
+export interface MaskAuditDetails {
+  readonly operation: 'mask';
+  /** The strategy applied, or `'positional'` for `showFirst` / `showLast` masking. */
+  readonly strategy: MaskStrategy | 'positional';
+  readonly showFirst: number;
+  readonly showLast: number;
+  readonly minMasked: number;
+  readonly maskChar: string;
+}
+
+/**
+ * What the audited operation was, so an audit sink can tell a full reveal from
+ * a partial one.
+ */
+export type RevealDetails = RevealAuditDetails | MaskAuditDetails;
+
+/**
  * Advisory metadata for sensitivity policies.
  * NOT enforced by this library in MVP - use for documentation,
  * external policy engines, and future enforcement.
@@ -73,8 +141,13 @@ export interface RevealContext {
   reason?: string;
   /** Freeform metadata (request ID, user ID, etc.) */
   tags?: Record<string, unknown>;
-  /** Callback invoked when a sensitive value is revealed */
-  auditReveal?(value: ISensitiveString): void;
+  /**
+   * Callback invoked when a sensitive value is revealed.
+   *
+   * `details` distinguishes a full reveal from a partial one and carries the
+   * mask options that produced it.
+   */
+  auditReveal?(value: ISensitiveString, details: RevealDetails): void;
 }
 
 /**
@@ -101,7 +174,7 @@ export interface SensitivityPolicy {
   allowPartialQueries?: boolean;
 
   /**
-   * Allow partially masked output.
+   * Allow partially masked output from `mask()`.
    * Defaults to true for sensitive values and false for credentials.
    */
   allowMask?: boolean;

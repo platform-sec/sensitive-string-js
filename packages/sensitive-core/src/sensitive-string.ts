@@ -4,10 +4,13 @@ import type {
   SensitivityPolicy,
   SensitiveStringOptions,
   SerializedSensitiveString,
+  MaskOptions,
   RevealContext,
+  RevealDetails,
 } from './types.js';
 import { getPolicy, defaultCombineClasses, hasPolicy } from './policy.js';
 import { getCurrentRevealContext } from './context.js';
+import { applyMask, maskAuditDetails, planMask } from './mask.js';
 
 /**
  * Node.js custom inspect symbol for util.inspect() and console.log().
@@ -39,6 +42,12 @@ function snapshotRegExp(pattern: RegExp, operation: string): RegExp {
     throw new TypeError(`SensitiveString.${operation} requires a regular expression`);
   }
 }
+
+/**
+ * The audit record every operation but `mask()` reports. Shared and frozen: it
+ * is handed to caller-supplied audit hooks.
+ */
+const REVEAL_AUDIT_DETAILS: RevealDetails = Object.freeze({ operation: 'reveal' as const });
 
 /**
  * How a caller uses the raw value determines authorization and auditing.
@@ -157,7 +166,11 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * restrictions belong here so no operation can bypass them. Redaction and
    * documented metadata reads stay available even when access is denied.
    */
-  #readRawValue(access: RawValueAccess, ctx?: RevealContext): string {
+  #readRawValue(
+    access: RawValueAccess,
+    ctx?: RevealContext,
+    details: RevealDetails = REVEAL_AUDIT_DETAILS
+  ): string {
     if (access === 'safe') {
       return this.#value;
     }
@@ -166,7 +179,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     this.policy.checkRevealAllowed?.(effectiveCtx);
 
     if (access === 'expose') {
-      effectiveCtx?.auditReveal?.(this);
+      effectiveCtx?.auditReveal?.(this, details);
     }
 
     return this.#value;
@@ -260,6 +273,53 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    */
   reveal(ctx?: RevealContext): string {
     return this.#readRawValue('expose', ctx);
+  }
+
+  /**
+   * Returns a partially masked rendering of the value, for display.
+   *
+   * This is a partial reveal: it runs the same authorization and audit hooks as
+   * `reveal()`, and the audit record says `operation: 'mask'` so a log can tell
+   * the two apart. The result is a plain string and is not protected; it is
+   * meant for a support screen, a confirmation prompt, or a log line, not for
+   * further processing.
+   *
+   * The rendering must hide at least `minMasked` characters, which defaults to
+   * 4 for `sensitive` and 8 for `credential` and may only be raised. Positional
+   * masking clamps what it shows to satisfy the floor; a strategy that cannot
+   * reach it, including one applied to a value of the wrong shape, falls back
+   * to the class's full redaction. Counts are code points, and the length of
+   * the value is disclosed by construction.
+   *
+   * @param options - Positional bounds or a format strategy. Defaults to hiding everything.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   * @throws Error If the class policy sets `allowMask: false`, as `credential` does by default.
+   * @throws TypeError If an option has the wrong type or names an unknown strategy.
+   * @throws RangeError If a count is not a whole number, or `minMasked` is below the class floor.
+   *
+   * @example
+   * ```ts
+   * const key = new SensitiveString('sk_live_abc123xyz9', 'sensitive', 'api_key');
+   * key.mask({ showFirst: 2, showLast: 4 }); // 'sk************xyz9'
+   *
+   * const email = new SensitiveString('jane@example.com', 'sensitive', 'email');
+   * email.mask({ strategy: 'email' }); // 'j***@e******.com'
+   * ```
+   */
+  mask(options: MaskOptions = {}, ctx?: RevealContext): string {
+    const policy = this.policy;
+
+    if (!(policy.allowMask ?? this.klass === 'sensitive')) {
+      const label = this.label !== undefined ? ` (${this.label})` : '';
+      throw new Error(`Masking is not allowed for sensitivity class '${this.klass}'${label}`);
+    }
+
+    // Options are validated before the value is read, so a rejected call leaves
+    // no audit record for a mask that was never rendered.
+    const plan = planMask(options, this.klass);
+    const value = this.#readRawValue('expose', ctx, maskAuditDetails(plan));
+
+    return applyMask(value, plan, (raw) => policy.redact(raw));
   }
 
   /**

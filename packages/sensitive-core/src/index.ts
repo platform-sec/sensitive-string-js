@@ -7,6 +7,7 @@
  * - Automatic redaction in logging, serialization, and display
  * - Type-safe sensitivity classification
  * - Explicit reveal with audit hooks
+ * - Partial masking for support, debugging, and user confirmation
  * - Constant-time comparison for credentials
  * - AsyncLocalStorage context propagation
  *
@@ -38,7 +39,12 @@ export type {
   SensitivityAdvisory,
   SensitiveStringOptions,
   SerializedSensitiveString,
+  MaskOptions,
+  MaskStrategy,
+  MaskAuditDetails,
+  RevealAuditDetails,
   RevealContext,
+  RevealDetails,
   ISensitiveString,
 } from './types.js';
 

@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { RevealContext } from './types.js';
+import type { RevealContext, RevealDetails } from './types.js';
 import { getGlobalSingleton } from './global-state.js';
 
 /**
@@ -83,8 +83,8 @@ export function createChildContext(
  *
  * @example
  * ```ts
- * await withAuditedReveals('payment-processing', (value) => {
- *   logger.info('Revealed sensitive value', { class: value.klass });
+ * await withAuditedReveals('payment-processing', (value, details) => {
+ *   logger.info('Revealed sensitive value', { class: value.klass, op: details.operation });
  * }, async () => {
  *   // All reveals in this scope will be audited
  * });
@@ -92,7 +92,7 @@ export function createChildContext(
  */
 export function withAuditedReveals<T>(
   name: string,
-  auditFn: (value: { readonly klass: string }) => void,
+  auditFn: (value: { readonly klass: string }, details: RevealDetails) => void,
   fn: () => T
 ): T {
   return withRevealContext(

@@ -10,6 +10,7 @@ import {
   SensitiveString,
   ISensitiveString,
   RevealContext,
+  RevealDetails,
   registerPolicy,
   resetPolicies,
   withRevealContext,
@@ -26,10 +27,24 @@ describe('Policy Enforcement Security', () => {
   const VALUE_ACCESSING_OPERATIONS: Array<{
     name: string;
     execute: (s: SensitiveString<'credential'>, ctx?: RevealContext) => unknown;
+    /** The audit record the operation reports. Defaults to a full reveal. */
+    auditDetails?: RevealDetails;
   }> = [
     {
       name: 'reveal()',
       execute: (s, ctx) => s.reveal(ctx),
+    },
+    {
+      name: 'mask()',
+      execute: (s, ctx) => s.mask({ showLast: 2 }, ctx),
+      auditDetails: {
+        operation: 'mask',
+        strategy: 'positional',
+        showFirst: 0,
+        showLast: 2,
+        minMasked: 8,
+        maskChar: '*',
+      },
     },
     {
       name: 'equals(string)',
@@ -165,6 +180,7 @@ describe('Policy Enforcement Security', () => {
           name: 'credential',
           redact: () => '[REDACTED:credential]',
           allowPartialQueries: true,
+          allowMask: true,
           checkRevealAllowed: (ctx) => {
             if (!ctx) {
               throw new Error('Context required for credential access');
@@ -230,6 +246,7 @@ describe('Policy Enforcement Security', () => {
           redact: () => '[REDACTED:credential]',
           requireConstantTimeEquals: true,
           allowPartialQueries: true,
+          allowMask: true,
         },
         { overwrite: true }
       );
@@ -242,6 +259,7 @@ describe('Policy Enforcement Security', () => {
           ? 2
           : 1;
       const shouldAudit = expectedAuditCount > 0;
+      const auditDetails: RevealDetails = op.auditDetails ?? { operation: 'reveal' };
 
       if (shouldAudit) {
         it(`${op.name} calls auditReveal via ALS context`, () => {
@@ -258,7 +276,7 @@ describe('Policy Enforcement Security', () => {
           });
 
           expect(auditSpy).toHaveBeenCalledTimes(expectedAuditCount);
-          expect(auditSpy).toHaveBeenCalledWith(s);
+          expect(auditSpy).toHaveBeenCalledWith(s, auditDetails);
         });
 
         it(`${op.name} calls auditReveal via explicit context`, () => {
@@ -273,7 +291,7 @@ describe('Policy Enforcement Security', () => {
           op.execute(s, ctx);
 
           expect(auditSpy).toHaveBeenCalledTimes(expectedAuditCount);
-          expect(auditSpy).toHaveBeenCalledWith(s);
+          expect(auditSpy).toHaveBeenCalledWith(s, auditDetails);
         });
 
         it(`${op.name} explicit context audit overrides ALS context audit`, () => {

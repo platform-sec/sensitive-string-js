@@ -230,6 +230,7 @@ class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   
   // Raw access
   reveal(ctx?: RevealContext): string;
+  mask(options?: MaskOptions, ctx?: RevealContext): string;
   
   // Comparison
   equals(other: string | SensitiveString, ctx?: RevealContext): boolean;
@@ -320,6 +321,114 @@ patterns are not checked for catastrophic backtracking. JavaScript regex executi
 so it cannot be interrupted safely with a timeout on the current thread; isolating it in a worker
 would require an asynchronous API and copying the raw value into another heap. Only use trusted,
 bounded-complexity patterns with these methods.
+
+### Partial Masking
+
+```typescript
+interface MaskOptions {
+  showFirst?: number;
+  showLast?: number;
+  maskChar?: string;   // exactly one character, default '*'
+  minMasked?: number;  // security floor: 4 for 'sensitive', 8 for 'credential'
+  strategy?: 'email' | 'phone' | 'card' | 'ssn' | 'uuid' | 'custom';
+  customStrategy?: (value: string) => string;
+}
+```
+
+Full redaction is safe but unhelpful when a support agent needs to confirm which email is on file,
+or an engineer needs to know which of three API keys failed. `mask()` returns a partial view as a
+plain string, for display.
+
+```typescript
+const key = new SensitiveString('sk_live_abc123xyz9', 'sensitive', 'api_key');
+key.mask({ showFirst: 2, showLast: 4 }); // 'sk************xyz9'
+key.mask();                              // '******************'
+
+new SensitiveString('jane@example.com', 'sensitive', 'email').mask({ strategy: 'email' });
+// 'j***@e******.com'
+new SensitiveString('+1-555-123-4567', 'sensitive', 'phone').mask({ strategy: 'phone' });
+// '+1-***-***-4567'
+new SensitiveString('4111111111111111', 'sensitive', 'card').mask({ strategy: 'card' });
+// '411111******1111'
+new SensitiveString('123-45-6789', 'sensitive', 'ssn').mask({ strategy: 'ssn' });
+// '***-**-6789'
+new SensitiveString('550e8400-e29b-41d4-a716-446655440000', 'sensitive', 'id').mask({
+  strategy: 'uuid',
+});
+// '550e8400-****-****-****-************'
+```
+
+Masking is a partial reveal, not a redaction. It runs `checkRevealAllowed` and `auditReveal`
+exactly as `reveal()` does, and the audit record says which it was:
+
+```typescript
+await withRevealContext({
+  name: 'support-console',
+  auditReveal: (value, details) => {
+    logger.info('accessed', { label: value.label, operation: details.operation });
+    // operation: 'reveal' for a full read, 'mask' for a partial one, with the
+    // strategy and options that produced it. The custom formatter is never
+    // included.
+  },
+}, async () => { /* ... */ });
+```
+
+Two policy controls apply. `SensitivityPolicy.allowMask` decides whether a class may be masked at
+all; it is `true` for `sensitive` and `false` for `credential`, so masking an API key requires a
+policy that opts in. `minMasked` is the floor on how many characters the result must hide: 4 for
+`sensitive` and 8 for `credential`. A caller may raise the floor but not lower it, positional
+masking clamps what it shows to satisfy it, and a rendering that cannot reach it falls back to the
+class's full redaction.
+
+```typescript
+new SensitiveString('abcdef', 'sensitive').mask({ showLast: 6 }); // '****ef', clamped
+new SensitiveString('abc', 'sensitive').mask({ showFirst: 1 });   // '[REDACTED:sensitive]'
+new SensitiveString('4111111111111', 'sensitive').mask({ strategy: 'card' });
+// '[REDACTED:sensitive]': ten of thirteen digits shown would hide only three
+
+new SensitiveString('secret', 'sensitive').mask({ minMasked: 1 });
+// RangeError: minMasked 1 is below the floor of 4 for sensitivity class 'sensitive'
+```
+
+A format strategy applied to a value that is not of that format redacts rather than degrading to a
+positional view. The strategy exists to show the parts of a known shape that are safe to show;
+against a different shape it has no idea which parts those are, and showing a fixed prefix of
+whatever the value actually is would be worse than showing nothing.
+
+```typescript
+const token = new SensitiveString('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6', 'sensitive', 'token');
+
+token.mask({ strategy: 'uuid' });  // '[REDACTED:sensitive]', not a canonical UUID
+token.mask({ strategy: 'card' });  // '[REDACTED:sensitive]', sixteen digits but not a card
+token.mask({ strategy: 'email' }); // '[REDACTED:sensitive]', no '@'
+```
+
+The `phone` and `ssn` strategies have no shape to fail: they hide every character that is not one
+of the last four digits or a separator they keep, so an unrecognized character is masked rather
+than shown.
+
+The `card` strategy shows the six-digit BIN and the last four digits, which is the PCI-DSS maximum.
+It is the only definition of card masking in this repository; a package that needs to mask a PAN
+calls it rather than writing its own. The `email` strategy masks the domain as well as the local
+part, because a full domain leaks the employer or provider, and it hides a one-character local part
+completely rather than disclosing the whole address.
+
+Counts are code points, so an astral character is never split and an emoji may be used as the mask
+character. The rendering discloses the length of the value by construction. It is a plain string
+with no protection of its own: display it, do not process it.
+
+`customStrategy` receives the raw value. It is a reveal in all but name, and the library cannot
+measure what it returns against the floor, so it runs only when the caller names it explicitly:
+
+```typescript
+pan.mask({
+  strategy: 'custom',
+  customStrategy: (value) => value.slice(0, 3) + '...' + value.slice(-3),
+});
+
+pan.mask({ strategy: 'card', customStrategy: (value) => value });
+// Error: customStrategy requires strategy: 'custom'
+```
 
 ### Template Literals
 
