@@ -233,6 +233,57 @@ describe('keyword in a headers schema', () => {
     ).toThrow(/headers schema/);
   });
 
+  test('is refused when the $ref names a schema a child plugin added', async () => {
+    const app = buildPlainApp();
+
+    await app.register(sensitivePlugin, {});
+
+    // `onRoute` fires with `this` bound to the scope the route was registered
+    // in. Resolving through the instance the plugin captured instead would miss
+    // this schema entirely, and the route would go on to serve requests with an
+    // object where Fastify expects a header string.
+    await expect(
+      app.register(async function child(instance) {
+        instance.addSchema({
+          $id: 'childHeaders',
+          type: 'object',
+          properties: {
+            'x-api-key': { type: 'string', sensitive: { klass: 'credential' } },
+          },
+        });
+
+        instance.get('/child', {
+          schema: { headers: { $ref: 'childHeaders#' } },
+          handler: async () => ({ ok: true }),
+        });
+      })
+    ).rejects.toThrow(/headers schema/);
+  });
+
+  test('allows a header literally named sensitive', async () => {
+    const app = buildPlainApp();
+
+    await app.register(sensitivePlugin, {});
+
+    // `properties` holds names, not keywords. Treating its keys as keywords
+    // would refuse this route for declaring an ordinary header.
+    app.get('/named', {
+      schema: {
+        headers: {
+          type: 'object',
+          required: ['sensitive'],
+          properties: { sensitive: { type: 'string' } },
+        },
+      },
+      handler: async (request) => ({ value: request.headers['sensitive'] }),
+    });
+
+    const response = await app.inject({ url: '/named', headers: { sensitive: 'plain' } });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ value: 'plain' });
+  });
+
   test('leaves a headers schema without the keyword alone', async () => {
     const app = buildPlainApp();
 

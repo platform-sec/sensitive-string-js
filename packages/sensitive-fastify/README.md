@@ -150,7 +150,7 @@ params schema arrives in the handler as a `SensitiveString`.
   `sensitive: { class: 'credential' }` is a route-registration failure rather than a first-request
   surprise.
 
-Two places it must not go:
+Three places it must not go:
 
 - **A headers schema.** The value it would replace lives in the raw Node headers object, which
   Fastify itself reads as strings. The plugin's `onRoute` hook refuses such a route; use the `headers`
@@ -158,6 +158,25 @@ Two places it must not go:
   as much as the check.
 - **A response schema**, where it is simply inert. `fast-json-stringify` ignores it. Use
   `responseFilter`.
+- **A union branch that can fail after the keyword has run.** Ajv applies a `modifying` keyword as it
+  walks and does not undo the write when a later keyword in the same branch fails, so a sibling branch
+  requiring `type: 'string'` then sees an object and the request is rejected with `must be string`:
+
+  ```typescript
+  // Rejects { secret: 'abc', n: 5 }, which the schema says is valid: the first
+  // branch wraps `secret`, then fails on `n`, and the second branch sees an object.
+  oneOf: [
+    { properties: { secret: { type: 'string', sensitive: { klass: 'credential' } },
+                    n: { type: 'integer', minimum: 100 } } },
+    { properties: { secret: { type: 'string' }, n: { type: 'integer' } } },
+  ]
+
+  // Fine: the branch that wraps is the branch that matches.
+  anyOf: [{ type: 'null' }, { type: 'string', sensitive: { klass: 'credential' } }]
+  ```
+
+  Where two branches could both accept a string, use the `body` field map instead, which runs after
+  validation.
 
 Under a custom validator compiler (`setValidatorCompiler`, a TypeBox or Zod type provider) the
 keyword is absent and nothing is wrapped. Those applications use the `body` option, or a schema
@@ -202,6 +221,15 @@ synchronously at route registration, so routes declared before the plugin, and r
 The cost of that choice is one property read and one cache lookup per request on a route that declares
 nothing. The merged map is cached against `request.routeOptions.config`, which is one stable object
 per route, so it is computed once per route rather than once per request.
+
+`contentTypes` decides which bodies this applies to, and defaults to
+`['application/json', 'application/x-www-form-urlencoded']`, matched against `Content-Type` with its
+parameters dropped. The gate is not cosmetic: wrapping clones the body through
+`wrapSensitiveByPath`, whose clone keeps plain objects, arrays, `Date`, and `SensitiveString` and
+flattens everything else, so a multipart body would reach the handler with its `Buffer` turned into a
+numeric-keyed object and any `Map` or `Set` turned into `{}`. The two defaults are the media types
+that cannot carry such a value. Widen it for a custom parser that produces plain data, such as a
+vendor-specific JSON media type.
 
 The field map is core's `SensitiveFieldConfig`, and the wrap is core's `wrapSensitiveByPath`, so this
 inherits that function's behaviour:
@@ -371,7 +399,9 @@ A type provider that derives this from the schema is the right end state and is 
 - **Query parameters, route parameters, and cookies through the field map.** The keyword already
   covers query and params; a `query` option is cheap once there is a use case. Cookies follow the
   headers shape once `@fastify/cookie` is in the picture.
-- **Multipart bodies.** `@fastify/multipart` with `attachFieldsToBody` produces a different shape.
+- **Multipart bodies.** `@fastify/multipart` with `attachFieldsToBody` produces a different shape, and
+  the `contentTypes` default keeps the field map away from it rather than letting the clone flatten a
+  `Buffer`.
 - **Wildcards in field paths.** They belong in core's path helpers, so `unwrapSensitiveByPath` and
   `checkSensitiveFieldsWrapped` gain them at the same time.
 - **A type provider that understands the keyword**, and a `WrappedBody<T, Fields>` helper for

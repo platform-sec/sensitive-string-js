@@ -70,13 +70,22 @@ export const SENSITIVE_KEYWORD = 'sensitive';
  * - The keyword's own schema is checked at startup by `metaSchema`, so a typo
  *   fails at route registration rather than at the first request.
  *
- * Two places it must not be used:
+ * Three places it must not be used:
  *
  * - A **headers schema**. The value it would replace lives in the raw Node
  *   headers object, which Fastify itself reads as strings. `sensitivePlugin`
  *   refuses such a route; use the plugin's `headers` option instead.
  * - A **response schema**, where it is simply inert: `fast-json-stringify`
  *   ignores it. Use the plugin's `responseFilter` option.
+ * - A **union branch that can fail after the keyword has run**. Ajv applies a
+ *   `modifying` keyword as it walks and does not undo the write when a later
+ *   keyword in the same branch fails, so a sibling branch requiring
+ *   `type: 'string'` then sees an object and the request is rejected with
+ *   `must be string`. Measured. A union whose wrapping branch is the one that
+ *   matches is fine, which covers the common nullable case:
+ *   `anyOf: [{ type: 'null' }, { type: 'string', sensitive: { klass } }]`.
+ *   Where two branches could both accept a string, wrap with the plugin's
+ *   `body` option instead, which runs after validation.
  *
  * Under a custom validator compiler (`setValidatorCompiler`, a TypeBox or Zod
  * type provider) the keyword is absent and nothing is wrapped. Those
@@ -147,42 +156,65 @@ export const sensitiveKeyword: SensitiveKeywordDefinition = {
 };
 
 /**
+ * Keywords whose value is a map of names to subschemas rather than a subschema.
+ *
+ * The keys under these are user-chosen names, so a property or a header called
+ * `sensitive` is a name and not this package's keyword. Without the distinction
+ * the headers guard refuses a route for declaring a header named `sensitive`.
+ */
+const SCHEMA_MAPS = new Set([
+  'properties',
+  'patternProperties',
+  'definitions',
+  '$defs',
+  'dependentSchemas',
+]);
+
+/**
  * Does a schema use the `sensitive` keyword anywhere inside it?
  *
  * Used to refuse a headers schema before it can corrupt the raw headers object.
- * Plain objects and arrays are walked; a `$ref` is followed through `resolve`,
- * which the caller backs with `fastify.getSchema`, and a schema already visited
- * is not visited again, so a recursive `$ref` terminates.
+ * Subschemas are walked wherever they appear, including inside arrays; a `$ref`
+ * is followed through `resolve`, which the caller backs with the route scope's
+ * `fastify.getSchema`; and a schema already visited is not visited again, so a
+ * recursive `$ref` terminates.
+ *
+ * The walk knows which keywords hold a map of names, so a property or header
+ * literally called `sensitive` is not mistaken for the keyword.
  *
  * @param schema - The schema to inspect, of any shape
  * @param resolve - Looks up a schema by `$ref`, typically `fastify.getSchema`
- * @returns True when some subschema carries a `sensitive` key
+ * @returns True when some subschema carries a `sensitive` keyword
  */
 export function schemaUsesKeyword(
   schema: unknown,
   resolve: (ref: string) => unknown = () => undefined
 ): boolean {
-  return walk(schema, resolve, new Set<unknown>(), new Set<string>());
+  return walkSchema(schema, { resolve, seen: new Set<unknown>(), refs: new Set<string>() });
 }
 
-function walk(
-  node: unknown,
-  resolve: (ref: string) => unknown,
-  seen: Set<unknown>,
-  refs: Set<string>
-): boolean {
+interface WalkState {
+  resolve: (ref: string) => unknown;
+  seen: Set<unknown>;
+  refs: Set<string>;
+}
+
+/** Walk a node that stands where a subschema is expected. */
+function walkSchema(node: unknown, state: WalkState): boolean {
   if (node === null || typeof node !== 'object') {
     return false;
   }
 
-  if (seen.has(node)) {
+  if (state.seen.has(node)) {
     return false;
   }
 
-  seen.add(node);
+  state.seen.add(node);
 
+  // `anyOf`, `allOf`, `oneOf`, `items`, and `prefixItems` all hold arrays of
+  // subschemas.
   if (Array.isArray(node)) {
-    return node.some((item) => walk(item, resolve, seen, refs));
+    return node.some((item) => walkSchema(item, state));
   }
 
   const record = node as Record<string, unknown>;
@@ -193,18 +225,35 @@ function walk(
 
   const ref = record['$ref'];
 
-  if (typeof ref === 'string' && !refs.has(ref)) {
-    refs.add(ref);
+  if (typeof ref === 'string' && !state.refs.has(ref)) {
+    state.refs.add(ref);
 
     // `fastify.getSchema` keys on the bare `$id`, so a JSON Pointer suffix is
     // dropped. A pointer into a shared schema therefore over-reports rather
     // than under-reports, which is the safe direction for a guard.
-    const resolved = resolve(ref.split('#')[0] ?? ref);
-
-    if (walk(resolved, resolve, seen, refs)) {
+    if (walkSchema(state.resolve(ref.split('#')[0] ?? ref), state)) {
       return true;
     }
   }
 
-  return Object.values(record).some((value) => walk(value, resolve, seen, refs));
+  return Object.entries(record).some(([key, value]) =>
+    SCHEMA_MAPS.has(key) ? walkSchemaMap(value, state) : walkSchema(value, state)
+  );
+}
+
+/** Walk a map of names to subschemas, where the keys are not keywords. */
+function walkSchemaMap(node: unknown, state: WalkState): boolean {
+  if (node === null || typeof node !== 'object' || Array.isArray(node)) {
+    // Not a map after all. `properties: [...]` is not valid JSON Schema, but a
+    // guard is the wrong place to decide that, so it is walked as a subschema.
+    return walkSchema(node, state);
+  }
+
+  if (state.seen.has(node)) {
+    return false;
+  }
+
+  state.seen.add(node);
+
+  return Object.values(node as Record<string, unknown>).some((value) => walkSchema(value, state));
 }

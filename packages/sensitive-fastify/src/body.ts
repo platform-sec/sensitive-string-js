@@ -2,8 +2,18 @@ import {
   checkSensitiveFieldsWrapped,
   wrapSensitiveByPath,
 } from '@platform-sec/sensitive-string-core';
-import type { FastifyContextConfig, FastifyInstance } from 'fastify';
+import type { FastifyContextConfig, FastifyInstance, FastifyRequest } from 'fastify';
 import { compilePathFields, mergeFields, type CompiledFields } from './fields.js';
+
+/**
+ * The media types a body is wrapped for unless the plugin is told otherwise.
+ *
+ * These two are what a parser produces as plain JSON-shaped data. The clone
+ * inside core's `wrapSensitiveByPath` flattens anything else a body might hold:
+ * a `Buffer` becomes a numeric-keyed object and a `Map` or `Set` becomes `{}`,
+ * so a multipart body wrapped by default would reach the handler damaged.
+ */
+export const DEFAULT_CONTENT_TYPES = ['application/json', 'application/x-www-form-urlencoded'];
 
 /**
  * Install the instance-level `preHandler` hook that applies field maps.
@@ -29,12 +39,15 @@ import { compilePathFields, mergeFields, type CompiledFields } from './fields.js
  *
  * @param fastify - The instance to hook, already scoped by fastify-plugin
  * @param scopeFields - The registration's `body` option, compiled
+ * @param contentTypes - Media types to wrap for, lower-cased and parameter-free
  */
 export function installBodyWrapping(
   fastify: FastifyInstance,
-  scopeFields: CompiledFields | undefined
+  scopeFields: CompiledFields | undefined,
+  contentTypes: readonly string[]
 ): void {
   const perRoute = new WeakMap<object, CompiledFields | null>();
+  const wrapped = new Set(contentTypes);
 
   // The callback form rather than an async one: the work is synchronous, so a
   // promise per request would buy nothing. Fastify calls a hook inside a
@@ -45,6 +58,16 @@ export function installBodyWrapping(
     // A GET, a POST with no payload, and a body that parsed to a primitive all
     // land here. None is an error and none has anything to wrap.
     if (body === null || typeof body !== 'object') {
+      done();
+      return;
+    }
+
+    // A body a custom parser produced can hold a Buffer, a Map, or a Set, none
+    // of which survives the clone. Checked before the field lookup, so a route
+    // outside the configured types pays nothing else.
+    const mediaType = mediaTypeOf(request);
+
+    if (mediaType === undefined || !wrapped.has(mediaType)) {
       done();
       return;
     }
@@ -99,4 +122,22 @@ function fieldsFor(
   cache.set(config, merged);
 
   return merged;
+}
+
+/**
+ * The request's media type: `Content-Type` with its parameters dropped.
+ *
+ * Read from the header rather than from `request.mediaType`, which arrived
+ * partway through Fastify 5 and would narrow the peer range for nothing.
+ */
+function mediaTypeOf(request: FastifyRequest): string | undefined {
+  const header = request.headers['content-type'];
+
+  if (typeof header !== 'string') {
+    return undefined;
+  }
+
+  const separator = header.indexOf(';');
+
+  return (separator === -1 ? header : header.slice(0, separator)).trim().toLowerCase();
 }

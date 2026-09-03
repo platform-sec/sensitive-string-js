@@ -942,9 +942,11 @@ fastify.post('/api/auth/login', {
 The keyword wraps a property after that property's own checks ran on the raw string, so `format` and
 `minLength` still reject as they did, and it reaches nested objects, array items, `$ref` schemas, the
 querystring, and params. Routes without a schema use the plugin's `body` field map instead, scoped by
-Fastify's own encapsulation rather than by a pattern option. Fastify 5 only. See
+Fastify's own encapsulation rather than by a pattern option, and gated to JSON and urlencoded bodies
+so a multipart `Buffer` is never flattened by the clone. Fastify 5 only. See
 [packages/sensitive-fastify/README.md](packages/sensitive-fastify/README.md) for the hook order table,
-the headers-schema rule, and the custom validator compiler limitation.
+the three schema positions the keyword must stay out of, and the custom validator compiler
+limitation.
 
 ### Lint Rules
 

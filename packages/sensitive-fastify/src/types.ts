@@ -46,6 +46,24 @@ export interface SensitivePluginOptions {
   body?: SensitiveFieldConfig;
 
   /**
+   * Media types the `body` option and route configs apply to.
+   *
+   * Defaults to `['application/json', 'application/x-www-form-urlencoded']`,
+   * matched against the request's `Content-Type` with its parameters dropped. A
+   * request of any other type is left untouched.
+   *
+   * The gate is not cosmetic. Wrapping clones the body through core's
+   * `wrapSensitiveByPath`, whose clone flattens anything that is not a plain
+   * object, array, `Date`, or `SensitiveString`: a `Buffer` from a multipart
+   * parser becomes a numeric-keyed object, and a `Map` or `Set` becomes `{}`.
+   * The two defaults are the types that cannot carry such a value.
+   *
+   * Widen it for a custom parser that produces plain data, such as a
+   * vendor-specific JSON media type.
+   */
+  contentTypes?: string[];
+
+  /**
    * Headers extracted to `request.sensitive.headers`.
    *
    * `request.headers` is not modified. Names are matched case-insensitively

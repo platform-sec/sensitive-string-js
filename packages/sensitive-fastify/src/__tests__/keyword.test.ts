@@ -236,6 +236,97 @@ describe('sensitiveKeyword', () => {
     await expect(app.ready()).rejects.toThrow(/sensitive/);
   });
 
+  test('works inside a union whose matching branch is the one that wraps', async () => {
+    const app = buildApp();
+    const seen = capture<unknown>();
+
+    app.post(
+      '/nullable',
+      {
+        schema: {
+          body: {
+            type: 'object',
+            properties: {
+              secret: {
+                anyOf: [{ type: 'null' }, { type: 'string', sensitive: { klass: 'credential' } }],
+              },
+            },
+          },
+        },
+      },
+      async (request) => {
+        seen.set(request.body);
+
+        return { ok: true };
+      }
+    );
+
+    const withValue = await app.inject({
+      method: 'POST',
+      url: '/nullable',
+      payload: { secret: CANARY },
+    });
+
+    expect(withValue.statusCode).toBe(200);
+    expect(bodyOf(seen.get())['secret']).toBeInstanceOf(SensitiveString);
+
+    const withNull = await app.inject({
+      method: 'POST',
+      url: '/nullable',
+      payload: { secret: null },
+    });
+
+    expect(withNull.statusCode).toBe(200);
+    expect(bodyOf(seen.get())['secret']).toBeNull();
+  });
+
+  test('a union branch that wraps and then fails leaves the instance behind', async () => {
+    const app = buildApp();
+
+    // The documented failure mode. Ajv applies a `modifying` keyword as it
+    // walks, and does not undo the write when a later keyword in the same
+    // branch fails: `n` is checked after `secret` has already been replaced, so
+    // the second branch sees an object where it requires a string. The request
+    // matches the schema as written and is rejected anyway.
+    app.post(
+      '/two-branches',
+      {
+        schema: {
+          body: {
+            oneOf: [
+              {
+                type: 'object',
+                required: ['n'],
+                properties: {
+                  secret: { type: 'string', sensitive: { klass: 'credential' } },
+                  n: { type: 'integer', minimum: 100 },
+                },
+              },
+              {
+                type: 'object',
+                required: ['n'],
+                properties: { secret: { type: 'string' }, n: { type: 'integer' } },
+              },
+            ],
+          },
+        },
+      },
+      async () => ({ ok: true })
+    );
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/two-branches',
+      payload: { secret: CANARY, n: 5 },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toContain('must be string');
+    // The value is still not echoed, which is what keeps this a usability
+    // failure rather than a leak.
+    expect(response.body).not.toContain(CANARY);
+  });
+
   test('is inert in a response schema', async () => {
     const app = buildApp();
 

@@ -32,7 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `redactCopy` for the serialized values and entity instances neither of Fastify's serializers
   redacts on its own. A headers schema using the keyword is refused at route registration, because
   there the keyword would replace the value in the raw Node headers object that Fastify itself reads
-  as strings. Fastify 5 only.
+  as strings, and the field map is gated to `application/json` and
+  `application/x-www-form-urlencoded` by default, widened with `contentTypes`, because the clone
+  inside `wrapSensitiveByPath` flattens a `Buffer` into a numeric-keyed object and a `Map` or `Set`
+  into `{}`. The keyword must also stay out of a union branch that can fail after it has run: Ajv
+  does not undo a `modifying` write, so a sibling branch requiring `type: 'string'` then sees an
+  object. Fastify 5 only.
 - Added `@platform-sec/sensitive-string-express`, the Express integration. `sensitiveBody()` wraps
   configured `req.body` fields through core's `wrapSensitiveByPath`, scoped by the mount path;
   `sensitiveHeaders()` puts wrapped copies on `req.sensitive.headers` and leaves `req.headers`

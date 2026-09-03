@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyPluginAsync, FastifySchema } from 'fastify';
 import fp from 'fastify-plugin';
-import { installBodyWrapping } from './body.js';
+import { DEFAULT_CONTENT_TYPES, installBodyWrapping } from './body.js';
 import { CONTEXT_HOOKS, installContextHook } from './context.js';
 import { compileNameFields, compilePathFields } from './fields.js';
 import { installHeaderExtraction, sensitiveGetter } from './headers.js';
@@ -24,6 +24,7 @@ const plugin: FastifyPluginAsync<SensitivePluginOptions> = async (fastify, optio
       ? undefined
       : compileNameFields(options.headers, 'sensitivePlugin.headers');
   const contextHook = options.contextHook ?? 'onRequest';
+  const contentTypes = compileContentTypes(options.contentTypes);
 
   if (!CONTEXT_HOOKS.includes(contextHook)) {
     throw new TypeError(
@@ -64,12 +65,40 @@ const plugin: FastifyPluginAsync<SensitivePluginOptions> = async (fastify, optio
   // Installed unconditionally: a route's own `config.sensitive.body` has to be
   // honoured by any registration whose scope contains the route, whether or not
   // that registration declared a scope-wide map.
-  installBodyWrapping(fastify, bodyFields);
+  installBodyWrapping(fastify, bodyFields, contentTypes);
 
   if (options.responseFilter === true) {
     installResponseFilter(fastify);
   }
 };
+
+/**
+ * Validate the `contentTypes` option and normalize it for comparison.
+ *
+ * Media types are compared lower-cased and without parameters, which is how
+ * `mediaTypeOf` reads them off the request.
+ */
+function compileContentTypes(configured: string[] | undefined): readonly string[] {
+  if (configured === undefined) {
+    return DEFAULT_CONTENT_TYPES;
+  }
+
+  if (!Array.isArray(configured)) {
+    throw new TypeError('sensitivePlugin.contentTypes must be an array of media types');
+  }
+
+  return configured.map((type, index) => {
+    if (typeof type !== 'string' || type.trim().length === 0) {
+      throw new TypeError(
+        `sensitivePlugin.contentTypes[${index}] must be a non-empty media type string`
+      );
+    }
+
+    const separator = type.indexOf(';');
+
+    return (separator === -1 ? type : type.slice(0, separator)).trim().toLowerCase();
+  });
+}
 
 /**
  * Refuse a route whose headers schema uses the `sensitive` keyword.
@@ -84,13 +113,15 @@ const plugin: FastifyPluginAsync<SensitivePluginOptions> = async (fastify, optio
  * rule is documented for the rest.
  */
 function refuseKeywordInHeaderSchemas(fastify: FastifyInstance): void {
-  fastify.addHook('onRoute', (route) => {
+  // A function expression, not an arrow: `this` is the scope the route was
+  // registered in, and only that scope resolves a `$ref` to a schema a child
+  // plugin added with its own `addSchema`. Measured, the instance captured here
+  // returns undefined for one, and the guard then accepted a route that served
+  // requests with an object where Fastify expects a header string.
+  fastify.addHook('onRoute', function refuseKeyword(this: FastifyInstance, route) {
     const schema: FastifySchema | undefined = route.schema;
 
-    if (
-      schema === undefined ||
-      !schemaUsesKeyword(schema.headers, (ref) => resolve(fastify, ref))
-    ) {
+    if (schema === undefined || !schemaUsesKeyword(schema.headers, resolverFor(this))) {
       return;
     }
 
@@ -102,13 +133,20 @@ function refuseKeywordInHeaderSchemas(fastify: FastifyInstance): void {
   });
 }
 
-/** `fastify.getSchema` throws for an unknown id in some versions; absent is not a use. */
-function resolve(fastify: FastifyInstance, ref: string): unknown {
-  try {
-    return fastify.getSchema(ref);
-  } catch {
-    return undefined;
-  }
+/**
+ * A `$ref` lookup bound to one scope.
+ *
+ * `fastify.getSchema` throws for an unknown id in some versions, and an absent
+ * schema is not a use of the keyword either way.
+ */
+function resolverFor(scope: FastifyInstance): (ref: string) => unknown {
+  return (ref) => {
+    try {
+      return scope.getSchema(ref);
+    } catch {
+      return undefined;
+    }
+  };
 }
 
 /**

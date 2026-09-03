@@ -434,6 +434,128 @@ describe('field map', () => {
   });
 });
 
+describe('content types', () => {
+  /** A parser standing in for multipart: plain data next to a Buffer and a Set. */
+  function withCustomParser(app: FastifyInstance): void {
+    app.addContentTypeParser(
+      'application/vnd.custom',
+      { parseAs: 'string' },
+      (_request, _body, done) => {
+        done(null, {
+          password: CANARY,
+          avatar: Buffer.from('image-bytes'),
+          tags: new Set(['a', 'b']),
+        });
+      }
+    );
+  }
+
+  test('a body outside the default types is left untouched, Buffers included', async () => {
+    const app = buildPlainApp();
+    const seen = capture<unknown>();
+
+    withCustomParser(app);
+    await app.register(sensitivePlugin, { body: { password: 'credential' } });
+    echo(app, '/custom', seen);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/custom',
+      payload: 'ignored',
+      headers: { 'content-type': 'application/vnd.custom' },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const record = bodyOf(seen.get());
+
+    // Wrapping clones through core's `wrapSensitiveByPath`, whose clone turns a
+    // Buffer into a numeric-keyed object and a Set into `{}`. Not wrapping is
+    // what keeps them intact.
+    expect(Buffer.isBuffer(record['avatar'])).toBe(true);
+    expect(record['tags']).toBeInstanceOf(Set);
+    expect(record['password']).toBe(CANARY);
+  });
+
+  test('contentTypes widens the gate to a custom parser', async () => {
+    const app = buildPlainApp();
+    const seen = capture<unknown>();
+
+    withCustomParser(app);
+    await app.register(sensitivePlugin, {
+      body: { password: 'credential' },
+      contentTypes: ['application/vnd.custom'],
+    });
+    echo(app, '/custom', seen);
+
+    await app.inject({
+      method: 'POST',
+      url: '/custom',
+      payload: 'ignored',
+      headers: { 'content-type': 'application/vnd.custom' },
+    });
+
+    expect(bodyOf(seen.get())['password']).toBeInstanceOf(SensitiveString);
+  });
+
+  test('matches ignoring parameters and case', async () => {
+    const app = buildPlainApp();
+    const seen = capture<unknown>();
+
+    await app.register(sensitivePlugin, { body: { password: 'credential' } });
+    echo(app, '/charset', seen);
+
+    await app.inject({
+      method: 'POST',
+      url: '/charset',
+      payload: `{"password":"${CANARY}"}`,
+      headers: { 'content-type': 'Application/JSON; charset=utf-8' },
+    });
+
+    expect(bodyOf(seen.get())['password']).toBeInstanceOf(SensitiveString);
+  });
+
+  test('urlencoded bodies are wrapped by default', async () => {
+    const app = buildPlainApp();
+    const seen = capture<unknown>();
+
+    // Fastify ships no urlencoded parser, so this stands in for @fastify/formbody
+    // while still arriving under the default media type.
+    app.addContentTypeParser(
+      'application/x-www-form-urlencoded',
+      { parseAs: 'string' },
+      (_request, body, done) => {
+        done(null, Object.fromEntries(new URLSearchParams(body as string)));
+      }
+    );
+
+    await app.register(sensitivePlugin, { body: { password: 'credential' } });
+    echo(app, '/form', seen);
+
+    await app.inject({
+      method: 'POST',
+      url: '/form',
+      payload: `password=${CANARY}`,
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    });
+
+    expect(bodyOf(seen.get())['password']).toBeInstanceOf(SensitiveString);
+  });
+
+  test('rejects a malformed contentTypes option at registration', async () => {
+    // One app per assertion: a failed registration leaves Fastify's boot in an
+    // error state, so a second `register` on the same instance reports the
+    // first failure again rather than its own.
+    await expect(
+      buildPlainApp().register(sensitivePlugin, { contentTypes: 'application/json' as never })
+    ).rejects.toThrow(/sensitivePlugin\.contentTypes must be an array/);
+
+    await expect(
+      buildPlainApp().register(sensitivePlugin, { contentTypes: ['application/json', ''] })
+    ).rejects.toThrow(/sensitivePlugin\.contentTypes\[1\]/);
+  });
+});
+
 describe('field map validation', () => {
   test('rejects a malformed scope map at registration', async () => {
     const app = buildPlainApp();
