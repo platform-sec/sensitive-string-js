@@ -1060,9 +1060,7 @@ describe('Security Fixes', () => {
       const s = new SensitiveString(CANARY, 'credential');
 
       // Without context - should throw
-      expect(() => s.map((v) => v.toUpperCase())).toThrow(
-        'Context required for credential access'
-      );
+      expect(() => s.map((v) => v.toUpperCase())).toThrow('Context required for credential access');
 
       // With context - should succeed
       const ctx: RevealContext = { name: 'test' };

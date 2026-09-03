@@ -157,11 +157,14 @@ describe('constant-time comparison timing analysis', () => {
     console.log('  signal / noise:', (signal / Math.max(noise, 0.01)).toFixed(2));
 
     if (noiseFraction > MAX_USABLE_NOISE) {
-      // Failing here would report a busy machine as a timing leak.
-      ctx.skip(
-        `noise floor is ${(noiseFraction * 100).toFixed(1)}% of the per-call cost, ` +
+      // Failing here would report a busy machine as a timing leak. The reason
+      // is logged rather than passed to skip(), which takes no argument in this
+      // version of the runner and would otherwise discard it silently.
+      console.log(
+        `  SKIPPED: noise floor is ${(noiseFraction * 100).toFixed(1)}% of the per-call cost, ` +
           `above the ${MAX_USABLE_NOISE * 100}% this measurement can conclude from`
       );
+      ctx.skip();
       return;
     }
 

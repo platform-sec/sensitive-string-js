@@ -25,7 +25,7 @@ const CANARY_VALUES = [
   'user@example.com',
   '555-123-4567',
   'SSN-123-45-6789',
-  'payment-4111-1111-1111-1111',  // Avoid "credit" which contains "cred"
+  'payment-4111-1111-1111-1111', // Avoid "credit" which contains "cred"
 ];
 
 const ALL_CLASSES: SensitivityClass[] = ['credential', 'sensitive'];
@@ -38,8 +38,7 @@ describe('Policy Redaction Security', () => {
   describe('default policies never leak values', () => {
     for (const klass of ALL_CLASSES) {
       for (const canary of CANARY_VALUES) {
-        const displayCanary =
-          canary.length > 20 ? `${canary.slice(0, 20)}...` : canary;
+        const displayCanary = canary.length > 20 ? `${canary.slice(0, 20)}...` : canary;
 
         it(`${klass} policy redacts "${displayCanary}"`, () => {
           const policy = getPolicy(klass);
@@ -63,8 +62,7 @@ describe('Policy Redaction Security', () => {
   describe('SensitiveString uses policy redaction correctly', () => {
     for (const klass of ALL_CLASSES) {
       for (const canary of CANARY_VALUES) {
-        const displayCanary =
-          canary.length > 20 ? `${canary.slice(0, 20)}...` : canary;
+        const displayCanary = canary.length > 20 ? `${canary.slice(0, 20)}...` : canary;
 
         it(`SensitiveString<${klass}> redacts "${displayCanary}" via toString`, () => {
           const s = new SensitiveString(canary, klass);

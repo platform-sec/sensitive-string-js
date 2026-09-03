@@ -376,7 +376,7 @@ describe('partial masking security', () => {
         name: 'mutating',
         auditReveal: (_value, details) => {
           // A sink that writes to the record must not corrupt the next one.
-          Object.assign(details as Record<string, unknown>, { operation: 'reveal' });
+          Object.assign(details as unknown as Record<string, unknown>, { operation: 'reveal' });
           records.push(details);
         },
       };
