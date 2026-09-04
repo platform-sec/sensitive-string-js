@@ -81,6 +81,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   imports only `SensitiveString`, `redactCopy`, `containsSensitive`, `sensitiveClassesIn` and
   `SensitivityClass` from core, since a scrubbing package that reveals has inverted its own purpose.
 
+### Fixed
+
+- Fixed a leak in the tracing seams found by reviewing the first cut. One `http.get` to
+  `/pay?token=SECRET&page=2` puts the token into five span attributes on `@sentry/node` 10.73.0,
+  `url.full`, `http.url`, `http.target`, `http.query` and `url.query`, and the URL key list carried
+  only the second, so the other four left the process with the token in them. The list is now the
+  measured set, and a test drives a real outbound request through the SDK's own HTTP instrumentation
+  and asserts the canary reaches no attribute, with a companion case requiring it to leak when the
+  scrubbing is removed and a pinning test naming the attributes so a rename is diagnosable rather
+  than just red. The event-shaped canary sweep could not have caught this: a span is assembled by the
+  SDK's instrumentation, not by anything an application writes, so a fixture built by hand never sees
+  what one carries.
+- `scrubUrl` now handles a relative URL. `new URL()` refuses `/pay?token=SECRET&page=2`, and handing
+  it to `URLSearchParams` yields the keys `['/pay?token', 'page']`, so nothing matched and the string
+  was kept whole. That is the shape a span's `http.target` holds. It is resolved against a base that
+  is discarded, re-emitted from the path onwards, and only when a denied parameter actually matched:
+  an arbitrary string also resolves against a base and would otherwise come back percent-encoded.
+  Nothing is rewritten purely to normalize it, so a subject with nothing denied in it comes back
+  byte-identical.
+- The failure behaviour is now per payload kind. `buildEventStub` was used for all of them, which
+  produces a span with no `span_id`, a log with no body and a transaction with no trace context.
+  `beforeSend` and `beforeBreadcrumb` keep their stubs, because losing an error or a position in a
+  timeline loses information; `beforeSendTransaction`, `beforeSendLog` and `beforeSendMetric` now
+  drop, which all three accept, because a malformed payload is worse than an absent one and losing
+  one is what sampling already does.
+- `beforeSendSpan` never answers `null`. Measured: the SDK logs "Returning null from
+  `beforeSendSpan` is disallowed" and then pushes the **original, unscrubbed span** into the
+  envelope. Both paths that would have returned one are closed, the scrub-and-stub double failure
+  with a content-emptied span stub, and a caller's own null with the scrubbed span. A caller's intent
+  to drop is not honoured, because the SDK does not offer it, but it no longer becomes a raw send.
+- Installing the package no longer disables span streaming. `spanStreamingIntegration` resets
+  `traceLifecycle` to `'static'` when it finds a `beforeSendSpan` the SDK did not mark, and this
+  package installs one unconditionally. Its hook now carries the marker, and deliberately does not
+  when the caller supplied an unmarked hook of their own, so the SDK's warning still reaches the
+  person it is aimed at.
+- `composeAfter` now catches a rejected promise from a caller's hook, not only a synchronous throw.
+  `beforeSend` may return a promise, so a rejection reached the SDK as a dropped payload, which is
+  the outcome the never-throw contract exists to prevent.
+- A caller taking a key off the denylist that a vendor package had added no longer fails at init.
+  `mergeScrubPolicy` treats it as the override it is, rather than handing the caller a
+  `ScrubPolicyError` naming a `denyKeys` list they never wrote. A caller who writes the same key into
+  both of their own lists still gets the error, which is the contradiction it is for.
+
 ### Changed
 
 - Added a `typecheck` script, `tsc --noEmit` over the whole repository including tests, and a CI step

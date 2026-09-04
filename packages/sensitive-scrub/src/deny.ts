@@ -207,31 +207,46 @@ export function isUrlPosition(key: string, path: string, urlKeys: ReadonlySet<st
  * Replace the denied query parameters of a URL, keeping everything else.
  *
  * Deleting the URL from an error event removes most of its value, and the
- * measured Sentry leak is a token in a query string on a URL whose route is
- * the useful part of the report. Two shapes arrive here: an absolute URL
- * (`request.url`) and a bare query string (`request.query_string`), and the
- * bare one is not parseable as a URL, so it is tried second.
+ * measured leak is a token in a query string on a URL whose route is the useful
+ * part of the report. Three shapes arrive here, and a vendor emits all three
+ * for one outbound request. Measured on `@sentry/node` 10.73.0, a single
+ * `http.get` produced these span attributes, every one of them carrying the
+ * token:
+ *
+ * ```
+ * url.full      "http://127.0.0.1:8080/pay?token=SECRET&page=2"   absolute
+ * http.target   "/pay?token=SECRET&page=2"                        relative
+ * http.query    "token=SECRET&page=2"                             bare query
+ * ```
+ *
+ * A relative URL is the one that used to slip through: `new URL()` refuses it,
+ * and handing `/pay?token=SECRET&page=2` to `URLSearchParams` yields the keys
+ * `['/pay?token', 'page']`, so nothing matched and the string was kept whole.
  *
  * A password in the userinfo component is replaced unconditionally. There is
  * no key name to match it by, and a URL that carries one carries a credential
  * by construction.
  *
  * @returns The rewritten string and the parameter names replaced, or `null`
- *          when the value parsed as neither shape and is left alone.
+ *          when nothing was denied, in which case the caller keeps the
+ *          original string. Nothing is rewritten just to normalize it: a
+ *          round trip through `URL` changes percent-encoding and default
+ *          ports, and an unrelated string must come back byte-identical.
  */
 export function scrubUrl(
   value: string,
   denyKeys: ReadonlySet<string>,
   censor: string
 ): { value: string; replaced: string[] } | null {
-  const absolute = tryAbsoluteUrl(value, denyKeys, censor);
-
-  if (absolute !== null) {
-    return absolute;
-  }
-
-  return tryQueryString(value, denyKeys, censor);
+  return (
+    tryAbsoluteUrl(value, denyKeys, censor) ??
+    tryRelativeUrl(value, denyKeys, censor) ??
+    tryQueryString(value, denyKeys, censor)
+  );
 }
+
+/** The base a relative URL is resolved against, and never emitted. */
+const RELATIVE_BASE = 'http://relative.invalid';
 
 function tryAbsoluteUrl(
   value: string,
@@ -253,16 +268,59 @@ function tryAbsoluteUrl(
     replaced.push('url.password');
   }
 
-  return { value: restoreCensor(url.toString(), censor), replaced };
+  return replaced.length === 0 ? null : { value: restoreCensor(url.toString(), censor), replaced };
 }
 
 /**
- * A bare query string, which is what `request.query_string` holds.
+ * A path with a query, which is what a span's `http.target` holds.
  *
- * `URLSearchParams` accepts anything, so an arbitrary string that is not a
- * query string parses as one key with an empty value. Rewriting that would
- * corrupt it, so a subject with nothing to replace is reported as untouched
- * and the original string is kept.
+ * Resolved against a base that is thrown away, and re-emitted from the path
+ * onwards so the base never reaches the payload. An arbitrary string also
+ * resolves against a base, which is why nothing is rewritten unless a denied
+ * parameter actually matched: `new URL('not a url', base)` succeeds and would
+ * otherwise come back percent-encoded.
+ *
+ * A leading slash is required, so this branch claims only what is actually a
+ * path. Without it a bare `?token=...` resolves to the path `/` and comes back
+ * as `/?token=...`, gaining a segment the caller never wrote, and that shape
+ * belongs to the query-string branch below.
+ */
+function tryRelativeUrl(
+  value: string,
+  denyKeys: ReadonlySet<string>,
+  censor: string
+): { value: string; replaced: string[] } | null {
+  if (!value.startsWith('/')) {
+    return null;
+  }
+
+  let url: URL;
+
+  try {
+    url = new URL(value, RELATIVE_BASE);
+  } catch {
+    return null;
+  }
+
+  const replaced = replaceParams(url.searchParams, denyKeys, censor);
+
+  if (replaced.length === 0) {
+    return null;
+  }
+
+  return {
+    value: restoreCensor(`${url.pathname}${url.search}${url.hash}`, censor),
+    replaced,
+  };
+}
+
+/**
+ * A bare query string, which is what `request.query_string` and a span's
+ * `http.query` hold.
+ *
+ * `URLSearchParams` accepts anything, so an arbitrary string parses as one key
+ * with an empty value. Rewriting that would corrupt it, so a subject with
+ * nothing to replace is reported as untouched and the original is kept.
  */
 function tryQueryString(
   value: string,

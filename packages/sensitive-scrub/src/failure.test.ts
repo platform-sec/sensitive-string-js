@@ -95,6 +95,16 @@ describe('guardedScrub', () => {
     expect((onScrub.mock.calls[0]?.[0] as ScrubReport).failed).toBe(true);
   });
 
+  it('drops the payload when the stub chooses to, which is how a kind opts out', () => {
+    // A payload kind whose loss carries no information says so by returning
+    // null from its stub builder.
+    const policy = resolveScrubPolicy();
+    const scrub = guardedScrub<Event>({ kind: 'span', policy, stub: () => null });
+
+    expect(scrub(unwritable()).payload).toBeNull();
+    expect(scrub(unwritable()).report.failed).toBe(true);
+  });
+
   it('drops the payload only when the stub throws as well', () => {
     const policy = resolveScrubPolicy();
     const scrub = guardedScrub<Event>({
@@ -179,6 +189,43 @@ describe('composeAfter', () => {
 
     expect(composed({ extra: {} }, undefined)).toBeNull();
     expect(user).not.toHaveBeenCalled();
+  });
+
+  // TEST-SCRUB-COMPOSE-ASYNC
+  it('sends the scrubbed payload when an async user hook rejects', async () => {
+    // `beforeSend` may return a promise, so a hook can fail by rejecting as
+    // well as by throwing. A rejection reaches the SDK as a dropped payload,
+    // which is the outcome the never-throw contract exists to prevent, and a
+    // synchronous catch does not see it.
+    const policy = resolveScrubPolicy();
+    const composed = composeAfter<Event, undefined>(
+      (event) => guardedScrub<Event>({ kind: 'event', policy, stub })(event).payload,
+      () => Promise.reject(new Error('async user hook exploded'))
+    );
+
+    await expect(composed({ extra: { token: CANARY } }, undefined)).resolves.toEqual({
+      extra: { token: '[SCRUBBED]' },
+    });
+  });
+
+  it('honours an async user hook that resolves to a payload', async () => {
+    const policy = resolveScrubPolicy();
+    const composed = composeAfter<Event, undefined>(
+      (event) => guardedScrub<Event>({ kind: 'event', policy, stub })(event).payload,
+      (event) => Promise.resolve({ ...event, message: 'added' })
+    );
+
+    await expect(composed({ extra: {} }, undefined)).resolves.toMatchObject({ message: 'added' });
+  });
+
+  it('honours an async user hook that resolves to null', async () => {
+    const policy = resolveScrubPolicy();
+    const composed = composeAfter<Event, undefined>(
+      (event) => guardedScrub<Event>({ kind: 'event', policy, stub })(event).payload,
+      () => Promise.resolve(null)
+    );
+
+    await expect(composed({ extra: {} }, undefined)).resolves.toBeNull();
   });
 
   it('passes the vendor hint through to the user hook', () => {

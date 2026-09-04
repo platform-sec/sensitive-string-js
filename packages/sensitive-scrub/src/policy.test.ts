@@ -145,6 +145,38 @@ describe('mergeScrubPolicy', () => {
     expect('onScrub' in merged).toBe(false);
   });
 
+  // TEST-SCRUB-MERGE-ALLOW
+  it('lets a caller allowKeys override a key the vendor policy denied', () => {
+    // An override, not a contradiction. Without the drop here the caller gets
+    // an init-time error naming a denyKeys list they never wrote.
+    const merged = mergeScrubPolicy(
+      { denyKeys: ['x-vendor-token'] },
+      { allowKeys: [{ key: 'x-vendor-token', reason: 'this service mints it and it is public' }] }
+    );
+
+    expect(merged.denyKeys).toEqual([]);
+    expect(() => resolveScrubPolicy(merged)).not.toThrow();
+    expect(resolveScrubPolicy(merged).denyKeys.has('x-vendor-token')).toBe(false);
+  });
+
+  it('matches that override case-insensitively', () => {
+    const merged = mergeScrubPolicy(
+      { denyKeys: ['X-Vendor-Token'] },
+      { allowKeys: [{ key: 'x-vendor-token', reason: 'public' }] }
+    );
+
+    expect(merged.denyKeys).toEqual([]);
+  });
+
+  it('still refuses a caller who denies and allows the same key themselves', () => {
+    const merged = mergeScrubPolicy(
+      {},
+      { denyKeys: ['token'], allowKeys: [{ key: 'token', reason: 'contradicts the line above' }] }
+    );
+
+    expect(() => resolveScrubPolicy(merged)).toThrow(/both denyKeys and allowKeys/);
+  });
+
   it('keeps allowKeys as the caller"s alone', () => {
     const allowance = [{ key: 'token', reason: 'request id' }];
     const merged = mergeScrubPolicy({}, { allowKeys: allowance });

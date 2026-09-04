@@ -120,10 +120,21 @@ later, and the walk does no list arithmetic per payload.
 `denyPaths` entries match a whole dotted path rather than segment by segment, and a `*` segment
 matches exactly one segment, which is how an array element is named.
 
-`urlKeys` names positions holding a URL or a bare query string. The denied query parameters are
-replaced and the route survives, because deleting a URL from an error event removes most of its
-value. A password in the userinfo component goes unconditionally: no key name names it, and a URL
-carrying one carries a credential by construction.
+`urlKeys` names positions holding a URL. Three shapes arrive, and one outbound HTTP request produces
+all three:
+
+```
+url.full      "http://127.0.0.1:8080/pay?token=SECRET&page=2"   absolute
+http.target   "/pay?token=SECRET&page=2"                        a path with a query
+http.query    "token=SECRET&page=2"                             a bare query string
+```
+
+The denied query parameters are replaced and the route survives, because deleting a URL from an error
+event removes most of its value. A password in the userinfo component goes unconditionally: no key
+name names it, and a URL carrying one carries a credential by construction.
+
+Nothing is rewritten just to normalize it. A round trip through `URL` changes percent-encoding and
+default ports, so a string with nothing denied in it comes back byte-identical.
 
 ## The report
 
@@ -178,7 +189,17 @@ smaller event.
 
 The stub is not the same as returning null. Null tells the vendor the payload was deliberately
 discarded and it is counted as a client-side drop. Losing the error entirely is the outcome this
-avoids. Only two independent failures, a scrub that throws and a stub that throws, drop a payload.
+avoids.
+
+A `StubBuilder` may still return null, and that is how a payload kind opts out. A stub is worth
+building where the loss carries information nothing else does, which is an error report and the
+position of a breadcrumb in a timeline. A span, a log line or a metric that goes missing is
+indistinguishable from one that was sampled away, and a malformed stub of those shapes is worse than
+an absent payload. The vendor package decides per kind, because only it knows which of its payloads
+the SDK will accept a null for.
+
+A user hook is caught whether it throws or rejects. `beforeSend` may return a promise, so a hook can
+fail either way, and a rejection reaches the vendor as a dropped payload just as a throw would.
 
 ## Not covered
 

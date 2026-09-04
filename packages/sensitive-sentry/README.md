@@ -106,13 +106,49 @@ report. It is what catches anything an event processor registered after `init` a
 A seventh `before*` hook in a future SDK release fails `pnpm typecheck` with the new hook's name in
 the failure, rather than opening quietly.
 
+### Spans
+
+Spans need three notes, all measured.
+
+**Their URLs are not in `request.url`.** One `http.get` to `/pay?token=SECRET&page=2` puts the token
+into five span attributes: `url.full`, `http.url`, `http.target`, `http.query` and `url.query`. All
+five are scrubbed, and a test drives a real outbound request and asserts the SDK is not using a
+sixth.
+
+**A span cannot be dropped.** Returning `null` from `beforeSendSpan` logs "Returning null from
+`beforeSendSpan` is disallowed" and then puts the **original, unscrubbed span** into the envelope. So
+this package never answers `null` there. If your own `beforeSendSpan` returns `null`, the scrubbed
+span is sent rather than the raw one: your intent to drop is not honoured, because the SDK does not
+offer it, but it does not become a raw send either. Use `ignoreSpans` to drop spans.
+
+**Span streaming keeps working.** `spanStreamingIntegration` turns `traceLifecycle` back to
+`'static'` when it finds a `beforeSendSpan` the SDK did not mark, and this package installs one
+unconditionally. Its hook is marked, so installing it does not silently disable streaming. If you
+supply your own `beforeSendSpan` without `withStreamedSpan`, the marker is deliberately not applied,
+so the SDK's own warning still reaches you.
+
+### What a failed scrub leaves behind
+
+Per payload kind, because the SDK's tolerance for a dropped payload is per kind:
+
+| Hook | On failure |
+|---|---|
+| `beforeSend` | A stub: the exception type, the grouping fields, and `sensitive.scrub_failed` |
+| `beforeBreadcrumb` | A stub, so the timeline keeps its position |
+| `beforeSendSpan` | A stub: the ids, timings, op and status; no `data` and no `description` |
+| `beforeSendTransaction`, `beforeSendLog`, `beforeSendMetric` | Dropped |
+
+The last three are dropped rather than stubbed because a stub would have to be a valid payload of its
+own shape, and a malformed one is worse than an absent one. Losing one is what sampling already does
+routinely, and the failure still reaches you through `onScrub` with `failed: true`.
+
 ## Composition rules
 
 - A hook you supply is composed, never replaced, and runs **after** the scrubber on the
   already-scrubbed payload, so a hook that adds context cannot add it behind the scrubber's back.
-- A hook of yours returning `null` still drops the payload.
-- A hook of yours that throws does not lose the event: the scrubbed payload is sent without whatever
-  the hook meant to add.
+- A hook of yours returning `null` still drops the payload, with one exception: see spans below.
+- A hook of yours that throws, or returns a promise that rejects, does not lose the event. The
+  scrubbed payload is sent without whatever the hook meant to add.
 - `withSensitiveScrubbing` is idempotent. Applying it twice returns the same object rather than
   double-wrapping the hooks or appending the integration twice.
 - The options object you pass is not modified.

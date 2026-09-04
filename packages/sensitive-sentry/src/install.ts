@@ -1,5 +1,6 @@
 import type { NodeOptions } from '@sentry/node';
 import {
+  DEFAULT_CENSOR,
   composeAfter,
   guardedScrub,
   mergeScrubPolicy,
@@ -15,7 +16,14 @@ import {
   type SentryIntegration,
 } from './integration.js';
 import { SENTRY_POLICY } from './paths.js';
-import { buildBreadcrumbStub, buildEventStub } from './stub.js';
+import {
+  SCRUB_FAILED_TAG,
+  type SentrySpan,
+  buildBreadcrumbStub,
+  buildEventStub,
+  buildSpanStub,
+  dropPayload,
+} from './stub.js';
 
 /**
  * Every `before*` option `@sentry/node` 10.73.0 declares.
@@ -43,15 +51,42 @@ export const COVERED_HOOKS = [
   'beforeBreadcrumb',
 ] as const;
 
-/** Which payload kind each hook carries, for the report. */
-const HOOK_KINDS: Record<(typeof COVERED_HOOKS)[number], PayloadKind> = {
-  beforeSend: 'event',
-  beforeSendTransaction: 'transaction',
-  beforeSendSpan: 'span',
-  beforeSendLog: 'log',
-  beforeSendMetric: 'metric',
-  beforeBreadcrumb: 'breadcrumb',
-};
+/**
+ * Which payload kind each hook carries, and what a failed scrub leaves behind.
+ *
+ * The failure behaviour is per kind because the SDK's tolerance for a dropped
+ * payload is per kind, measured on `@sentry/node` 10.73.0:
+ *
+ * | Hook | `null` accepted | Failure behaviour |
+ * |---|---|---|
+ * | `beforeSend` | yes | Stub, because losing an error is what 2.6 exists to avoid |
+ * | `beforeBreadcrumb` | yes | Stub, so the timeline keeps its position |
+ * | `beforeSendSpan` | **no** | Stub, and see below |
+ * | `beforeSendTransaction` | yes, silently | Drop |
+ * | `beforeSendLog` | yes, with an outcome recorded | Drop |
+ * | `beforeSendMetric` | yes, with an outcome recorded | Drop |
+ *
+ * A span cannot be dropped. Returning `null` logs "Returning null from
+ * `beforeSendSpan` is disallowed" and then pushes the original, unscrubbed span
+ * into the envelope, so `null` on this hook is a fail-open path and never
+ * appears here.
+ *
+ * A transaction, log or metric is dropped rather than stubbed because a stub
+ * would have to be a valid payload of that shape and a malformed one is worse
+ * than an absent one. Losing one is what sampling already does routinely, and
+ * the failure is still reported through `onScrub`.
+ */
+const HOOK_SPECS = {
+  beforeSend: { kind: 'event', stub: buildEventStub },
+  beforeSendTransaction: { kind: 'transaction', stub: dropPayload },
+  beforeSendSpan: { kind: 'span', stub: buildSpanStub },
+  beforeSendLog: { kind: 'log', stub: dropPayload },
+  beforeSendMetric: { kind: 'metric', stub: dropPayload },
+  beforeBreadcrumb: { kind: 'breadcrumb', stub: buildBreadcrumbStub },
+} as const satisfies Record<
+  (typeof COVERED_HOOKS)[number],
+  { kind: PayloadKind; stub: (payload: never, error: unknown) => unknown }
+>;
 
 /** Marks an options object this function already produced. */
 const APPLIED = Symbol.for('@platform-sec/sensitive-string-sentry.applied');
@@ -121,7 +156,7 @@ export function withSensitiveScrubbing(
     // quiet.
     beforeSend: hook(backstop(resolved), 'beforeSend', options.beforeSend, false),
     beforeSendTransaction: hook(resolved, 'beforeSendTransaction', options.beforeSendTransaction),
-    beforeSendSpan: hook(resolved, 'beforeSendSpan', options.beforeSendSpan),
+    beforeSendSpan: spanHook(resolved, options.beforeSendSpan),
     beforeSendLog: hook(resolved, 'beforeSendLog', options.beforeSendLog),
     beforeSendMetric: hook(resolved, 'beforeSendMetric', options.beforeSendMetric),
     beforeBreadcrumb: hook(resolved, 'beforeBreadcrumb', options.beforeBreadcrumb),
@@ -225,15 +260,110 @@ function hook<H extends (typeof COVERED_HOOKS)[number]>(
   user: NodeOptions[H],
   reportSuccess = true
 ): NodeOptions[H] {
-  const kind = HOOK_KINDS[name];
-  const stub = kind === 'breadcrumb' ? buildBreadcrumbStub : buildEventStub;
+  const scrub = scrubberFor(policy, name, reportSuccess);
+
+  return composeAfter(scrub, user as never) as NodeOptions[H];
+}
+
+function scrubberFor(
+  policy: ResolvedScrubPolicy,
+  name: (typeof COVERED_HOOKS)[number],
+  reportSuccess = true
+): (payload: never) => never | null {
+  const spec = HOOK_SPECS[name];
 
   const scrub = guardedScrub<never>({
-    kind,
+    kind: spec.kind,
     policy,
-    stub: stub as never,
+    stub: spec.stub as never,
     reportSuccess,
   });
 
-  return composeAfter((payload: never) => scrub(payload).payload, user as never) as NodeOptions[H];
+  return (payload: never) => scrub(payload).payload;
+}
+
+/**
+ * `beforeSendSpan`, which must never answer `null`.
+ *
+ * Two ways a composed hook would otherwise return one, and both send the
+ * caller the opposite of what they asked for. The scrubber answers `null` only
+ * when scrubbing and then stubbing both threw, and the SDK's response is to
+ * send the original span, unscrubbed. A caller's own hook answering `null`
+ * means they wanted the span dropped, and the SDK's response is the same, so
+ * their drop becomes an unscrubbed send.
+ *
+ * Neither is a decision this package can make on the SDK's behalf, but it can
+ * refuse to be the reason a raw span is emitted. In both cases the span this
+ * package produced is sent instead: content emptied on the first path, fully
+ * scrubbed on the second. The caller's intent to drop is not honoured, because
+ * `@sentry/node` 10.73.0 does not offer that on this hook, and both the SDK's
+ * own warning and this package's README say so.
+ */
+function spanHook(
+  policy: ResolvedScrubPolicy,
+  user: NodeOptions['beforeSendSpan']
+): NodeOptions['beforeSendSpan'] {
+  const scrub = scrubberFor(policy, 'beforeSendSpan');
+
+  const guarded = ((span: SentrySpan): SentrySpan => {
+    const scrubbed = scrub(span as never) ?? lastResortSpanStub();
+
+    if (user === undefined) {
+      return scrubbed;
+    }
+
+    try {
+      return user(scrubbed) ?? scrubbed;
+    } catch {
+      return scrubbed;
+    }
+  }) as NonNullable<NodeOptions['beforeSendSpan']>;
+
+  return preserveStreamingMarker(guarded, user);
+}
+
+/**
+ * Keep span streaming working for anyone who had it.
+ *
+ * `spanStreamingIntegration` sets `traceLifecycle` back to `'static'` when a
+ * `beforeSendSpan` is installed that was not marked by the SDK's
+ * `withStreamedSpan`. This package installs one unconditionally, so without
+ * this it would silently turn streaming off for every caller who opted in.
+ *
+ * The marker is applied when the caller supplied no hook of their own, where
+ * this package is the only reason one exists, and when the caller's hook
+ * already carried it. It is deliberately not applied when the caller's own
+ * hook is unmarked: the SDK's fallback and its warning are aimed at them, and
+ * suppressing that would silently run their stream-unaware callback under
+ * streaming.
+ */
+function preserveStreamingMarker(
+  wrapper: NonNullable<NodeOptions['beforeSendSpan']>,
+  user: NodeOptions['beforeSendSpan']
+): NodeOptions['beforeSendSpan'] {
+  if (user !== undefined && user._streamed !== true) {
+    return wrapper;
+  }
+
+  // Non-enumerable, matching how the SDK's own `withStreamedSpan` sets it.
+  Object.defineProperty(wrapper, '_streamed', { value: true });
+
+  return wrapper;
+}
+
+/**
+ * The span sent when even the stub builder threw.
+ *
+ * `buildSpanStub` reads every field through a guard, so reaching this means
+ * something well outside the payload went wrong. It still cannot answer
+ * `null`, and it must not touch the span it failed on, so it names nothing.
+ */
+function lastResortSpanStub(): SentrySpan {
+  return {
+    span_id: '',
+    trace_id: '',
+    start_timestamp: 0,
+    description: DEFAULT_CENSOR,
+    data: { [SCRUB_FAILED_TAG]: true },
+  };
 }

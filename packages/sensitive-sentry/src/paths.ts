@@ -25,21 +25,43 @@ import type { ScrubPolicy } from '@platform-sec/sensitive-string-scrub';
  */
 
 /**
- * Positions holding a URL or a query string.
+ * Positions holding a URL, a path with a query, or a bare query string.
  *
  * Deleting a URL from an error event removes most of its value, so these are
  * rewritten rather than censored: the denied query parameters are replaced and
  * the route survives.
  *
- * `url` and `http.url` are terminal key names rather than paths, because a
- * breadcrumb's URL lives at `breadcrumbs[n].data.url` and a span attribute is
- * one key that happens to contain a dot.
+ * Most of these are span attribute names rather than event paths, and they are
+ * measured rather than guessed. One `http.get` to
+ * `/pay?token=SECRET&page=2` on `@sentry/node` 10.73.0 put the token into five
+ * attributes across the client and server spans:
+ *
+ * ```
+ * url.full      "http://127.0.0.1:8080/pay?token=SECRET&page=2"
+ * http.url      "http://127.0.0.1:8080/pay?token=SECRET&page=2"
+ * http.target   "/pay?token=SECRET&page=2"
+ * http.query    "token=SECRET&page=2"
+ * url.query     "token=SECRET&page=2"
+ * ```
+ *
+ * An earlier version of this list carried `http.url` alone, so the other four
+ * left the process with the token in them. They are one key each, not paths of
+ * two segments, which is why the matcher accepts a terminal key name as well
+ * as a whole dotted path. `url` covers a breadcrumb's `data.url`.
  */
 export const SENTRY_URL_KEYS: readonly string[] = [
+  // Event paths.
   'request.url',
   'request.query_string',
+  // Breadcrumb data.
   'url',
+  // Span attributes, OpenTelemetry semantic conventions and Sentry's own.
+  'url.full',
+  'url.query',
+  'url.path',
   'http.url',
+  'http.target',
+  'http.query',
   'http.request.url',
 ];
 

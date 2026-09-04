@@ -52,6 +52,7 @@ export {
   MARKER_TAG,
   SCRUB_FAILED_TAG,
 } from './stub.js';
+export type { SentrySpan } from './stub.js';
 
 // Re-exported so a caller configures the policy without a second install.
 export type { ScrubPolicy, ScrubReport, PayloadKind } from '@platform-sec/sensitive-string-scrub';

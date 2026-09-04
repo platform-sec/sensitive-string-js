@@ -172,17 +172,48 @@ describe('scrubUrl', () => {
     expect(result?.value).not.toContain(CANARY);
   });
 
-  it('leaves a string alone when it is neither a URL nor a query string with a denied name', () => {
-    // `URLSearchParams` accepts anything, so an arbitrary string parses as one
-    // empty-valued key. Rewriting that would corrupt it.
-    expect(scrubUrl('not a url at all', policy.denyKeys, '[S]')).toBeNull();
-    expect(scrubUrl('', policy.denyKeys, '[S]')).toBeNull();
+  // TEST-SCRUB-URL-RELATIVE
+  it('scrubs a relative path with a query, which is what a span http.target holds', () => {
+    // The shape that used to slip through. `new URL()` refuses it, and handing
+    // it straight to URLSearchParams yields the keys ['/pay/42?token', 'page'],
+    // so nothing matched and the whole string was kept.
+    const result = scrubUrl(`/pay/42?token=${CANARY}&page=2`, policy.denyKeys, '[SCRUBBED]');
+
+    expect(result).not.toBeNull();
+    expect(result?.value).not.toContain(CANARY);
+    expect(result?.value.startsWith('/pay/42?')).toBe(true);
+    expect(result?.value).toContain('page=2');
+    expect(result?.replaced).toEqual(['token']);
   });
 
-  it('leaves a URL with no denied parameter otherwise intact', () => {
-    const result = scrubUrl('https://api.example.com/pay?page=2', policy.denyKeys, '[S]');
+  it('keeps a fragment on a relative path', () => {
+    const result = scrubUrl(`/pay?token=${CANARY}#receipt`, policy.denyKeys, '[SCRUBBED]');
 
-    expect(result?.replaced).toEqual([]);
-    expect(result?.value).toContain('page=2');
+    expect(result?.value).toContain('#receipt');
+    expect(result?.value).not.toContain(CANARY);
+  });
+
+  it('never emits the base it resolved a relative path against', () => {
+    const result = scrubUrl(`/pay?token=${CANARY}`, policy.denyKeys, '[SCRUBBED]');
+
+    expect(result?.value).not.toContain('relative.invalid');
+    expect(result?.value).not.toContain('http');
+  });
+
+  it('leaves a string alone when nothing in it was denied', () => {
+    // Nothing is rewritten just to normalize it. A round trip through `URL`
+    // changes percent-encoding and default ports, so an unrelated string has
+    // to come back byte-identical, and returning null is how that is said.
+    expect(scrubUrl('not a url at all', policy.denyKeys, '[S]')).toBeNull();
+    expect(scrubUrl('', policy.denyKeys, '[S]')).toBeNull();
+    expect(scrubUrl('about:blank', policy.denyKeys, '[S]')).toBeNull();
+    expect(scrubUrl('https://api.example.com/pay?page=2', policy.denyKeys, '[S]')).toBeNull();
+    expect(scrubUrl('/pay/42?page=2', policy.denyKeys, '[S]')).toBeNull();
+  });
+
+  it('does not rewrite an arbitrary string that happens to resolve against a base', () => {
+    // `new URL('not a url at all', base)` succeeds and percent-encodes the
+    // spaces. Returning it would corrupt a value nobody asked to touch.
+    expect(scrubUrl('some free text here', policy.denyKeys, '[S]')).toBeNull();
   });
 });

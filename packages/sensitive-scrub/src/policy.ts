@@ -85,8 +85,19 @@ export function resolveScrubPolicy(policy: ScrubPolicy = {}): ResolvedScrubPolic
  * alone, since a vendor package has no business handing back a default.
  */
 export function mergeScrubPolicy(vendor: ScrubPolicy, caller: ScrubPolicy = {}): ScrubPolicy {
+  // A caller allowing a key the vendor package denied is an override, not a
+  // contradiction, so the vendor's entry is dropped here rather than colliding
+  // in `resolveScrubPolicy`. Without this, a caller writing a perfectly
+  // sensible `allowKeys` line gets an init-time error naming a list they never
+  // wrote. The conflict check still fires on a caller who writes the same key
+  // into both of their own lists, which is the case it is for.
+  const allowed = new Set((caller.allowKeys ?? []).map((entry) => lower(entry.key)));
+
   const merged: ScrubPolicy = {
-    denyKeys: [...(vendor.denyKeys ?? []), ...(caller.denyKeys ?? [])],
+    denyKeys: [
+      ...(vendor.denyKeys ?? []).filter((key) => !allowed.has(lower(key))),
+      ...(caller.denyKeys ?? []),
+    ],
     denyPaths: [...(vendor.denyPaths ?? []), ...(caller.denyPaths ?? [])],
     urlKeys: [...(vendor.urlKeys ?? []), ...(caller.urlKeys ?? [])],
     censor: caller.censor ?? vendor.censor ?? DEFAULT_CENSOR,

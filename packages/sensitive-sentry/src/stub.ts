@@ -1,9 +1,19 @@
-import type { Breadcrumb, Event } from '@sentry/node';
+import type { Breadcrumb, Event, NodeOptions } from '@sentry/node';
 import {
   DEFAULT_CENSOR,
   type ResolvedScrubPolicy,
   type ScrubReport,
 } from '@platform-sec/sensitive-string-scrub';
+
+/**
+ * The span shape, read off the hook that receives one.
+ *
+ * `@sentry/node` re-exports its event types but not `SpanJSON`, which lives in
+ * `@sentry/core`. Deriving it from `beforeSendSpan` keeps `@sentry/core` out of
+ * this package's dependencies and ties the type to the callback that has to
+ * accept it.
+ */
+export type SentrySpan = Parameters<NonNullable<NodeOptions['beforeSendSpan']>>[0];
 
 /** The tag saying a scrub failed and the payload was replaced. */
 export const SCRUB_FAILED_TAG = 'sensitive.scrub_failed';
@@ -64,12 +74,92 @@ export function buildBreadcrumbStub(breadcrumb: Breadcrumb): Breadcrumb {
   return stub;
 }
 
+/**
+ * Copy the named fields that are present, treating a refusal as absence.
+ *
+ * Guarded because a stub is built on the path where reading the payload has
+ * already thrown once. A stub builder that throws in turn drops the payload
+ * outright, which for a span means the SDK sends the unscrubbed original.
+ */
 function copyDefined<T extends object>(from: T, to: T, keys: readonly (keyof T)[]): void {
   for (const key of keys) {
-    if (from[key] !== undefined) {
-      to[key] = from[key];
+    try {
+      if (from[key] !== undefined) {
+        to[key] = from[key];
+      }
+    } catch {
+      // Absent, as far as the stub is concerned.
     }
   }
+}
+
+/**
+ * The replacement span sent when scrubbing a span throws.
+ *
+ * A span is the one payload kind that cannot be dropped. Measured on
+ * `@sentry/node` 10.73.0: returning `null` from `beforeSendSpan` logs
+ * "Returning null from `beforeSendSpan` is disallowed" and then pushes the
+ * **original, unscrubbed span** into the envelope (`client.js`, the
+ * `if (!processedSpan)` branch). So the failure path here must return a span,
+ * and returning the one it was given would send exactly what it could not
+ * scrub.
+ *
+ * What survives is the span's place in the trace: its ids, its timings, its op
+ * and status. What goes is everything that holds application data: `data`,
+ * which is where the URL attributes and every other span attribute live,
+ * `description`, which for an HTTP span is a URL, and `measurements`.
+ */
+export function buildSpanStub(span: SentrySpan): SentrySpan {
+  // `span_id`, `trace_id` and `start_timestamp` are required by the shape, and
+  // a span missing any of them is not a span the SDK can place in a trace. Read
+  // guarded and defaulted, because this runs after a read of this payload has
+  // already thrown once.
+  const stub: SentrySpan = {
+    span_id: read(span, 'span_id') ?? '',
+    trace_id: read(span, 'trace_id') ?? '',
+    start_timestamp: read(span, 'start_timestamp') ?? 0,
+    data: { [SCRUB_FAILED_TAG]: true },
+    description: DEFAULT_CENSOR,
+  };
+
+  copyDefined(span, stub, [
+    'parent_span_id',
+    'timestamp',
+    'op',
+    'status',
+    'origin',
+    'is_segment',
+    'segment_id',
+    'exclusive_time',
+  ]);
+
+  return stub;
+}
+
+function read<T extends object, K extends keyof T>(from: T, key: K): T[K] | undefined {
+  try {
+    return from[key];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The failure behaviour for a payload kind whose loss carries no information.
+ *
+ * A transaction, a log line or a metric that goes missing is indistinguishable
+ * from one that was sampled away, and all three accept `null` as a drop:
+ * measured, `beforeSendTransaction` drops silently, `beforeSendLog` and
+ * `beforeSendMetric` each record an outcome and say so. A stub for these would
+ * have to be a valid payload of its own shape, and a malformed one is worse
+ * than an absent one: a log with no body, a metric with no name, a transaction
+ * with no trace context.
+ *
+ * The failure is still reported through `onScrub` with `failed: true`, which is
+ * how an operator learns the scrubber is broken on one shape.
+ */
+export function dropPayload(): null {
+  return null;
 }
 
 /**

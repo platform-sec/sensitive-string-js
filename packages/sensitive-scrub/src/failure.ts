@@ -22,8 +22,18 @@ import type { PayloadKind, ResolvedScrubPolicy, ScrubReport } from './types.js';
  * drop. Losing the error entirely is the outcome this file exists to avoid.
  */
 
-/** How a vendor package builds its minimal replacement payload. */
-export type StubBuilder<P> = (payload: P, error: unknown) => P;
+/**
+ * How a vendor package builds its minimal replacement payload.
+ *
+ * Returning `null` drops the payload, which is the right answer for a kind
+ * whose loss carries no information: a span, a log line or a metric that goes
+ * missing is indistinguishable from one that was sampled away. A stub is worth
+ * building where the loss does carry information, which is an error report and
+ * the position of a breadcrumb in a timeline. The vendor package decides per
+ * kind, because only it knows which of its payloads the SDK will even accept a
+ * `null` for.
+ */
+export type StubBuilder<P> = (payload: P, error: unknown) => P | null;
 
 export interface GuardedScrubOptions<P> {
   readonly kind: PayloadKind;
@@ -148,9 +158,30 @@ export function composeAfter<P, R>(
     }
 
     try {
-      return user(scrubbed, hint) ?? null;
+      const result = user(scrubbed, hint);
+
+      // `beforeSend` may return a promise, so a hook can also fail by
+      // rejecting. A rejection reaches the SDK as a dropped payload, which is
+      // the outcome the try/catch above exists to prevent, and a synchronous
+      // catch does not see it.
+      if (isThenable<P>(result)) {
+        return Promise.resolve(result).then(
+          (resolved) => resolved ?? null,
+          () => scrubbed
+        );
+      }
+
+      return result ?? null;
     } catch {
       return scrubbed;
     }
   };
+}
+
+function isThenable<P>(value: unknown): value is PromiseLike<P | null | undefined> {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    typeof (value as PromiseLike<unknown>).then === 'function'
+  );
 }

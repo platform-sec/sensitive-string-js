@@ -985,10 +985,17 @@ integration. Structural redaction goes through `redactCopy` rather than `redactI
 an event legitimately holds the same object at two paths and the log-line walk turns the second one
 into `'[Circular]'`.
 
-No hook throws. On an internal failure the payload becomes a stub carrying the exception type and a
-`sensitive.scrub_failed` tag, because a `beforeSend` that throws makes Sentry drop the real error and
-send one about the scrubber instead. A seventh `before*` hook in a future SDK release fails
-`pnpm typecheck` rather than opening quietly. See
+No hook throws, and none returns something the SDK will mishandle. On an internal failure an event
+becomes a stub carrying the exception type and a `sensitive.scrub_failed` tag, because a `beforeSend`
+that throws makes Sentry drop the real error and send one about the scrubber instead; a transaction,
+log or metric is dropped instead, because a malformed payload of those shapes is worse than an absent
+one. A span is neither: returning `null` from `beforeSendSpan` is disallowed and makes the SDK emit
+the original unscrubbed span, so that seam always answers with a span it has scrubbed.
+
+Spans are also where the URLs live. One `http.get` puts a query token into `url.full`, `http.url`,
+`http.target`, `http.query` and `url.query`, and all five are covered, with a test that drives a real
+outbound request rather than a hand-built fixture. A seventh `before*` hook in a future SDK release
+fails `pnpm typecheck` rather than opening quietly. See
 [packages/sensitive-sentry/README.md](packages/sensitive-sentry/README.md) for the hook map, the
 `recommendedDataCollection` object, and the gap around processors registered after `init`, and
 [packages/sensitive-scrub/README.md](packages/sensitive-scrub/README.md) for the denylist and the
