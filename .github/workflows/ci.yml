@@ -18,7 +18,7 @@ jobs:
       security-events: write
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@v2
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           disable-sudo: true
           egress-policy: audit
@@ -29,7 +29,7 @@ jobs:
           persist-credentials: false
 
       - name: Run actionlint
-        uses: raven-actions/actionlint@v2
+        uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
         with:
           fail-on-error: true
 
@@ -41,7 +41,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run zizmor
-        run: zizmor --format sarif . > zizmor-results.sarif || true
+        run: zizmor --format sarif . > zizmor-results.sarif
 
       - name: Upload zizmor SARIF
         uses: github/codeql-action/upload-sarif@v3
@@ -59,7 +59,7 @@ jobs:
       contents: read
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@v2
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           disable-sudo: true
           egress-policy: audit
@@ -70,7 +70,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
         with:
           version: 9.0.0
 
@@ -102,7 +102,7 @@ jobs:
       contents: read
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@v2
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           disable-sudo: true
           egress-policy: audit
@@ -113,7 +113,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
         with:
           version: 9.0.0
 
@@ -150,7 +150,7 @@ jobs:
         node-version: ['22', '24']
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@v2
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           disable-sudo: true
           egress-policy: audit
@@ -161,7 +161,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
         with:
           version: 9.0.0
 
@@ -207,7 +207,7 @@ jobs:
             image: openbao/openbao:latest
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@v2
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           disable-sudo: true
           egress-policy: audit
@@ -218,7 +218,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
         with:
           version: 9.0.0
 
@@ -287,7 +287,7 @@ jobs:
         provider: [k8s, sops, aws]
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@v2
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           disable-sudo: true
           egress-policy: audit
@@ -298,7 +298,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
         with:
           version: 9.0.0
 
@@ -440,7 +440,7 @@ jobs:
       contents: read
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@v2
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           disable-sudo: true
           egress-policy: audit
@@ -451,7 +451,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
         with:
           version: 9.0.0
 
@@ -471,7 +471,7 @@ jobs:
         run: pnpm test:coverage
 
       - name: Upload coverage reports
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         continue-on-error: true
         if: always()
         with:
@@ -486,7 +486,7 @@ jobs:
       security-events: write
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@v2
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
@@ -496,7 +496,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
         with:
           version: 9.0.0
 
@@ -550,7 +550,7 @@ jobs:
 
           # Look for suspicious patterns (typosquatting, etc.)
           echo "Scanning for suspicious package names..."
-          jq -r '.. | .dependencies? | select(.) | keys[]' deps.json 2>/dev/null | sort -u | while read pkg; do
+          jq -r '.. | .dependencies? | select(.) | keys[]' deps.json 2>/dev/null | sort -u | while IFS= read -r pkg; do
             # Flag packages with suspicious patterns
             if echo "$pkg" | grep -qE '(^[0-9]+$|script|exec|eval)'; then
               echo "⚠️  Suspicious package name detected: $pkg"
@@ -581,7 +581,7 @@ jobs:
       hashes: ${{ steps.hash.outputs.hashes }}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@v2
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           disable-sudo: true
           egress-policy: audit
@@ -592,7 +592,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
         with:
           version: 9.0.0
 
@@ -625,7 +625,7 @@ jobs:
         run: |
           cd dist-tarballs
           # Generate SHA256 hashes in base64 for SLSA provenance
-          echo "hashes=$(sha256sum *.tgz | base64 -w0)" >> "$GITHUB_OUTPUT"
+          echo "hashes=$(sha256sum -- *.tgz | base64 -w0)" >> "$GITHUB_OUTPUT"
 
       - name: Upload package artifacts
         uses: actions/upload-artifact@v4
@@ -646,7 +646,7 @@ jobs:
       id-token: write  # Required for keyless signing via OIDC
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@v2
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           disable-sudo: true
           egress-policy: audit
@@ -658,7 +658,7 @@ jobs:
           path: dist-tarballs
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
 
       - name: Sign packages with cosign (keyless)
         run: |
@@ -700,16 +700,18 @@ jobs:
 
       - name: Generate signing summary
         run: |
-          echo "## Cosign Signing Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Package | Signature | Certificate |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|-----------|-------------|" >> $GITHUB_STEP_SUMMARY
           cd dist-tarballs
-          for tarball in *.tgz; do
-            sig_hash=$(sha256sum "${tarball}.sig" | cut -d' ' -f1 | head -c 12)
-            cert_hash=$(sha256sum "${tarball}.pem" | cut -d' ' -f1 | head -c 12)
-            echo "| $tarball | ${sig_hash}... | ${cert_hash}... |" >> $GITHUB_STEP_SUMMARY
-          done
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Signing method:** Sigstore keyless (OIDC)" >> $GITHUB_STEP_SUMMARY
-          echo "**Transparency log:** Rekor" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Cosign Signing Summary"
+            echo ""
+            echo "| Package | Signature | Certificate |"
+            echo "|---------|-----------|-------------|"
+            for tarball in *.tgz; do
+              sig_hash=$(sha256sum "${tarball}.sig" | cut -d' ' -f1 | head -c 12)
+              cert_hash=$(sha256sum "${tarball}.pem" | cut -d' ' -f1 | head -c 12)
+              echo "| $tarball | ${sig_hash}... | ${cert_hash}... |"
+            done
+            echo ""
+            echo "**Signing method:** Sigstore keyless (OIDC)"
+            echo "**Transparency log:** Rekor"
+          } >> "$GITHUB_STEP_SUMMARY"

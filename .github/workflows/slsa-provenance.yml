@@ -27,7 +27,7 @@ jobs:
       contents: read
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@v2
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           disable-sudo: true
           egress-policy: audit
@@ -38,7 +38,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
         with:
           version: 9.0.0
 
@@ -46,7 +46,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'pnpm'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -71,13 +70,14 @@ jobs:
         run: |
           cd dist-tarballs
           # Generate SHA256 hashes in base64 for SLSA provenance
-          HASHES=$(sha256sum *.tgz | base64 -w0)
-          echo "hashes=$HASHES" >> "$GITHUB_OUTPUT"
-
-          # Also output individual hashes for verification
-          echo "artifacts-sha256<<EOF" >> "$GITHUB_OUTPUT"
-          sha256sum *.tgz >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          HASHES=$(sha256sum -- *.tgz | base64 -w0)
+          {
+            echo "hashes=$HASHES"
+            # Also output individual hashes for verification
+            echo "artifacts-sha256<<EOF"
+            sha256sum -- *.tgz
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -113,7 +113,7 @@ jobs:
       contents: read
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@v2
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           disable-sudo: true
           egress-policy: audit
@@ -131,9 +131,12 @@ jobs:
           path: provenance
 
       - name: Install slsa-verifier
-        uses: slsa-framework/slsa-verifier/actions/installer@v2.6.0
+        uses: slsa-framework/slsa-verifier/actions/installer@3714a2a4684014deb874a0e737dffa0ee02dd647 # v2.6.0
 
       - name: Verify provenance
+        env:
+          SOURCE_BRANCH: ${{ github.ref_name }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
         run: |
           echo "=== Verifying SLSA Provenance ==="
           cd dist-tarballs
@@ -141,29 +144,36 @@ jobs:
             echo "Verifying $tarball..."
             slsa-verifier verify-artifact \
               --provenance-path ../provenance/multiple.intoto.jsonl \
-              --source-uri "github.com/${{ github.repository }}" \
-              --source-branch "${{ github.ref_name }}" \
+              --source-uri "github.com/$SOURCE_REPOSITORY" \
+              --source-branch "$SOURCE_BRANCH" \
               "$tarball"
             echo "✓ $tarball provenance verified"
           done
 
       - name: Generate provenance summary
+        env:
+          ARTIFACT_HASHES: ${{ needs.build.outputs.artifacts-sha256 }}
+          COMMIT_SHA: ${{ github.sha }}
+          REF_NAME: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          echo "## SLSA Provenance Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**SLSA Level:** 3" >> $GITHUB_STEP_SUMMARY
-          echo "**Builder:** slsa-framework/slsa-github-generator" >> $GITHUB_STEP_SUMMARY
-          echo "**Repository:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Branch/Tag:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Artifact Hashes (SHA256)" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "${{ needs.build.outputs.artifacts-sha256 }}" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Verification" >> $GITHUB_STEP_SUMMARY
-          echo "All artifacts verified against SLSA provenance ✓" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## SLSA Provenance Summary"
+            echo ""
+            echo "**SLSA Level:** 3"
+            echo "**Builder:** slsa-framework/slsa-github-generator"
+            printf '**Repository:** %s\n' "$REPOSITORY"
+            printf '**Commit:** %s\n' "$COMMIT_SHA"
+            printf '**Branch/Tag:** %s\n' "$REF_NAME"
+            echo ""
+            echo "### Artifact Hashes (SHA256)"
+            echo '```'
+            printf '%s\n' "$ARTIFACT_HASHES"
+            echo '```'
+            echo ""
+            echo "### Verification"
+            echo "All artifacts verified against SLSA provenance ✓"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Attest build artifacts using GitHub's native attestation
   attest:
@@ -188,15 +198,19 @@ jobs:
           subject-path: 'dist-tarballs/*.tgz'
 
       - name: Generate attestation summary
+        env:
+          REPOSITORY: ${{ github.repository }}
         run: |
-          echo "## GitHub Attestation Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Build provenance attestations generated for all packages." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Attestations can be verified with:**" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo 'gh attestation verify <artifact> --repo ${{ github.repository }}' >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## GitHub Attestation Summary"
+            echo ""
+            echo "Build provenance attestations generated for all packages."
+            echo ""
+            echo "**Attestations can be verified with:**"
+            echo '```bash'
+            printf 'gh attestation verify <artifact> --repo %s\n' "$REPOSITORY"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Upload provenance and artifacts to release
   release-upload:
@@ -222,26 +236,30 @@ jobs:
       - name: Generate checksums
         run: |
           cd dist-tarballs
-          sha256sum *.tgz > SHA256SUMS.txt
-          sha512sum *.tgz > SHA512SUMS.txt
+          sha256sum -- *.tgz > SHA256SUMS.txt
+          sha512sum -- *.tgz > SHA512SUMS.txt
 
       - name: Upload to release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           # Upload tarballs, provenance, and checksums to the release
-          gh release upload ${{ github.ref_name }} \
+          gh release upload "$RELEASE_TAG" \
             dist-tarballs/*.tgz \
             dist-tarballs/SHA256SUMS.txt \
             dist-tarballs/SHA512SUMS.txt \
             provenance/multiple.intoto.jsonl \
             --clobber \
-            --repo ${{ github.repository }}
+            --repo "$REPOSITORY"
 
-          echo "## Release Assets Uploaded" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "The following files have been attached to the release:" >> $GITHUB_STEP_SUMMARY
-          echo "- npm package tarballs (*.tgz)" >> $GITHUB_STEP_SUMMARY
-          echo "- SHA256SUMS.txt" >> $GITHUB_STEP_SUMMARY
-          echo "- SHA512SUMS.txt" >> $GITHUB_STEP_SUMMARY
-          echo "- SLSA provenance (multiple.intoto.jsonl)" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Release Assets Uploaded"
+            echo ""
+            echo "The following files have been attached to the release:"
+            echo "- npm package tarballs (*.tgz)"
+            echo "- SHA256SUMS.txt"
+            echo "- SHA512SUMS.txt"
+            echo "- SLSA provenance (multiple.intoto.jsonl)"
+          } >> "$GITHUB_STEP_SUMMARY"

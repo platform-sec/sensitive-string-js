@@ -13,19 +13,24 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 jobs:
   generate-sbom:
     name: Generate Software Bill of Materials
     runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
         with:
           version: 9.0.0
 
@@ -33,7 +38,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'pnpm'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -84,17 +88,18 @@ jobs:
 
       - name: Generate dependency tree
         run: |
-          echo "=== Full Dependency Tree ===" > dependency-tree.txt
-          pnpm list --depth=Infinity >> dependency-tree.txt
-
-          echo -e "\n\n=== Production Dependencies Only ===" >> dependency-tree.txt
-          pnpm list --prod --depth=Infinity >> dependency-tree.txt
+          {
+            echo "=== Full Dependency Tree ==="
+            pnpm list --depth=Infinity
+            printf '\n\n=== Production Dependencies Only ===\n'
+            pnpm list --prod --depth=Infinity
+          } > dependency-tree.txt
 
       - name: Calculate checksums
         run: |
           echo "Calculating SBOM checksums..."
-          sha256sum sbom-*.json sbom-*.xml > sbom-checksums.txt
-          sha512sum sbom-*.json sbom-*.xml >> sbom-checksums.txt
+          sha256sum -- sbom-*.json sbom-*.xml > sbom-checksums.txt
+          sha512sum -- sbom-*.json sbom-*.xml >> sbom-checksums.txt
 
       - name: Upload SBOM artifacts
         uses: actions/upload-artifact@v4
@@ -120,9 +125,10 @@ jobs:
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           # Attach SBOMs to the release
-          gh release upload ${{ github.ref_name }} \
+          gh release upload "$RELEASE_TAG" \
             sbom-*.json \
             sbom-*.xml \
             sbom-checksums.txt \
@@ -132,6 +138,8 @@ jobs:
     name: Verify SBOM Quality
     needs: generate-sbom
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Download SBOM
         uses: actions/download-artifact@v4
