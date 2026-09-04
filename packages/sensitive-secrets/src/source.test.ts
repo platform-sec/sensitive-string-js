@@ -526,3 +526,36 @@ describe('a value the provider already wrapped', () => {
     expect(record.fields.get('token')?.label).toBe('provider-label');
   });
 });
+
+describe('fields on getAll versus fields on getJson', () => {
+  it('classifies a key that is absent, rather than failing the load', async () => {
+    // `getAll` discovers a key set. A spec written once for a store is meant to
+    // be reused across payloads that legitimately omit part of it: the
+    // Kubernetes service-account-token spec classifies `service-ca.crt`, which
+    // only some clusters mount, and a pull secret spec classifies the expanded
+    // and the unexpanded shape at once.
+    const source = FakeSecretSource.of({
+      partial: { payload: { kind: 'map', value: { token: CANARY } } },
+    });
+
+    const record = await source.getAll('partial', {
+      fields: { token: 'credential', 'service-ca.crt': 'plain', namespace: 'plain' },
+      fallback: 'credential',
+    });
+
+    expect(record.fields.get('token')?.klass).toBe('credential');
+    expect(record.keys).toEqual(['token']);
+  });
+
+  it('still fails on getJson, where the caller declared the key set', async () => {
+    // The typed result is the difference. A declared field that is absent would
+    // arrive as an `undefined` typed as a `SensitiveString`.
+    const source = FakeSecretSource.of({
+      partial: { payload: { kind: 'map', value: { token: CANARY } } },
+    });
+
+    await expect(
+      source.getJson('partial', { fields: { token: 'credential', missing: 'credential' } })
+    ).rejects.toThrow(/has no field 'missing'/);
+  });
+});

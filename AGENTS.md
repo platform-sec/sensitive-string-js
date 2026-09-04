@@ -50,6 +50,28 @@ This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under 
   SDK, because the API surface it needs is a handful of endpoints over `fetch`. Its unit suite runs
   against a fake transport; `src/__tests__/live.test.ts` skips itself unless `VAULT_ADDR` and
   `VAULT_TOKEN` are set, and the `vault-compat` CI job runs it against Vault and OpenBao containers.
+- `packages/sensitive-aws-secrets/src/`, `packages/sensitive-azure-keyvault/src/`,
+  `packages/sensitive-gcp-secrets/src/` and `packages/sensitive-oci-vault/src/` contain the four
+  cloud secrets manager sources. Each is an `index.ts`, a `source.ts` and a wire-shape module, which
+  is the point of the shared layer. All four take core and `sensitive-secrets` as peers. Only
+  `aws-secrets` imports its vendor SDK at run time, because AWS v3 dispatches through command
+  objects that have to be constructed; the other three declare theirs as a types-only peer, so their
+  built output contains no vendor import and their fixtures are still typed as the SDK's own
+  response types.
+- `packages/sensitive-k8s/src/` contains the Kubernetes source: the API read path, the built-in
+  classification specs per Secret type, the unconditional annotation strip, the bound service
+  account token decode, and `K8sMountedSource` over the shared file watcher. Its unit suite runs
+  against typed fixtures; `src/__tests__/live.test.ts` skips itself unless `K8S_KUBECONFIG` is set,
+  and the `secrets-live` CI job runs it against a k3s container.
+- `packages/sensitive-sops/src/` contains the SOPS source: the subprocess boundary, the age key that
+  reaches the child's environment and never the parent's, classification derived from the `ENC[`
+  markers in the ciphertext, and `decryptAge` behind its own `./age` entry point. Its unit suite
+  runs against `src/__tests__/fake-sops.mjs`, a stand-in binary; `src/__tests__/live.test.ts` skips
+  itself unless the real `sops` is on `PATH` or named by `SOPS_BINARY`.
+- `packages/sensitive-doppler/src/` and `packages/sensitive-infisical/src/` contain the two
+  REST-only secret sources. Neither has a vendor SDK or any third-party runtime dependency: one
+  endpoint over `fetch` each, with the transport interface exported. Neither has a live tier, and
+  both READMEs say so.
 - `packages/sensitive-eslint-plugin/src/` contains the ESLint rules, their presets, and the
   parser-agnostic AST helpers they share. It has no runtime dependencies, not even on the core
   package: the rules read syntax, never types. Each rule's user-facing documentation is in
@@ -74,6 +96,13 @@ Use pnpm 9; the preinstall hook rejects other package managers.
   runs against `dist` rather than source: build before running one of those, or a change to the
   dependency is invisible to the tests that exercise it. Colocated tests that import by relative
   path are unaffected.
+- A provider package's unit suite runs against fixtures and never a live service. Three of them have
+  a second tier under `src/__tests__/live.test.ts`, each self-skipping on an environment variable:
+  `sensitive-vault` (`VAULT_ADDR`), `sensitive-k8s` (`K8S_KUBECONFIG`), `sensitive-sops`
+  (`SOPS_BINARY` or `sops` on `PATH`) and `sensitive-aws-secrets` (`AWS_SECRETS_ENDPOINT`, an
+  emulator). A fixture written from a design document tests the document rather than the provider,
+  which is how four defects in this row reached a passing unit suite; the live tiers are what catch
+  that class, so run them before trusting a wire-shape change.
 - `pnpm build` is also what type-checks a package's own emit. Vitest transforms TypeScript with
   esbuild, which strips types without checking them, so a type error can pass the suite and fail the
   build.

@@ -283,14 +283,17 @@ export abstract class BaseSecretSource implements SecretSource {
       shapeKey('all', [options.fields, options.rules, options.fallback, label, options.ttl])
     );
 
-    const loaded = await this.#bulk(
-      normalized,
-      key,
-      label,
-      options.ttl,
-      allSpec(options),
-      Object.keys(options.fields ?? {})
-    );
+    // No declared fields, whatever `options.fields` names.
+    //
+    // `getAll` discovers a key set; `getJson` is the surface where the caller
+    // knows it, and requiring presence belongs there. `fields` here is a
+    // classification of the keys that do turn up, so a spec written once for a
+    // store must not fail on the payloads that legitimately omit part of it.
+    // The Kubernetes type specs are the case that proves it: the
+    // service-account-token spec classifies `service-ca.crt`, which only some
+    // clusters mount, and a spec that classifies a pull secret both expanded
+    // and unexpanded names keys of which exactly one shape is present.
+    const loaded = await this.#bulk(normalized, key, label, options.ttl, allSpec(options), []);
 
     return {
       ref: loaded.ref,

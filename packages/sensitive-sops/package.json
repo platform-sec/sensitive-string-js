@@ -1,0 +1,62 @@
+{
+  "name": "@platform-sec/sensitive-string-sops",
+  "version": "0.1.0",
+  "description": "SOPS secret source - classification derived from the ciphertext, the age key kept out of the parent environment, plus in-process age decryption",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./age": {
+      "types": "./dist/age.d.ts",
+      "default": "./dist/age.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "security",
+    "sensitive-data",
+    "sops",
+    "age",
+    "encryption",
+    "typescript"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "peerDependencies": {
+    "@platform-sec/sensitive-string-core": "^0.1.0",
+    "@platform-sec/sensitive-string-secrets": "^0.1.0",
+    "age-encryption": "^0.3.0",
+    "yaml": "^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "age-encryption": {
+      "optional": true
+    },
+    "yaml": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@platform-sec/sensitive-string-core": "workspace:*",
+    "@platform-sec/sensitive-string-secrets": "workspace:*",
+    "@platform-sec/sensitive-string-testing": "workspace:*",
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11",
+    "age-encryption": "^0.3.1",
+    "yaml": "^2.9.0"
+  }
+}

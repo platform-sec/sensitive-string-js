@@ -109,6 +109,14 @@ db.extra.fields;      // keys the payload carried that `fields` did not declare
 Classification is `fields`, then `rules` in order, then `fallback`. Patterns run on key names, never
 on values.
 
+`fields` means different things on the two calls, and the difference is deliberate. On `getJson` a
+declared field is one the payload must have, because the result is typed and a missing one would
+arrive as an `undefined` typed as a `SensitiveString`. On `getAll` it is a classification of the
+keys that turn up: a spec written once for a store has to survive the payloads that legitimately
+omit part of it. The Kubernetes type specs are the case that proves it, since the
+service-account-token spec names a key only some clusters mount and the pull secret spec names both
+the expanded and the unexpanded shape, of which exactly one is ever present.
+
 Nested payloads are addressed by dot path (`db.password`), and so is a flat key that happens to
 contain a dot (`tls.key`, `.dockerconfigjson`). Wrapping happens at the leaf rather than by parsing
 the path, so a Kubernetes-shaped payload is handled without the caller escaping anything. A payload
@@ -283,6 +291,15 @@ class MySecretSource extends BaseSecretSource {
 
 Everything else is here. The division is one test: if implementing it requires knowing the provider's
 wire shape, it belongs in the provider package.
+
+**Take the vendor SDK as a types-only peer where you can.** Five of the six SDK-backed providers in
+this row inject a client and call ordinary methods on it, so nothing imports a value from the SDK:
+the built output carries no vendor import, an application pays nothing for the dependency being
+installed, and the fixtures are still typed as the vendor's own response types, which is what makes
+a field the package reads have to exist on the real response. The exception is AWS, whose v3 client
+dispatches through command objects that have to be constructed. A hand-written structural interface
+would avoid the dependency too and would let a fixture drift from the API, which is the thing the
+types are there to prevent.
 
 Provider suites import the sweep harness from `@platform-sec/sensitive-string-secrets/testing`, which
 drives every entry point with a canary and asserts it appears in no message, no stack, no

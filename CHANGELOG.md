@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the eight remaining secrets manager providers, which completes the row:
+  `@platform-sec/sensitive-string-aws-secrets`, `-azure-keyvault`, `-gcp-secrets`, `-oci-vault`,
+  `-k8s`, `-sops`, `-doppler` and `-infisical`. Every one of them is an `index.ts`, a `source.ts` and
+  a wire-shape module over the shared layer, which is what the shared layer was for.
+- Only the AWS package imports its vendor SDK at run time, because AWS v3 dispatches through command
+  objects that have to be constructed. Azure, GCP, OCI and Kubernetes declare theirs as a types-only
+  peer: the client is injected and the calls are ordinary methods, so the built output contains no
+  vendor import while the fixtures are still typed as the SDK's own response types, which is what
+  makes a field the package reads have to exist on the real response. Doppler and Infisical have no
+  SDK and no third-party runtime dependency at all: one endpoint over `fetch` each.
+- Three of the new packages have a second test tier that runs against a real server, each
+  self-skipping on an environment variable and wired into CI as an informational matrix job:
+  Kubernetes against k3s, SOPS against the real binary, and AWS against a Secrets Manager emulator.
+  The rule this row now works to is that a fixture written from a design document tests the document,
+  and the live tiers are what enforce it. They earned themselves immediately, twice.
+- Measured on Kubernetes v1.34.1: `kubectl apply` of a Secret written with `stringData` puts the
+  secret into the `last-applied-configuration` annotation **unencoded**, where the Secret's own
+  `data` is at least base64. The design that preceded the package said the annotation holds `data`;
+  applying with `stringData` is the common way people write a Secret by hand, and that is the worse
+  case. The annotation strip was already unconditional and whole-map, which is what made this a
+  documentation correction rather than a fix.
+- Measured on sops 3.13.3: an absent document produces `cannot operate on non-existent file` and
+  exit code 100. The package had been matching on `no such file or directory`, which is what its own
+  stand-in binary printed and not what sops says, so `getOptional` threw for every absent document
+  instead of returning null. The absence check is now the filesystem's rather than the binary's
+  message, and the stand-in binary prints what the real one prints.
+- Measured on sops 3.13.3, which settles the open question behind `includeStderr` defaulting to true:
+  on the wrong-identity, tampered-ciphertext and not-a-SOPS-document paths, stderr carries no
+  plaintext. It does carry the recipients' public age keys and the local paths sops probed for
+  identities, which on a developer machine includes a home directory, and that is now in the README
+  as the reason a deployment might still turn it off.
+- Measured on `@aws-sdk/client-secrets-manager` 3.1126.0: the SDK's own logger does redact
+  `SecretString`, rendering it as `***SensitiveInformation***`. It logs the ARN, which carries the
+  account id, on the same line, and it says nothing about the application's own logging or about a
+  response object that reaches an error tracker. The claim in the design is now measured rather than
+  assumed.
+- `getAll` no longer requires the keys named in its `fields` to be present. `getAll` discovers a key
+  set and `getJson` is the surface where the caller knows it, so requiring presence belongs to the
+  second. The Kubernetes type specs are what surfaced it: the service-account-token spec classifies
+  `service-ca.crt`, which only some clusters mount, and the pull secret spec classifies both the
+  expanded and the unexpanded shape, of which exactly one is ever present. Both would have failed
+  every load.
+
 - Fixed four defects in the secrets manager packages before release, two of them security-relevant.
   None was findable by the unit suite as it stood, and the two that mattered most came from test data
   written out of a design document rather than out of a real provider.
