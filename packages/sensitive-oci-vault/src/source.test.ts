@@ -152,3 +152,20 @@ describe('an unrecognized content type', () => {
     await expect(source(client()).get('plaintext-key')).rejects.toThrow(SecretPayloadError);
   });
 });
+
+describe('a ref that carries an endpoint', () => {
+  it('is refused, because the resolved path reaches every error and load event', async () => {
+    // The label rule already strips a host from the label. This is the half it
+    // does not reach: `ResolvedSecretRef.path` is what a SecretPayloadError
+    // quotes and what a load event carries to the audit sink.
+    await expect(
+      source(client()).get('https://vault.internal:8200/prod-stripe-key')
+    ).rejects.toThrow(/not a URL/);
+  });
+
+  it('leaves a bare name alone', async () => {
+    const record = await source(client()).get('prod-stripe-key');
+
+    expect(record.ref.path).toBe('prod-stripe-key');
+  });
+});

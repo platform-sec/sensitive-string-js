@@ -84,6 +84,10 @@ const CASES: readonly SweepCase[] = [
     run: () => source(client()).get(SECRET_OCID, { label: 'prod-stripe-key' }),
   },
   {
+    name: 'a URL pasted into the path',
+    run: () => source(client()).get('https://vault.internal:8200/prod-stripe-key'),
+  },
+  {
     name: 'a read by name with no vault configured',
     run: () => source(client(), { vaultId: undefined }).get('prod-stripe-key'),
   },

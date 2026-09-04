@@ -156,6 +156,22 @@ export class SopsSecretSource extends BaseSecretSource {
       );
     }
 
+    // A timeout first, because it looks exactly like a signal death: exit code
+    // `null` and empty stderr, since the child never got to write anything.
+    // Reporting it as an ordinary decrypt failure would send an operator to
+    // look at their key, and `includeStderr` would hand them nothing to look
+    // at. A large document, a hardware token that is waiting for a touch, and a
+    // KMS endpoint that is not answering all arrive here.
+    if (result.timedOut) {
+      throw new SopsError(
+        `Decrypting '${resolved.path}' did not finish within ${String(this.#timeoutMs)}ms and ` +
+          `the process was killed. Raise timeoutMs, or check whether the key backend is ` +
+          `reachable.`,
+        resolved.path,
+        undefined
+      );
+    }
+
     if (result.code !== 0) {
       // An absent file is an absence rather than a failure, and the check is
       // the filesystem's rather than the binary's message. sops 3.13.3 says

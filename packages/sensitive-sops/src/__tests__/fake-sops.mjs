@@ -40,6 +40,13 @@ if (args.includes('--version')) {
   process.exit(0);
 }
 
+// Hangs on a decrypt while still answering `--version`, which is what a large
+// document, a hardware token waiting for a touch, or an unreachable KMS
+// endpoint looks like from the outside.
+if (process.env.FAKE_SOPS_HANG === '1') {
+  setTimeout(() => undefined, 60_000);
+}
+
 if (process.env.FAKE_SOPS_VERSION_FAILS === '1') {
   process.stderr.write('fake sops: version check refused\n');
   process.exit(3);

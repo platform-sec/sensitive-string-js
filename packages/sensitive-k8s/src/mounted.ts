@@ -191,7 +191,7 @@ export class K8sMountedSource extends BaseSecretSource {
       return undefined;
     }
 
-    const expiresAt = jwtExpiry(token.trim(), ref);
+    const expiresAt = jwtExpiry(token, ref);
 
     return expiresAt === undefined ? undefined : { expiresAt };
   }

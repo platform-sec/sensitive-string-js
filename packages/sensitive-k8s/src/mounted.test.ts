@@ -70,7 +70,21 @@ function kubeletMount(
   }
 }
 
-async function until(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
+/**
+ * Wait for a condition, so a filesystem event does not need a fixed sleep.
+ *
+ * The budget bounds "eventually" and is not the thing under test: the assertion
+ * is that a change causes a re-read, not that it happens within a particular
+ * number of milliseconds. It is deliberately loose, because a wall clock
+ * verdict depends on how busy the machine is, which is the same reason this
+ * repository keeps its timing suite out of `pnpm test`.
+ *
+ * It stays under the suite's own 10 second test timeout on purpose. A budget
+ * above that never fires, and the failure a reader sees becomes vitest's
+ * "timed out in 10000ms" rather than this function's message, which says which
+ * condition was being waited on.
+ */
+async function until(predicate: () => boolean, timeoutMs = 8_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
   while (!predicate()) {

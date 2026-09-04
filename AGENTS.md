@@ -107,7 +107,14 @@ Use pnpm 9; the preinstall hook rejects other package managers.
   esbuild, which strips types without checking them, so a type error can pass the suite and fail the
   build.
 - `pnpm test:coverage` writes V8 text, JSON, and HTML coverage reports.
-- `pnpm lint` runs type-aware ESLint; `pnpm lint:fix` applies safe fixes.
+- `pnpm lint` runs type-aware ESLint; `pnpm lint:fix` applies safe fixes. Both set a 6 GB Node heap,
+  because they need it: type-aware linting follows imports into the vendor type declarations, and the
+  secrets manager providers pull in the AWS SDK, the Kubernetes client and the generated GCP
+  protobuf definitions, the last of which is enormous. Without the larger heap the run is OOM-killed
+  partway through on a 10 GB machine, and a killed lint looks like a passing one to any wrapper that
+  reads the exit code of a pipeline rather than of ESLint itself. Expect several minutes. Reducing
+  that cost, by scoping the typed rules so a package's lint program does not include every vendor
+  graph, is worth doing and has not been done.
 - `pnpm format` formats package TypeScript sources with Prettier.
 - `pnpm check:packaging` loads every built package by its own name through both `require` and
   `import`, and checks that each path a manifest names exists and survives packing. Run it after

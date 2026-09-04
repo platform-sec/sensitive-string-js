@@ -102,6 +102,11 @@ are never classified at all.
 The nested JSON goes through the shared decode guard, so a malformed pull secret produces an error
 naming the Secret rather than a `SyntaxError` quoting part of it.
 
+Expansion lifts the pull secret's own top-level keys into the Secret's key space, so a Secret that
+carries a key of the same name would have one of the two silently replaced. That is refused rather
+than resolved, for the reason the Infisical source refuses a duplicated key: whichever one won,
+an application would be reading a value from somewhere its classification never described.
+
 ### Bound service account tokens
 
 ```typescript

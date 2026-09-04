@@ -18,6 +18,16 @@ export interface SpawnResult {
   readonly code: number | null;
   readonly stdout: string;
   readonly stderr: string;
+  /**
+   * Whether the child was killed for running past `timeoutMs`.
+   *
+   * Without it a timeout is indistinguishable from any other signal death: the
+   * exit code is `null` and stderr is empty, because the process never got to
+   * write anything. A caller that reported that as an ordinary decrypt failure
+   * would tell an operator to check their key while the actual problem was that
+   * the decrypt did not finish.
+   */
+  readonly timedOut: boolean;
 }
 
 /** A `sops` invocation that failed. */
@@ -104,8 +114,10 @@ export function run(options: RunOptions): Promise<SpawnResult> {
     let stdout = '';
     let stderr = '';
     let settled = false;
+    let timedOut = false;
 
     const timer = setTimeout(() => {
+      timedOut = true;
       child.kill('SIGKILL');
     }, options.timeoutMs);
     timer.unref?.();
@@ -136,7 +148,7 @@ export function run(options: RunOptions): Promise<SpawnResult> {
 
       settled = true;
       clearTimeout(timer);
-      resolve({ code, stdout, stderr });
+      resolve({ code, stdout, stderr, timedOut });
     });
   });
 }
@@ -172,6 +184,14 @@ export async function checkVersion(binary: string, timeoutMs: number): Promise<s
     throw new SopsError(
       `The '${binary}' binary could not be run. This package shells out to sops rather than ` +
         `reimplementing it, so the binary has to be installed and on PATH.`,
+      binary,
+      undefined
+    );
+  }
+
+  if (result.timedOut) {
+    throw new SopsError(
+      `'${binary} --version' did not finish within ${String(timeoutMs)}ms.`,
       binary,
       undefined
     );

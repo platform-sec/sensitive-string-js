@@ -134,6 +134,37 @@ describe('run', () => {
     expect(result.stderr).toContain('identity did not match any of the recipients');
   });
 
+  it('reports a child killed for running long as a timeout, not as an exit code', async () => {
+    // Without the flag this is indistinguishable from any other signal death:
+    // exit code null and empty stderr, because the child never got to write
+    // anything.
+    const result = await run({
+      binary: '/bin/sh',
+      args: ['-c', 'sleep 5'],
+      context: decryptContext(),
+      timeoutMs: 100,
+    });
+
+    expect(result.timedOut).toBe(true);
+    expect(result.code).toBeNull();
+    expect(result.stderr).toBe('');
+  });
+
+  it('does not call an ordinary failure a timeout', async () => {
+    const scratchDir = dir();
+    const path = encryptedYaml(scratchDir);
+
+    const result = await run({
+      binary: FAKE_SOPS,
+      args: decryptArgs(path),
+      context: decryptContext(),
+      timeoutMs: 5_000,
+      env: { FAKE_SOPS_FAIL: '1' },
+    });
+
+    expect(result.timedOut).toBe(false);
+  });
+
   it('rejects when the binary is not there', async () => {
     await expect(
       run({

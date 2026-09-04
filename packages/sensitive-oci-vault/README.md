@@ -81,6 +81,14 @@ The OCID is not discarded: it goes on `ResolvedSecretRef.metadata` as `secretId`
 load hook and never reaches redacted output. The resolved `ref.path` for an OCID read is a
 placeholder for the same reason, so an error message does not carry the tenancy.
 
+### A ref is a name, not a URL
+
+A ref that carries a scheme and authority is refused at the read. The label rule already strips a
+host from the label, and this is the half the label rule does not reach: `ResolvedSecretRef.path` is
+what every error this package throws quotes, and what every load event carries to the audit sink, so
+a host and port in a ref is a host and port in an error tracker. The endpoint belongs on the client.
+The Vault package refuses the same shape for the same reason.
+
 ### Base64, and the decode that would not fail
 
 The bundle's content is base64 and `Buffer.from(value, 'base64')` is lenient: it skips characters

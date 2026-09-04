@@ -34,7 +34,21 @@ function dir(): string {
   return made;
 }
 
-async function until(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
+/**
+ * Wait for a condition, so a filesystem event does not need a fixed sleep.
+ *
+ * The budget bounds "eventually" and is not the thing under test: the assertion
+ * is that a change causes a re-read, not that it happens within a particular
+ * number of milliseconds. It is deliberately loose, because a wall clock
+ * verdict depends on how busy the machine is, which is the same reason this
+ * repository keeps its timing suite out of `pnpm test`.
+ *
+ * It stays under the suite's own 10 second test timeout on purpose. A budget
+ * above that never fires, and the failure a reader sees becomes vitest's
+ * "timed out in 10000ms" rather than this function's message, which says which
+ * condition was being waited on.
+ */
+async function until(predicate: () => boolean, timeoutMs = 8_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
   while (!predicate()) {
@@ -148,6 +162,19 @@ describe('failures', () => {
 
     expect(failure).toBeInstanceOf(SecretPayloadError);
     expect((failure as { cause?: unknown }).cause).toBeUndefined();
+  });
+
+  it('reports a decrypt that ran too long as a timeout rather than a key problem', async () => {
+    // The failure mode this distinguishes: exit code null and empty stderr, so
+    // an operator told to check their key has nothing to check.
+    const path = encryptedYaml(dir());
+    const failure = await source({ timeoutMs: 300, env: { FAKE_SOPS_HANG: '1' } })
+      .getAll(path, { fallback: 'credential' })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(SopsError);
+    expect((failure as Error).message).toMatch(/did not finish within 300ms/);
+    expect((failure as Error).message).not.toMatch(/exit code/);
   });
 
   it('fails where it can be read when the binary is missing', async () => {

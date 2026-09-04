@@ -42,8 +42,11 @@ function fromBase64Url(segment: string): string {
  *   being loud about: a field named `token` that is not a token means the
  *   Secret is not the shape the caller thinks it is.
  */
-export function jwtExpiry(token: string, ref: ResolvedSecretRef): Date | undefined {
-  const segments = token.split('.');
+export function jwtExpiry(raw: string, ref: ResolvedSecretRef): Date | undefined {
+  // Trimmed here rather than at each call site. A token written into a Secret
+  // with `--from-file` carries the file's trailing newline, and which of the
+  // two sources happened to remember to trim is not a property worth having.
+  const segments = raw.trim().split('.');
 
   if (segments.length !== 3) {
     throw new SecretPayloadError(

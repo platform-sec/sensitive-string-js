@@ -28,6 +28,29 @@ export function isStage(value: string): value is Stage {
   return (STAGES as readonly string[]).includes(value.toUpperCase());
 }
 
+/** A scheme and authority at the head of a ref, which a secret name never has. */
+const IS_URL = /^[a-z][a-z0-9+.-]*:\/\//i;
+
+/**
+ * Refuse a ref that carries an endpoint.
+ *
+ * `ResolvedSecretRef.path` reaches every error this package throws and every
+ * load event it emits, so a host and port in a ref is a host and port in an
+ * error tracker. The label rule already strips one, and this is the half the
+ * label rule does not reach. The Vault package refuses the same shape for the
+ * same reason.
+ */
+export function assertLogicalName(path: string): void {
+  if (IS_URL.test(path)) {
+    throw new TypeError(
+      `An OCI ref path is the secret's name within the vault, such as ` +
+        `'prod-stripe-key', not a URL. The endpoint belongs on the client, and putting it ` +
+        `here would put a hostname into every error and every load event that names this ` +
+        `secret.`
+    );
+  }
+}
+
 /** An OCID, which encodes the realm, the region and the tenancy. */
 const OCID = /^ocid\d*\.[a-z]/i;
 

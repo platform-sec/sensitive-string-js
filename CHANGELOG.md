@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fixed four defects found reviewing the eight new secrets manager providers. Three of them were
+  silent, and none was reachable by reading the code: each was found by running a probe that asked
+  what the package actually does rather than what it looks like it does.
+- A SOPS decrypt killed for running past its timeout was reported as an ordinary decrypt failure,
+  which told the operator the wrong thing to check and handed them nothing to check it with. The two
+  are indistinguishable from the outside: a killed child exits with code `null` and an empty stderr,
+  because it never got to write anything, so the message said "failed with exit code null" and then
+  "a decrypt failure is almost always a key or configuration problem". A timeout is now its own
+  failure, named as one, with the budget in the message. The Vault transport already made this
+  distinction, which is what made its absence here worth looking for.
+- Expanding a Kubernetes pull secret lifted its top-level keys into the Secret's key space without
+  checking for a collision, so a Secret carrying a key of the same name had it silently replaced.
+  Expansion now refuses rather than choosing, which is what the Infisical source already did for a
+  duplicated key: whichever one won, an application would be reading a value from somewhere its
+  classification never described.
+- An OCI ref that carried a scheme and authority put the host and port into
+  `ResolvedSecretRef.path`, which is what every error quotes and what every load event carries to
+  the audit sink. The label was correctly reduced to the secret name and the resolved path was not,
+  so the label rule was doing its job and the field beside it was undoing it. Such a ref is now
+  refused, matching the Vault package, which refuses the same shape for the same reason. OCI was the
+  only one of the nine providers whose resolved path was not already reduced.
+- `pnpm lint` and `pnpm lint:fix` set a 6 GB Node heap, because they need it. Type-aware linting
+  follows imports into the vendor type declarations, and the new providers pull in the AWS SDK, the
+  Kubernetes client and the generated GCP protobuf definitions, so on a 10 GB machine the run was
+  OOM-killed partway through. That is worth recording rather than only fixing: a killed lint reports
+  `Killed` on stdout, and a wrapper reading the exit code of a pipeline rather than of ESLint itself
+  sees success. This one did, and reported a passing lint that had not finished.
+- `jwtExpiry` trims its input, so a Kubernetes token written into a Secret with `--from-file` carries
+  the file's trailing newline harmlessly. The mounted source trimmed and the API source did not, and
+  which of the two remembered is not a property worth having.
+
 - Added the eight remaining secrets manager providers, which completes the row:
   `@platform-sec/sensitive-string-aws-secrets`, `-azure-keyvault`, `-gcp-secrets`, `-oci-vault`,
   `-k8s`, `-sops`, `-doppler` and `-infisical`. Every one of them is an `index.ts`, a `source.ts` and

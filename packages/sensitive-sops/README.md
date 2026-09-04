@@ -141,6 +141,21 @@ That assumption is now measured rather than asserted. See the table below, inclu
 is not about plaintext: stderr also names the recipients' public keys and the local paths sops
 probed for identities, which on a developer machine includes a home directory.
 
+### Timeouts
+
+```typescript
+new SopsSecretSource({ ageKey, timeoutMs: 30_000 });   // the default
+```
+
+A decrypt that runs past the budget has its child killed, and that is reported
+as its own failure rather than as a decrypt failure. The distinction matters
+because the two are indistinguishable from the outside: a killed child exits
+with code `null` and an empty stderr, since it never got to write anything, so
+an operator told that the decrypt failed and that it is "almost always a key or
+configuration problem" would have nothing to look at and the wrong place to
+look. A large document, a hardware token waiting for a touch, and a KMS
+endpoint that is not answering all arrive here.
+
 ### No write path
 
 Writing a SOPS document means re-encrypting it for every recipient in the `sops` block, which is the

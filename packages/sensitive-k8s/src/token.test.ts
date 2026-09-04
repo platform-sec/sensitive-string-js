@@ -64,3 +64,11 @@ describe('jwtExpiry', () => {
     expect(jwtExpiry(jwt({ exp: 'soon' }), REF)).toBeUndefined();
   });
 });
+
+describe('whitespace around a token', () => {
+  it('is trimmed, so a token written from a file still parses', () => {
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+
+    expect(jwtExpiry(`${jwt({ exp })}\n`, REF)).toEqual(new Date(exp * 1000));
+  });
+});

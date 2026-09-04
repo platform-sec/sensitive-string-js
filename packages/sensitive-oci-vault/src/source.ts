@@ -5,7 +5,14 @@ import type {
   SecretSourceOptions,
 } from '@platform-sec/sensitive-string-secrets';
 
-import { isOcid, ociLifetime, ociPayload, ociResolvedRef, versionFields } from './wire.js';
+import {
+  assertLogicalName,
+  isOcid,
+  ociLifetime,
+  ociPayload,
+  ociResolvedRef,
+  versionFields,
+} from './wire.js';
 import type { SecretBundle } from './wire.js';
 
 /**
@@ -120,6 +127,10 @@ export class OciSecretSource extends BaseSecretSource {
 
   protected async fetchSecret(ref: SecretRef): Promise<ProviderResult | null> {
     const byOcid = isOcid(ref.path);
+
+    if (!byOcid) {
+      assertLogicalName(ref.path);
+    }
 
     if (!byOcid && (this.#vaultId === undefined || this.#vaultId === '')) {
       throw new TypeError(

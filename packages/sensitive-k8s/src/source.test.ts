@@ -223,3 +223,25 @@ describe('the constructor', () => {
     expect(() => source({} as unknown as FakeCoreApi)).toThrow(/readNamespacedSecret\(\)/);
   });
 });
+
+describe('a pull secret whose expansion would collide', () => {
+  it('refuses rather than silently replacing the Secret own key', async () => {
+    const fake = FakeCoreApi.of({
+      colliding: {
+        type: 'kubernetes.io/dockerconfigjson',
+        data: {
+          '.dockerconfigjson': JSON.stringify({ auths: { registry: { auth: CANARY } } }),
+          auths: 'a key the Secret also carries',
+        },
+      },
+    });
+
+    const failure = await source(fake, { expandDockerConfigJson: true })
+      .getAll('colliding', { fallback: 'credential' })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(SecretPayloadError);
+    expect((failure as Error).message).toContain("key 'auths'");
+    expect((failure as Error).message).not.toContain(CANARY);
+  });
+});

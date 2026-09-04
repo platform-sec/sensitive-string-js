@@ -239,7 +239,26 @@ export function expandDockerConfig(
     }
 
     delete expanded[key];
-    Object.assign(expanded, parsePayload(raw, ref));
+
+    for (const [field, value] of Object.entries(parsePayload(raw, ref))) {
+      // A collision is refused rather than resolved. Expansion lifts the pull
+      // secret's own top-level keys into the Secret's key space, and a Secret
+      // that happens to carry a key of the same name would have it silently
+      // replaced, which is the same failure the Infisical source refuses for a
+      // duplicated key: an application reads a value from somewhere its
+      // classification never described.
+      if (field in expanded) {
+        throw new SecretPayloadError(
+          `Secret '${ref.path}' version '${ref.version}' has a key '${field}' that the ` +
+            `expansion of '${key}' would replace. Expanding it would silently drop one of ` +
+            `the two, so this refuses rather than choosing.`,
+          ref.path,
+          ref.version
+        );
+      }
+
+      expanded[field] = value;
+    }
   }
 
   return expanded;

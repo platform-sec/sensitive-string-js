@@ -305,6 +305,13 @@ Provider suites import the sweep harness from `@platform-sec/sensitive-string-se
 drives every entry point with a canary and asserts it appears in no message, no stack, no
 `JSON.stringify`, and no `cause` chain at any depth.
 
+A sweep that passes proves nothing unless it can fail, so it has been checked against deliberate
+leaks rather than assumed to work. Putting the secret onto `ResolvedSecretRef.metadata` was caught in
+both halves, the returned record and the load event. Restoring the `cause` chain that the decode
+guard removes, which is the regression that guard exists to prevent, was caught through two
+different provider packages, and the case that caught it was the 20-character payload that V8 echoes
+whole. Do the same when adding a case: make it fail on purpose once, then fix it.
+
 ## License
 
 MIT
