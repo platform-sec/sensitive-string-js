@@ -40,7 +40,10 @@ export default tseslint.config(
       sourceType: 'module',
       globals: { ...globals.node, ...globals.es2022 },
       parserOptions: {
-        project: ['./packages/*/tsconfig.eslint.json', './examples/tsconfig.eslint.json'],
+        // Two programs, not one per package. The workspace program is what
+        // `tsconfig.eslint.json` describes and why; sensitive-nestjs needs
+        // `experimentalDecorators` and so cannot share it.
+        project: ['./tsconfig.eslint.json', './packages/sensitive-nestjs/tsconfig.eslint.json'],
         tsconfigRootDir: import.meta.dirname,
       },
     },

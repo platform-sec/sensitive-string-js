@@ -62,3 +62,6 @@ package-lock.json
 yarn.lock
 npm-shrinkwrap.json
 bun.lockb
+
+# ESLint incremental cache
+.eslintcache

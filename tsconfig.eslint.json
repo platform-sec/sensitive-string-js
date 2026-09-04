@@ -1,0 +1,27 @@
+{
+  // The program the type-aware lint rules run against.
+  //
+  // One program for the whole workspace rather than one per package. Each
+  // program independently parses and binds the same floor of roughly 200
+  // files, the ES2022 libs, `@types/node`, undici-types and vitest, so a
+  // per-package layout made the lint cost linear in package count: every new
+  // package added another full copy of that floor. Twenty-one of them together
+  // peaked above the default V8 heap limit of 2 GB, and the run spent more than
+  // half its wall clock collecting garbage against the ceiling rather than
+  // linting, when it did not abort outright.
+  //
+  // `packages/*/types` carries ambient declarations that belong to a single
+  // package and are not reachable from its sources, so a glob over `src` alone
+  // silently drops them. `sensitive-express` declares the `express4` alias
+  // there, and without it every use of that module degrades to `any` and the
+  // `no-unsafe-*` rules report it.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["packages/*/src/**/*.ts", "packages/*/types/**/*.d.ts", "examples/**/*.ts"],
+  // sensitive-nestjs compiles under `experimentalDecorators`, which cannot be
+  // turned on for part of a program. It keeps its own lint program, the same
+  // reason `tsconfig.json` excludes it.
+  "exclude": ["node_modules", "**/dist/**", "packages/sensitive-nestjs"]
+}
