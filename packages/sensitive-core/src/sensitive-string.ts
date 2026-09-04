@@ -314,7 +314,9 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     }
 
     const effectiveCtx = ctx ?? getCurrentRevealContext();
-    this.policy.checkRevealAllowed?.(effectiveCtx);
+    // `access` is narrowed to 'compare' | 'expose' by the early return above, so
+    // a policy is never asked to authorize a read that only feeds redaction.
+    this.policy.checkRevealAllowed?.(effectiveCtx, this, access);
 
     if (access === 'expose') {
       effectiveCtx?.auditReveal?.(this, details);
@@ -574,7 +576,9 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     const plan = planRenewal(expiry, additionalTtl, options, this.label);
 
     const effectiveCtx = ctx ?? getCurrentRevealContext();
-    this.policy.checkRevealAllowed?.(effectiveCtx);
+    // Renewal reads no value, so it does not go through the gate, but it is
+    // still an operation a policy may refuse.
+    this.policy.checkRevealAllowed?.(effectiveCtx, this, 'renew');
     effectiveCtx?.auditReveal?.(this, renewAuditDetails(expiry, plan));
 
     expiry.deadline = plan.next;

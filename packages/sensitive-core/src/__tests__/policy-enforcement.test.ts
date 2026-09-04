@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   SensitiveString,
   ISensitiveString,
+  RevealAccess,
   RevealContext,
   RevealDetails,
   registerPolicy,
@@ -537,6 +538,145 @@ describe('Policy Enforcement Security', () => {
       }
 
       expect(executionOrder).toEqual(['checkRevealAllowed', 'auditReveal']);
+    });
+  });
+
+  describe('checkRevealAllowed receives the value and the access kind', () => {
+    /** Record every authorization the policy for `credential` is asked for. */
+    function recordCalls(): Array<{ value: ISensitiveString; access: RevealAccess }> {
+      const calls: Array<{ value: ISensitiveString; access: RevealAccess }> = [];
+
+      registerPolicy(
+        {
+          name: 'credential',
+          redact: () => '[REDACTED:credential]',
+          allowMask: true,
+          allowPartialQueries: true,
+          checkRevealAllowed: (_ctx, value, access) => {
+            calls.push({ value, access });
+          },
+        },
+        { overwrite: true }
+      );
+
+      return calls;
+    }
+
+    it('names the instance being read, not a copy of it', () => {
+      const calls = recordCalls();
+      const s = new SensitiveString(CANARY, 'credential', 'api_key');
+
+      s.reveal();
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.value).toBe(s);
+      expect(calls[0]?.value.label).toBe('api_key');
+      expect(calls[0]?.value.klass).toBe('credential');
+    });
+
+    it.each([
+      ['reveal()', (s: SensitiveString<'credential'>) => s.reveal(), 'expose'],
+      ['mask()', (s: SensitiveString<'credential'>) => s.mask({ showLast: 2 }), 'expose'],
+      ['serialize()', (s: SensitiveString<'credential'>) => s.serialize(), 'expose'],
+      ['substring()', (s: SensitiveString<'credential'>) => s.substring(0, 3), 'expose'],
+      ['reclassify()', (s: SensitiveString<'credential'>) => s.reclassify('credential'), 'expose'],
+      ['equals()', (s: SensitiveString<'credential'>) => s.equals('other'), 'compare'],
+    ])('%s authorizes with access %s', (_name, operation, expected) => {
+      const calls = recordCalls();
+
+      operation(new SensitiveString(CANARY, 'credential'));
+
+      expect(calls.map((call) => call.access)).toEqual([expected]);
+    });
+
+    it('reports renew() as its own kind rather than as a read', () => {
+      const calls = recordCalls();
+      const s = new SensitiveString(CANARY, 'credential', 'session', {
+        ttl: 60_000,
+        allowRenewal: true,
+      });
+
+      s.renew(60_000);
+
+      expect(calls.map((call) => call.access)).toEqual(['renew']);
+    });
+
+    it('authorizes both operands of a comparison, each as itself', () => {
+      const calls = recordCalls();
+      const a = new SensitiveString(CANARY, 'credential', 'left');
+      const b = new SensitiveString(CANARY, 'credential', 'right');
+
+      a.equals(b);
+
+      expect(calls.map((call) => call.value)).toEqual([a, b]);
+      expect(calls.map((call) => call.access)).toEqual(['compare', 'compare']);
+    });
+
+    it('names the derived instance, not the value it came from', () => {
+      const calls = recordCalls();
+      const parent = new SensitiveString(CANARY, 'credential', 'api_key');
+      const child = parent.substring(0, 4);
+
+      calls.length = 0;
+      child.reveal();
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.value).toBe(child);
+      expect(calls[0]?.value).not.toBe(parent);
+    });
+
+    it('is not consulted for reads that only feed redaction', () => {
+      const calls = recordCalls();
+      const s = new SensitiveString(CANARY, 'credential');
+
+      String(s);
+      JSON.stringify(s);
+      void s.length;
+      void s.isEmpty();
+
+      expect(calls).toHaveLength(0);
+    });
+
+    it('keeps working for a policy that declares only the context', () => {
+      // The parameters were added after the context-only form. A hook written
+      // against the old signature must still compile and still deny.
+      const seen: Array<RevealContext | null> = [];
+
+      registerPolicy(
+        {
+          name: 'credential',
+          redact: () => '[REDACTED:credential]',
+          checkRevealAllowed: (ctx) => {
+            seen.push(ctx);
+            throw new Error('denied');
+          },
+        },
+        { overwrite: true }
+      );
+
+      const s = new SensitiveString(CANARY, 'credential');
+
+      expect(() => s.reveal()).toThrow('denied');
+      expect(seen).toEqual([null]);
+    });
+
+    it('does not hand the raw value to the hook', () => {
+      let leaked = '';
+
+      registerPolicy(
+        {
+          name: 'credential',
+          redact: () => '[REDACTED:credential]',
+          checkRevealAllowed: (ctx, value, access) => {
+            leaked = `${String(value)}|${access}|${JSON.stringify(value)}|${JSON.stringify(ctx)}`;
+          },
+        },
+        { overwrite: true }
+      );
+
+      new SensitiveString(CANARY, 'credential').reveal();
+
+      expect(leaked).not.toContain(CANARY);
     });
   });
 

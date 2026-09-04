@@ -155,6 +155,21 @@ export interface RenewAuditDetails {
 export type RevealDetails = RevealAuditDetails | MaskAuditDetails | RenewAuditDetails;
 
 /**
+ * What a policy is being asked to authorize.
+ *
+ * - `compare`: `equals()`, which reads the value but never hands it to the
+ *   caller and produces no audit record.
+ * - `expose`: the raw value reaches the caller, whether in full through
+ *   `reveal()` and `serialize()` or in part through `mask()` and the string
+ *   and regex operations.
+ * - `renew`: not a read at all. The value's deadline is being extended.
+ *
+ * A read that only feeds redaction or documented metadata (`toString()`,
+ * `length`) never reaches a policy and so has no kind here.
+ */
+export type RevealAccess = 'compare' | 'expose' | 'renew';
+
+/**
  * Advisory metadata for sensitivity policies.
  * NOT enforced by this library in MVP - use for documentation,
  * external policy engines, and future enforcement.
@@ -271,8 +286,22 @@ export interface SensitivityPolicy {
   /**
    * Hook to validate whether reveal is allowed in the given context.
    * Throw an error to deny the reveal.
+   *
+   * `value` is the instance being read, so a policy can decide on the label or
+   * the deadline rather than on the class alone, and `access` says what is
+   * being authorized. Both were added after the context-only form, so a hook
+   * that declares fewer parameters keeps working unchanged.
+   *
+   * ⚠️ The hook runs inside the raw-value gate, which is not reentrant. Reading
+   * `value` from here, through `reveal()`, `equals()` or `mask()`, re-enters the
+   * gate and recurses until the stack is exhausted. Read `klass` and `label`,
+   * and nothing else.
+   *
+   * The policy for a class is process-global, so this hook sees every value of
+   * that class. A rule that applies to one value belongs to the caller that
+   * constructed it, not here.
    */
-  checkRevealAllowed?(ctx: RevealContext | null): void;
+  checkRevealAllowed?(ctx: RevealContext | null, value: ISensitiveString, access: RevealAccess): void;
 
   /**
    * Determine the resulting class when combining two sensitive values.

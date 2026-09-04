@@ -168,6 +168,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A policy's `checkRevealAllowed` now receives the value being read and what is being authorized,
+  as `(ctx, value, access)`, where `access` is `'compare'` for `equals()`, `'expose'` for every
+  operation that hands the raw value or part of it to the caller, and `'renew'` for a deadline
+  extension. It had received the context alone, so a policy could refuse a read only on the class
+  and the context, never on the label or the deadline of the value in front of it, while the
+  `auditReveal` call three lines below it in the same gate already got the instance. Reads that
+  only feed redaction or documented metadata, such as `toString()` and `length`, still never reach
+  a policy. The parameters are additive: a hook written against the context-only form keeps
+  working. It must not read the value it is handed, through `reveal()`, `equals()` or `mask()`,
+  because the gate is not reentrant and the read would recurse until the stack is exhausted.
 - `new SensitiveString()` throws a `TypeError` for a value that is not a string, naming the kind of
   value and never its content. It accepted anything: a number redacted like a string and then threw
   inside `equals()`, and an instance wrapped a second time revealed the inner instance rather than
