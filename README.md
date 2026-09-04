@@ -163,6 +163,52 @@ console.log(secret)         // SensitiveString<credential:api_key> { [REDACTED:c
 `Value: ${secret}`          // "Value: [REDACTED:credential]"
 ```
 
+### Objects that refuse to answer
+
+A redaction walk has to ask an arbitrary object a series of questions, and every
+one of them runs through a hook the object controls: a `get` trap, a
+`Symbol.toStringTag` getter, a `getPrototypeOf` or `has` or `ownKeys` trap, the
+`toJSON` method, an enumerable getter, `toString`. **None of them can make a
+redaction throw.** A logger calling `safeLog` must not be the thing that takes
+down the request.
+
+The likely case is not a Proxy at all: an ordinary object with an enumerable
+getter that throws is what an ORM produces for a relation that was not loaded,
+and enumerating properties invokes every one of them.
+
+```typescript
+// What an ORM defines on an instance for a relation it has not loaded: an own
+// enumerable accessor, which enumerating the object invokes.
+const order = { id: 7, token: new SensitiveString(rawToken, 'credential') };
+
+Object.defineProperty(order, 'customer', {
+  enumerable: true,
+  get() {
+    throw new Error('relation not loaded');
+  },
+});
+
+safeLog(order);
+// { id: 7, token: '[REDACTED:credential]', customer: undefined }
+```
+
+A property that refuses reads as absent while its siblings still read, and a
+getter declared on the class rather than on the instance is not enumerated at
+all, so it never reaches the output either way. An object that refuses to be
+enumerated at all becomes `UNREADABLE`, the string `'[Unreadable]'`, which is
+honest where an empty object would claim the value had no fields.
+
+The two detectors answer opposite ways on purpose. `containsSensitive` returns
+`true` for a value it could not read, because reporting it as clean is how a
+caller ships a payload believing it was checked. `sensitiveClassesIn` contributes
+no class, because there is no class to name for something that was never read.
+
+One boundary is deliberate: `redactCopy` keeps each object's prototype so a
+serializer downstream still sees the class, and then assigns onto the copy. A
+prototype whose **setter** refuses therefore fails on the way out, which is a
+write rather than a read and is not something a read guard can absorb. Use
+`redactInStructure` where the output only has to be inert.
+
 ### Explicit Reveal
 
 Raw values require explicit access:
@@ -727,6 +773,9 @@ containsSensitive(obj: unknown): boolean;
 
 // Collect the sensitivity classes present in a structure
 sensitiveClassesIn(obj: unknown): Set<SensitivityClass>;
+
+// The marker a walk substitutes for an object it could not read at all
+UNREADABLE: '[Unreadable]';
 
 // Create logger serializer
 createSensitiveSerializer(): (value: unknown) => unknown;

@@ -253,15 +253,36 @@ describe('span streaming', () => {
 });
 
 describe('the failure behaviour of each payload kind', () => {
-  /** A span the walk cannot finish: enumerating its data throws. */
+  /**
+   * A span the walk cannot finish, because writing the copy fails.
+   *
+   * A write, deliberately, and not a read. `core`'s walks now degrade rather
+   * than throw for every hook an object controls on the way in, the throwing
+   * enumerable getter this used to use included. `redactCopy` keeps each
+   * object's prototype and then assigns onto the new object, so a prototype
+   * whose setter refuses fails on the way out, which no read-guarding can
+   * absorb.
+   */
   function unwalkableSpan(canary: string): SentrySpan {
-    const data: Record<string, unknown> = {};
+    const prototype = {};
+
+    Object.defineProperty(prototype, 'url.full', {
+      set(): never {
+        throw new Error('write refused');
+      },
+      get(): undefined {
+        return undefined;
+      },
+      configurable: true,
+    });
+
+    const data = Object.create(prototype) as Record<string, unknown>;
 
     Object.defineProperty(data, 'url.full', {
+      value: `https://pay.example/checkout?token=${canary}`,
       enumerable: true,
-      get() {
-        throw new Error(`property read exploded for ${canary}`);
-      },
+      writable: true,
+      configurable: true,
     });
 
     return {

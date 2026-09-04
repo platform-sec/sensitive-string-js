@@ -5,6 +5,12 @@
 This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under `packages/`:
 
 - `packages/sensitive-core/src/` contains the redaction, policy, context, and wrapping APIs.
+  `probe.ts` holds the guarded reads every walk uses against objects it did not create: an arbitrary
+  object controls the tag read, the prototype read, `has`, `toJSON`, `ownKeys`,
+  `getOwnPropertyDescriptor`, every enumerable getter and `toString`, and a throw from any of them
+  used to take the redaction down with it. `src/__tests__/hostile-objects.test.ts` drives every one
+  of those hooks against every walk; extend that table rather than assuming it is complete, because
+  each of the three rounds of this defect was found by widening it and none by reading the code.
 - `packages/sensitive-zod/src/` contains the Zod integration and depends on the core package.
 - `packages/sensitive-testing/src/` contains the test utilities: canary secrets, leak and redaction
   assertions, matchers, and audit mocks. It depends on the core package and on no test framework.
@@ -44,6 +50,23 @@ This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under 
   provider suites import from `./testing`. The write guard is a separate entry point, `./write`, so
   an application that only reads never loads it. It has no third-party runtime dependencies and
   takes the core package as a peer.
+- `packages/sensitive-env/src/` contains the shared loader under the config and environment
+  integrations: the `EnvSpec` over core's `ClassificationSpec`, the opt-in `commonSecretNameRules`
+  pack, `wrapFlat` by exact key and `wrapTree` over core's path walker, the `util.parseEnv` wrapper
+  with its dropped-line report, deletion from `process.env` with the `/proc/self/environ` name check
+  that says what deletion cannot reach, `toChildEnv` with the marker guard, and the canary harness
+  the `envalid` suite imports from `./testing`. It has no third-party runtime dependencies and takes
+  the core package as a peer. It dev-depends on convict, node-config, dotenv and dotenv-expand with
+  no peer or runtime relationship to any of them, so that the third-party pins in
+  `src/__tests__/third-party-pins.test.ts` actually run: those three libraries are recipes in the
+  README rather than packages, because dotenv holds nothing to wrap and the other two clone their
+  trees on read.
+- `packages/sensitive-envalid/src/` contains the envalid integration: `makeSensitiveValidator` over
+  envalid's own `makeValidator` so the class survives into the inferred type, the four
+  construction-time refusals (`default`, `devDefault`, `testDefault` and `choices`, each of which
+  quietly does the wrong thing), and `cleanEnvSafe`, whose reporter rebuilds envalid's aggregate
+  report without the raw input every built-in validator embeds in it and throws instead of calling
+  `process.exit`. It takes core, `sensitive-env` and `envalid` as peers.
 - `packages/sensitive-vault/src/` contains the Vault and OpenBao source: the KV v1 and v2 wire
   shapes, the `lease_duration` converter, dynamic secret leases, response wrapping, and the flavor
   flag with its divergence table. It takes core and `sensitive-secrets` as peers and has no vendor

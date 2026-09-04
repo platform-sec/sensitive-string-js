@@ -1,15 +1,30 @@
 import { SensitiveString } from './sensitive-string.js';
 import type { SensitivityClass } from './types.js';
 import { carriesSerializedMarker, redactSerialized, serializedClass } from './serialized.js';
+import {
+  UNREADABLE,
+  isUnreadable,
+  probeCall,
+  probeEntries,
+  probeMethod,
+  probePrototype,
+  probeString,
+  probeTag,
+} from './probe.js';
 
 /**
  * Identify ordinary objects: plain objects, null-prototype objects, and class
  * instances. Exotic objects such as typed arrays, promises, boxed primitives,
  * and anything with a custom Symbol.toStringTag report a different tag and are
  * handled by the string fallback instead.
+ *
+ * The tag is read through a guard, because reading it goes through a
+ * `Symbol.toStringTag` getter the object controls. An object that refuses is
+ * treated as ordinary, which sends it to be walked and redacted rather than to
+ * `String()`, which would ask the same object another question.
  */
 function isOrdinaryObject(obj: object): boolean {
-  return Object.prototype.toString.call(obj) === '[object Object]';
+  return probeTag(obj) === '[object Object]';
 }
 
 /**
@@ -17,10 +32,28 @@ function isOrdinaryObject(obj: object): boolean {
  * Used for plain objects and class instances alike. The result is always a
  * plain object: methods, prototype getters, and private fields are not carried
  * over, which keeps the output inert for logging.
+ *
+ * An object that cannot be enumerated at all becomes the {@link UNREADABLE}
+ * marker rather than an empty object. Both are safe; only one is honest. An
+ * empty object in a log line reads as "this had no properties", which is a
+ * different and more misleading claim than "this could not be read".
  */
-function redactOwnProperties(obj: object, seen: WeakSet<object>): Record<string, unknown> {
+function redactOwnProperties(
+  obj: object,
+  seen: WeakSet<object>,
+  omit?: string
+): Record<string, unknown> | string {
+  const entries = probeEntries(obj);
+
+  if (entries === undefined) {
+    return UNREADABLE;
+  }
+
   const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
+  for (const [key, value] of entries) {
+    if (key === omit) {
+      continue;
+    }
     result[key] = redactInStructure(value, seen);
   }
   return result;
@@ -70,6 +103,16 @@ export function redactInStructure(obj: unknown, seen = new WeakSet<object>()): u
   // Handle primitives and null
   if (obj === null || typeof obj !== 'object') {
     return obj;
+  }
+
+  // Read once, used twice: this answers both "will every `instanceof` below
+  // throw" and, forty lines down, "is this a plain object". An object that
+  // refuses to name its prototype has to be caught before the first
+  // `instanceof`, which walks the chain and would throw.
+  const prototype = probePrototype(obj);
+
+  if (prototype === undefined) {
+    return UNREADABLE;
   }
 
   // Handle SensitiveString - redact to string
@@ -132,13 +175,31 @@ export function redactInStructure(obj: unknown, seen = new WeakSet<object>()): u
   // before the plain-object copy, because a copy that keeps the function hands
   // JSON.stringify an unredacted form to call later. A toJSON() that returns
   // the object itself is walked like any other object.
-  if ('toJSON' in obj && typeof obj.toJSON === 'function') {
-    const json: unknown = (obj as { toJSON: () => unknown }).toJSON();
-    return json === obj ? redactOwnProperties(obj, seen) : redactInStructure(json, seen);
+  //
+  // Both the lookup and the call are guarded. `'toJSON' in obj` goes through a
+  // `has` trap, and the method itself is caller code that may throw. A refusal
+  // from either falls through to the own-property walk, which is the same path
+  // an object with no toJSON takes and still redacts everything it holds.
+  const toJson = probeMethod(obj, 'toJSON');
+  if (toJson !== undefined) {
+    const called = probeCall(toJson, obj);
+
+    if (called.ok) {
+      return called.value === obj
+        ? redactOwnProperties(obj, seen)
+        : redactInStructure(called.value, seen);
+    }
+
+    // The method refused, so the walk falls through to own properties. It also
+    // drops the method itself: an own enumerable `toJSON` would otherwise be
+    // copied into the result, and the next serializer to touch that result
+    // would call it and get the same throw. The output of this function is
+    // supposed to be inert.
+    return redactOwnProperties(obj, seen, 'toJSON');
   }
 
   // Handle plain objects
-  if (Object.getPrototypeOf(obj) === Object.prototype) {
+  if (prototype === Object.prototype) {
     return redactOwnProperties(obj, seen);
   }
 
@@ -152,12 +213,10 @@ export function redactInStructure(obj: unknown, seen = new WeakSet<object>()): u
   // Exotic objects (typed arrays, promises, boxed primitives, RegExp, ...):
   // fall back to the string representation.
   //
-  // no-base-to-string reads this as the useless '[object Object]' case, but
-  // isOrdinaryObject() returning false is exactly the guarantee that it is not:
-  // anything still carrying Object's default tag went to redactOwnProperties
-  // above, so what reaches here has its own toString or Symbol.toStringTag.
-  // eslint-disable-next-line @typescript-eslint/no-base-to-string
-  return String(obj);
+  // Guarded, because an object that reaches here has its own toString by
+  // definition, and its own toString is caller code. A refusal leaves nothing
+  // to keep, so the marker stands in for it.
+  return probeString(obj) ?? UNREADABLE;
 }
 
 /**
@@ -306,6 +365,14 @@ export function containsSensitive(obj: unknown, seen = new WeakSet<object>()): b
     return false;
   }
 
+  // Before the first `instanceof`, which walks the prototype chain and throws
+  // for an object that refuses to report it. Unwalkable, so unprovable: a leak
+  // detector answers `true` for a value it could not read, for the reason given
+  // at the ordinary-object branch below.
+  if (isUnreadable(obj)) {
+    return true;
+  }
+
   if (obj instanceof SensitiveString || carriesSerializedMarker(obj)) {
     return true;
   }
@@ -338,7 +405,18 @@ export function containsSensitive(obj: unknown, seen = new WeakSet<object>()): b
   }
 
   if (isOrdinaryObject(obj)) {
-    return Object.values(obj).some((value) => containsSensitive(value, seen));
+    const entries = probeEntries(obj);
+
+    // An object that cannot be enumerated answers `true`, not `false`. This is
+    // a leak detector, and the two wrong answers are not symmetric: reporting a
+    // value it could not read as clean is how a caller ships a payload
+    // believing it was checked. `sensitiveClassesIn` deliberately answers the
+    // other way and says why.
+    if (entries === undefined) {
+      return true;
+    }
+
+    return entries.some(([, value]) => containsSensitive(value, seen));
   }
 
   return false;
@@ -372,6 +450,13 @@ export function sensitiveClassesIn(
   seen = new WeakSet<object>()
 ): Set<SensitivityClass> {
   if (obj === null || typeof obj !== 'object') {
+    return found;
+  }
+
+  // Unwalkable, and there is no class to name for something that was never
+  // read. `containsSensitive` answers `true` for the same object; see the note
+  // at its ordinary-object branch for why the two differ here.
+  if (isUnreadable(obj)) {
     return found;
   }
 
@@ -418,7 +503,12 @@ export function sensitiveClassesIn(
   }
 
   if (isOrdinaryObject(obj)) {
-    for (const value of Object.values(obj)) {
+    // An object that cannot be enumerated contributes no classes, because there
+    // is no class to name. That is the one place this traversal and
+    // `containsSensitive` disagree, and the disagreement is the honest one:
+    // `containsSensitive` can say "there may be something in here" without
+    // knowing what, and this function cannot.
+    for (const [, value] of probeEntries(obj) ?? []) {
       sensitiveClassesIn(value, found, seen);
     }
   }

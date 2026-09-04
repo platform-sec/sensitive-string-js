@@ -9,6 +9,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the config and environment row: `@platform-sec/sensitive-string-env`, a loader that reads
+  `process.env` and `.env` files into a classified record, and
+  `@platform-sec/sensitive-string-envalid`, the one library in the row with an extension point worth
+  a package. dotenv, convict and node-config get recipes in the `env` README instead: dotenv holds
+  nothing to wrap after it writes, and convict and node-config both clone their trees on read, so
+  for those three the integration is `wrapFlat` or `wrapTree` plus a few lines at the call site.
+- `loadEnv` requires an explicit `fallback` and has no default for it. `process.env` is the most
+  mixed store this library meets, and wrapping an ordinary variable does not fail loudly: an
+  instance is an object and therefore always truthy, so a wrapped `DEBUG` read as `if (debug)` is
+  permanently true even for an empty string, and a wrapped `PORT` is never `=== '3000'`. The name
+  pack, `commonSecretNameRules`, is exported as a constant and never applied unless the caller puts
+  it in the spec, for the same reason in the other direction.
+- `removeFromProcessEnv` is offered and reports what it could not reach rather than implying it
+  removed everything. Deleting a variable removes the copy JavaScript can see and not the copy the
+  kernel made at exec time, which is the production case for Kubernetes `env:`, `docker run -e`,
+  systemd `Environment=` and a CI runner injecting repository secrets. `EnvRecord.kernelCopy` names
+  the variables in that position, and is the string `'unknown'` rather than an empty array where the
+  check cannot run.
+- `toChildEnv` reveals named variables into a child process environment under an explicit
+  `RevealContext`, and refuses before returning anything if a value carries a redaction marker.
+  Without it the failure is silent and late: anything assigned into an environment object is coerced
+  with `String()`, so the child authenticates with the literal text `[REDACTED:credential]` and the
+  first sign is an authentication failure in a process that is not the one holding the bug.
+- The `envalid` validators refuse `default`, `devDefault`, `testDefault` and `choices` at
+  construction, each with a message naming the replacement. The first three are assigned without
+  passing through validation, so `credential({ default: 'dev' })` types as a `SensitiveString` and
+  holds a raw string at run time; `choices` is compared against the parsed value, so a wrapped value
+  never matches and the check is broken rather than strict.
+- `cleanEnvSafe` replaces envalid's reporter rather than disabling it. All eight built-in envalid
+  validators embed the raw input in their message and the default reporter prints it and calls
+  `process.exit(1)`; its logger is `console.error.bind(console)` captured at import, so it cannot be
+  intercepted from outside. `reporter: null` would have leaked the same value through the thrown
+  error and reported only the first bad variable, so the replacement keeps the aggregate report and
+  drops the messages, throwing an `EnvValidationError` that never exits the process. envalid's
+  missing-variable text is the one third-party message passed through, because
+  `formatSpecDescription` builds it from the caller's own `desc`, `example` and `docs`.
+
+### Fixed
+
+- Every redaction walk in `core` now survives an object that refuses to answer a question.
+  `redactInStructure`, `safeLog`, `safeStringify`, `containsSensitive`, `sensitiveClassesIn`,
+  `redactCopy` and the logger serializer each reached through operations the object controls, and
+  each of them threw. The previous fix covered two duck-type property reads; these are the rest:
+
+  | The walk did | The object controls it through |
+  |---|---|
+  | `Object.prototype.toString.call(obj)` | a `Symbol.toStringTag` getter |
+  | `Object.getPrototypeOf(obj)`, and therefore every `instanceof` | a `getPrototypeOf` trap |
+  | `'toJSON' in obj` | a `has` trap |
+  | `obj.toJSON()` | the method body |
+  | `Object.keys` / `Object.entries` | `ownKeys`, `getOwnPropertyDescriptor`, and every enumerable getter |
+  | `String(obj)` | `toString` or `Symbol.toPrimitive` |
+
+  A throw from a redaction is the failure mode this library exists to prevent: `logger.info({ config })`
+  took down the request rather than logging a redacted line. The guarded forms all live in
+  `core`'s `probe.ts`, next to the two the earlier fix added.
+- The likely case is not a Proxy at all. An ordinary object with an enumerable getter that throws is
+  what an ORM produces for a relation that was not loaded, and `Object.entries` invokes every one of
+  them. The earlier fix was found by measuring against envalid's strict proxy, which is why it
+  reached only two probes; this one was found by driving every hook a walk touches, which is the
+  difference between a replay and an enumeration. `sensitive-core/src/__tests__/hostile-objects.test.ts`
+  is that enumeration, and it is the suite to extend rather than the one to trust as complete.
+- The answers are documented per caller rather than uniform, because a redaction walk and a leak
+  detector want opposite defaults. An object that cannot be enumerated at all becomes the
+  `'[Unreadable]'` marker in `redactInStructure` and `redactCopy`, which is honest where an empty
+  object would claim the value had no fields. `containsSensitive` answers `true` for the same object,
+  because reporting a value it could not read as clean is how a caller ships a payload believing it
+  was checked. `sensitiveClassesIn` contributes no class, because there is no class to name for
+  something that was never read. A property whose own getter throws reads as absent while its
+  siblings still read, so one bad field no longer costs the whole object.
+- `redactInStructure` no longer copies an own enumerable `toJSON` that refused into its result. It
+  had been walking such an object's properties, which is right, and carrying the method along with
+  them, which is not: the next serializer to touch the supposedly inert result called it and got the
+  same throw. `safeStringify` was the first thing to do so.
+- `UNREADABLE` is exported from `core`, because `'[Unreadable]'` now appears in redacted output and a
+  caller asserting on it should not have to write the literal.
+- Three winston tests changed with this, and the change is a strengthening rather than a relaxation:
+  a payload whose `toJSON` throws used to scrub the whole log record to `[sensitive-format-error]`,
+  and now has its own properties walked and redacted, so the record survives with its contents
+  intact, its `SensitiveString` fields marked, and the canary in the thrown message discarded unread.
+  The same substitution was needed in `sensitive-scrub` and `sensitive-sentry`, whose never-throw
+  wrappers used the same trigger. All three now fail the walk with a *write* rather than a read: a
+  prototype whose setter refuses, which `redactCopy` hits when it assigns onto the copy it made.
+  That is deliberate, because no amount of read-guarding can absorb it, so the trigger will not
+  evaporate the next time `core` is hardened. `sensitive-scrub` also gained the getter payload back
+  as a success case, since an event carrying an unloaded ORM relation used to lose its whole
+  payload to the stub.
+- `util.parseEnv` can build a variable *name* out of a *value*, and the loader now drops such names
+  rather than classifying them. A `.env` line with no `=` does not lose itself, it folds into the
+  next line's assignment, so a credential two lines below a typo arrives under a mangled name that
+  no rule anchored on `_` can match and lands in the plain half while the report says nothing was
+  wrapped. A quoted value containing `=` is parsed twice and produces a second name that is a slice
+  of the value. Any parsed name holding a character no exporter can set (a control character, `=`,
+  or a quote) is now refused, and reported to `onLoad` as a count rather than a list, because
+  listing it would disclose the value the report exists to protect.
+
+### Added
+
 - Fixed four defects found reviewing the eight new secrets manager providers. Three of them were
   silent, and none was reachable by reading the code: each was found by running a probe that asked
   what the package actually does rather than what it looks like it does.

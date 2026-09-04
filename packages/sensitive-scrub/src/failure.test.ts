@@ -17,20 +17,53 @@ const stub = (event: Event): Event => ({
   tags: { 'sensitive.scrub_failed': 'true' },
 });
 
-/** A payload the walk cannot finish: the copy is frozen, so writing to it throws. */
-function unwritable(): Event {
-  const event = { extra: { token: CANARY } };
+/**
+ * A value the scrub walk cannot finish, because writing the copy fails.
+ *
+ * A write, deliberately, and not a read. `core`'s walks now degrade rather than
+ * throw for every hook an object controls on the way *in*: a `get` trap, a
+ * throwing enumerable getter, `ownKeys`, `getOwnPropertyDescriptor`, `toJSON`,
+ * `toString`, and the prototype read behind every `instanceof`. A throwing
+ * enumerable getter is what this suite used to reach for and is now handled
+ * end to end, which is the right outcome and leaves the never-throw wrapper
+ * untested.
+ *
+ * `redactCopy` keeps each object's prototype so a serializer downstream still
+ * sees the class, and then assigns the copied properties onto the new object.
+ * A prototype whose setter refuses is therefore a failure on the way *out*,
+ * which no amount of read-guarding can absorb, and it is an ordinary shape: a
+ * class with a validating setter behaves this way for a value it rejects.
+ */
+function unwritable(value: unknown): Record<string, unknown> {
+  const prototype = {};
 
-  // `redactCopy` builds a fresh object for `extra`, then the denylist writes
-  // to it. Making Object.entries throw is the reliable way to fail the walk.
-  Object.defineProperty(event.extra, 'token', {
-    enumerable: true,
-    get() {
-      throw new Error('property read exploded');
+  Object.defineProperty(prototype, 'token', {
+    set(): never {
+      throw new Error('write refused');
     },
+    get(): undefined {
+      return undefined;
+    },
+    configurable: true,
   });
 
-  return event;
+  const source = Object.create(prototype) as Record<string, unknown>;
+
+  // defineProperty rather than assignment, so building the fixture does not
+  // trip the setter that the copy is supposed to trip.
+  Object.defineProperty(source, 'token', {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+
+  return source;
+}
+
+/** A payload the walk cannot finish. */
+function unwritablePayload(): Event {
+  return { extra: unwritable(CANARY) };
 }
 
 describe('guardedScrub', () => {
@@ -60,14 +93,39 @@ describe('guardedScrub', () => {
     const policy = resolveScrubPolicy();
     const scrub = guardedScrub<Event>({ kind: 'event', policy, stub });
 
-    expect(() => scrub(unwritable())).not.toThrow();
+    expect(() => scrub(unwritablePayload())).not.toThrow();
+  });
+
+  /**
+   * The shape this suite used to use as its failure case, kept as a success
+   * case. An ORM produces exactly this for a relation that was not loaded, and
+   * it reaching the stub meant every event carrying one lost its whole payload.
+   */
+  it('scrubs a payload with a getter that throws, rather than falling back', () => {
+    const policy = resolveScrubPolicy();
+    const scrub = guardedScrub<Event>({ kind: 'event', policy, stub });
+
+    const extra: Record<string, unknown> = { authorization: CANARY };
+    Object.defineProperty(extra, 'lazy', {
+      enumerable: true,
+      get(): never {
+        throw new Error('relation not loaded');
+      },
+    });
+
+    const result = scrub({ extra });
+
+    expect(result.report.failed).toBe(false);
+    expect(result.payload).not.toBeNull();
+    expect(JSON.stringify(result.payload)).not.toContain(CANARY);
+    expect((result.payload?.extra as Record<string, unknown>)['authorization']).toBe('[SCRUBBED]');
   });
 
   it('returns the stub when the walk throws', () => {
     const policy = resolveScrubPolicy();
     const scrub = guardedScrub<Event>({ kind: 'event', policy, stub });
 
-    const result = scrub(unwritable()).payload;
+    const result = scrub(unwritablePayload()).payload;
 
     expect(result).toEqual({ type: 'Error', tags: { 'sensitive.scrub_failed': 'true' } });
     expect(JSON.stringify(result)).not.toContain(CANARY);
@@ -80,7 +138,7 @@ describe('guardedScrub', () => {
     const policy = resolveScrubPolicy();
     const scrub = guardedScrub<Event>({ kind: 'event', policy, stub });
 
-    expect(scrub(unwritable()).payload).not.toBeNull();
+    expect(scrub(unwritablePayload()).payload).not.toBeNull();
   });
 
   // TEST-SCRUB-FAIL-REPORTED
@@ -89,7 +147,7 @@ describe('guardedScrub', () => {
     const policy = resolveScrubPolicy({ onScrub });
     const scrub = guardedScrub<Event>({ kind: 'event', policy, stub });
 
-    scrub(unwritable());
+    scrub(unwritablePayload());
 
     expect(onScrub).toHaveBeenCalledTimes(1);
     expect((onScrub.mock.calls[0]?.[0] as ScrubReport).failed).toBe(true);
@@ -101,8 +159,8 @@ describe('guardedScrub', () => {
     const policy = resolveScrubPolicy();
     const scrub = guardedScrub<Event>({ kind: 'span', policy, stub: () => null });
 
-    expect(scrub(unwritable()).payload).toBeNull();
-    expect(scrub(unwritable()).report.failed).toBe(true);
+    expect(scrub(unwritablePayload()).payload).toBeNull();
+    expect(scrub(unwritablePayload()).report.failed).toBe(true);
   });
 
   it('drops the payload only when the stub throws as well', () => {
@@ -115,7 +173,7 @@ describe('guardedScrub', () => {
       },
     });
 
-    expect(scrub(unwritable()).payload).toBeNull();
+    expect(scrub(unwritablePayload()).payload).toBeNull();
   });
 
   it('swallows what onScrub throws and still returns the scrubbed payload', () => {

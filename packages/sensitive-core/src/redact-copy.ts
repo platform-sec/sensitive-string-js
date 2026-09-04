@@ -1,5 +1,5 @@
 import { SensitiveString } from './sensitive-string.js';
-import { probeProperty } from './probe.js';
+import { UNREADABLE, probeEntries, probePrototype, probeProperty } from './probe.js';
 import { carriesSerializedMarker, redactSerialized } from './serialized.js';
 
 /**
@@ -62,6 +62,16 @@ function copyRedacted(value: unknown, copies: WeakMap<object, unknown>): unknown
     return value;
   }
 
+  // Read once, used twice: this answers both "will every `instanceof` below
+  // throw" and, further down, "what prototype does the copy get". An object
+  // that refuses to name its prototype has to be caught before the first
+  // `instanceof`, which walks the chain and would throw.
+  const prototype = probePrototype(value);
+
+  if (prototype === undefined) {
+    return UNREADABLE;
+  }
+
   if (value instanceof SensitiveString) {
     return value.toString();
   }
@@ -92,15 +102,23 @@ function copyRedacted(value: unknown, copies: WeakMap<object, unknown>): unknown
     return copy;
   }
 
+  // An object that will not be enumerated cannot be copied, and an empty copy
+  // of the right class would be worse than saying so: a serializer downstream
+  // would emit it as a complete object with no fields. The marker is what
+  // `redactInStructure` substitutes in the same situation.
+  const entries = probeEntries(value);
+
+  if (entries === undefined) {
+    return UNREADABLE;
+  }
+
   // Plain objects, null-prototype objects, and class instances alike, the
   // prototype carried over so a serializer downstream still sees the class.
-  const copy: Record<string, unknown> = Object.create(
-    Object.getPrototypeOf(value) as object | null
-  ) as Record<string, unknown>;
+  const copy: Record<string, unknown> = Object.create(prototype) as Record<string, unknown>;
 
   copies.set(value, copy);
 
-  for (const [key, child] of Object.entries(value)) {
+  for (const [key, child] of entries) {
     copy[key] = copyRedacted(child, copies);
   }
 

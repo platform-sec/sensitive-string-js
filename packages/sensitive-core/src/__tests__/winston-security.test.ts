@@ -6,6 +6,27 @@ import type { WinstonFormat, WinstonInfo } from '../index.js';
 
 const CANARY = 'LEAKED_SECRET_abc123xyz';
 
+/**
+ * A payload deep enough to exhaust the stack during redaction.
+ *
+ * The redaction walk survives an object that refuses to answer any question:
+ * a throwing `toJSON`, `toString`, `ownKeys` trap or enumerable getter all
+ * degrade to walking what can be read. Depth is what is left, and the scrub
+ * path still has to be reachable to be tested.
+ */
+function unredactablyDeep(): Record<string, unknown> {
+  const root: Record<string, unknown> = {};
+  let node = root;
+
+  for (let i = 0; i < 200_000; i++) {
+    const child: Record<string, unknown> = {};
+    node['n'] = child;
+    node = child;
+  }
+
+  return root;
+}
+
 function sink(lines: string[], format?: WinstonFormat): winston.transport {
   const stream = new Writable({
     write(chunk, _encoding, callback) {
@@ -124,7 +145,9 @@ describe('winston format security', () => {
       expect(lines.join('')).not.toContain(CANARY);
     });
 
-    it('TST-WF-SEC-005: canary absent when redaction fails and the record is scrubbed', () => {
+    it('TST-WF-SEC-005: a throwing toJSON is walked instead, and neither copy of the canary escapes', () => {
+      // Two copies of the canary, reachable two different ways: one wrapped in
+      // an own property, and one in the message of a `toJSON` that throws.
       class Exploding {
         readonly token = new SensitiveString(CANARY, 'credential');
         toJSON(): never {
@@ -141,21 +164,22 @@ describe('winston format security', () => {
 
       logger.info('request', { payload: new Exploding() });
 
-      expect(onError).toHaveBeenCalledTimes(1);
+      // The walk discards the failed call and falls back to own properties,
+      // which is the path an object with no `toJSON` already takes. The record
+      // survives with its contents redacted rather than being dropped whole,
+      // and the thrown message is never read.
+      expect(onError).not.toHaveBeenCalled();
       expect(lines).toHaveLength(1);
       expect(lines.join('')).not.toContain(CANARY);
-      expect(lines.join('')).toContain('[sensitive-format-error]');
+      expect(lines.join('')).toContain('[REDACTED:credential]');
     });
 
     it('TST-WF-SEC-008: a scrub at transport level reaches the written output', () => {
       // The transport writes Symbol.for('message'), not the record's fields, so
       // a scrub that only clears fields leaves the pre-error output in place.
-      class Exploding {
-        toJSON(): never {
-          throw new Error('toJSON exploded');
-        }
-      }
-
+      //
+      // The trigger is depth rather than a throwing `toJSON`, which the walk now
+      // survives. What is being tested is the scrub, not what provoked it.
       const onError = vi.fn();
       const lines: string[] = [];
       const logger = winston.createLogger({
@@ -165,7 +189,7 @@ describe('winston format security', () => {
         transports: [sink(lines, sensitiveFormat({ onError, warnOnLateInstall: false }))],
       });
 
-      logger.info('original output', { payload: new Exploding() });
+      logger.info('original output', { payload: unredactablyDeep() });
 
       expect(onError).toHaveBeenCalledTimes(1);
       expect(lines).toEqual(['[sensitive-format-error]']);
@@ -204,12 +228,36 @@ describe('winston format security', () => {
   });
 
   describe('adversarial', () => {
-    it('TST-WF-ADV-001: a throwing toJSON scrubs the record and the logger survives', () => {
-      class Exploding {
-        toJSON(): never {
-          throw new Error('toJSON exploded');
-        }
-      }
+    it('TST-WF-ADV-001: a redaction that cannot finish scrubs the record and the logger survives', () => {
+      const onError = vi.fn();
+      const lines: string[] = [];
+      const logger = winston.createLogger({
+        format: winston.format.combine(sensitiveFormat({ onError }), winston.format.json()),
+        transports: [sink(lines)],
+      });
+
+      expect(() => logger.info('first', { payload: unredactablyDeep() })).not.toThrow();
+      logger.info('second', { n: 2 });
+
+      expect(lines).toHaveLength(2);
+      expect(lines[0]).toContain('[sensitive-format-error]');
+      expect(lines[1]).toContain('second');
+    });
+
+    it('TST-WF-ADV-005: an object that refuses every question is logged as unreadable', () => {
+      const hostile = new Proxy(
+        {},
+        new Proxy(
+          {},
+          {
+            get() {
+              return (): never => {
+                throw new Error('refused');
+              };
+            },
+          }
+        )
+      );
 
       const onError = vi.fn();
       const lines: string[] = [];
@@ -218,12 +266,17 @@ describe('winston format security', () => {
         transports: [sink(lines)],
       });
 
-      expect(() => logger.info('first', { payload: new Exploding() })).not.toThrow();
-      logger.info('second', { n: 2 });
+      expect(() =>
+        logger.info('request', {
+          hostile,
+          token: new SensitiveString(CANARY, 'credential'),
+        })
+      ).not.toThrow();
 
-      expect(lines).toHaveLength(2);
-      expect(lines[0]).toContain('[sensitive-format-error]');
-      expect(lines[1]).toContain('second');
+      expect(onError).not.toHaveBeenCalled();
+      expect(lines.join('')).not.toContain(CANARY);
+      expect(lines.join('')).toContain('[Unreadable]');
+      expect(lines.join('')).toContain('[REDACTED:credential]');
     });
 
     it('TST-WF-ADV-002: circular meta does not hang or throw', () => {

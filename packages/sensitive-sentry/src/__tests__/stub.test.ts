@@ -8,18 +8,53 @@ import { createCapture, runIsolated } from './fixtures.js';
 
 const CANARY = 'LEAKED_SECRET_stub_5c8b';
 
-/** A value the walk cannot finish: enumerating it throws. */
-function unwalkable(): Record<string, unknown> {
-  const hostile: Record<string, unknown> = {};
+/**
+ * A value the scrub walk cannot finish, because writing the copy fails.
+ *
+ * A write, deliberately, and not a read. `core`'s walks now degrade rather than
+ * throw for every hook an object controls on the way *in*: a `get` trap, a
+ * throwing enumerable getter, `ownKeys`, `getOwnPropertyDescriptor`, `toJSON`,
+ * `toString`, and the prototype read behind every `instanceof`. A throwing
+ * enumerable getter is what this suite used to reach for and is now handled
+ * end to end, which is the right outcome and leaves the never-throw wrapper
+ * untested.
+ *
+ * `redactCopy` keeps each object's prototype so a serializer downstream still
+ * sees the class, and then assigns the copied properties onto the new object.
+ * A prototype whose setter refuses is therefore a failure on the way *out*,
+ * which no amount of read-guarding can absorb, and it is an ordinary shape: a
+ * class with a validating setter behaves this way for a value it rejects.
+ */
+function unwritable(value: unknown): Record<string, unknown> {
+  const prototype = {};
 
-  Object.defineProperty(hostile, 'boom', {
-    enumerable: true,
-    get() {
-      throw new Error('property read exploded');
+  Object.defineProperty(prototype, 'token', {
+    set(): never {
+      throw new Error('write refused');
     },
+    get(): undefined {
+      return undefined;
+    },
+    configurable: true,
   });
 
-  return hostile;
+  const source = Object.create(prototype) as Record<string, unknown>;
+
+  // defineProperty rather than assignment, so building the fixture does not
+  // trip the setter that the copy is supposed to trip.
+  Object.defineProperty(source, 'token', {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+
+  return source;
+}
+
+/** A value the walk cannot finish. */
+function unwalkable(): Record<string, unknown> {
+  return unwritable(CANARY);
 }
 
 describe('the stub, through the real SDK', () => {

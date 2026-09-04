@@ -87,6 +87,11 @@ export {
   withAuditedReveals,
 } from './context.js';
 
+// The marker a redaction substitutes for an object it could not read at all.
+// Exported because it appears in output, so a caller asserting on redacted
+// values needs a name for it rather than a string literal.
+export { UNREADABLE } from './probe.js';
+
 // Redaction helpers
 export {
   redactInStructure,
