@@ -301,7 +301,11 @@ export interface SensitivityPolicy {
    * that class. A rule that applies to one value belongs to the caller that
    * constructed it, not here.
    */
-  checkRevealAllowed?(ctx: RevealContext | null, value: ISensitiveString, access: RevealAccess): void;
+  checkRevealAllowed?(
+    ctx: RevealContext | null,
+    value: ISensitiveString,
+    access: RevealAccess
+  ): void;
 
   /**
    * Determine the resulting class when combining two sensitive values.
