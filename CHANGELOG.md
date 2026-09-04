@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transform, `serialize()` and `renew()` alike. A hook written as a block that throws or returns
   nothing is unaffected; one written as an expression that returns something now fails to compile,
   which is the point.
+- `equals()` now compares in constant time when either operand's class requires it. The receiver
+  alone decided, so `input.equals(storedCredential)` compared with `===` while
+  `storedCredential.equals(input)` did not, and which side of the call a credential lands on is not
+  a decision anyone makes on purpose. Both operands' policy gates were already consulted; only the
+  choice of comparison was one-sided.
 
 ### Added
 

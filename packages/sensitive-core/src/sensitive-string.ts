@@ -624,8 +624,11 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   /**
    * Compare this value with another string or SensitiveString.
    *
-   * For the 'credential' class, uses constant-time comparison
-   * to prevent timing attacks.
+   * Uses constant-time comparison when either operand's class requires it, as
+   * 'credential' does, to prevent timing attacks. The receiver alone used to
+   * decide, so `input.equals(storedCredential)` compared with `===` while
+   * `storedCredential.equals(input)` did not, and which side of the call a
+   * credential lands on is not a decision anyone makes on purpose.
    *
    * @param other - The value to compare against
    * @param ctx - Optional reveal context for policy checks
@@ -637,8 +640,11 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   equals(other: string | SensitiveString<SensitivityClass>, ctx?: RevealContext): boolean {
     const value = this.#readRawValue('compare', ctx);
     const rawOther = other instanceof SensitiveString ? other.#readRawValue('compare', ctx) : other;
+    const constantTime =
+      this.policy.requireConstantTimeEquals === true ||
+      (other instanceof SensitiveString && other.policy.requireConstantTimeEquals === true);
 
-    if (this.policy.requireConstantTimeEquals) {
+    if (constantTime) {
       const a = Buffer.from(value, 'utf8');
       const b = Buffer.from(rawOther, 'utf8');
 

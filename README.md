@@ -262,7 +262,7 @@ app.post('/payment', async (req, res) => {
 | Casual inspection | Private fields (`#value`) inaccessible via reflection |
 | JSON serialization | `toJSON()` returns redacted value |
 | Template literals | `toString()` called, returns redacted value |
-| Timing attacks | Constant-time comparison for `credential` class |
+| Timing attacks | Constant-time comparison whenever either operand is a `credential` |
 
 ### Out of Scope (Documented Limitations)
 
@@ -301,7 +301,7 @@ class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   reveal(ctx?: RevealContext): string;
   mask(options?: MaskOptions, ctx?: RevealContext): string;
   
-  // Comparison
+  // Comparison, constant-time when either operand's class requires it
   equals(other: string | SensitiveString, ctx?: RevealContext): boolean;
 
   // Expiration
