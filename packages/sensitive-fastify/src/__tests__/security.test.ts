@@ -145,7 +145,10 @@ describe('canary: the error path', () => {
   test('a custom error handler that logs the body sees wrapped fields redacted', async () => {
     const { app, lines } = buildLoggingApp();
 
-    app.setErrorHandler(async (error, request, reply) => {
+    // Annotated, because the handler reads a property off it: Fastify infers
+    // the error parameter as `unknown` here, and the other handlers in this
+    // suite only ever pass it along.
+    app.setErrorHandler(async (error: Error, request, reply) => {
       request.log.error({ body: request.body, err: error.message }, 'failed');
 
       return reply.code(500).send({ error: 'handled' });

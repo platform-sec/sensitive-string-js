@@ -1,15 +1,43 @@
 import { SensitiveString } from '@platform-sec/sensitive-string-core';
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { describe, expect, test } from 'vitest';
 import { sensitivePlugin } from '../plugin.js';
 import { bodyOf, buildApp, buildPlainApp, CANARY, capture, LOGIN_SCHEMA } from './fixtures.js';
 
 const execFileAsync = promisify(execFile);
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/**
+ * This package's directory.
+ *
+ * Located by walking up to the workspace root rather than from the module's own
+ * path, because neither `import.meta.url` nor `__dirname` exists under both the
+ * Vitest transform and the NodeNext CommonJS type-check, and the suite runs
+ * from the repository root and from the package directory alike. Same approach
+ * as `sensitive-eslint-plugin`'s manifest lookup.
+ */
+function findPackageRoot(): string {
+  let directory = process.cwd();
+
+  for (;;) {
+    if (existsSync(path.join(directory, 'pnpm-workspace.yaml'))) {
+      return path.join(directory, 'packages', 'sensitive-fastify');
+    }
+
+    const parent = path.dirname(directory);
+
+    if (parent === directory) {
+      throw new Error(`Could not find the workspace root above ${process.cwd()}.`);
+    }
+
+    directory = parent;
+  }
+}
+
+const packageRoot = findPackageRoot();
 
 describe('hook ordering against other plugins', () => {
   // TEST-FST-INT-002
@@ -187,8 +215,11 @@ describe('encapsulation', () => {
 describe('published types', () => {
   // TEST-FST-INT-005
   test('declaration merging and the keyword compile in a consumer-shaped fixture', async () => {
-    const require = createRequire(import.meta.url);
-    const tsc = require.resolve('typescript/bin/tsc');
+    // Resolved from this package rather than from the module's own path, for
+    // the reason `findPackageRoot` gives. TypeScript is one of its own
+    // devDependencies, so the lookup is local either way.
+    const resolveFrom = createRequire(path.join(packageRoot, 'package.json'));
+    const tsc = resolveFrom.resolve('typescript/bin/tsc');
 
     // `tsc --noEmit` over `src` plus the compile-only fixture. A type error in
     // a Vitest file never fails the runtime suite, and typescript-eslint

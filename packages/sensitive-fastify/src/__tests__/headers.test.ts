@@ -1,4 +1,4 @@
-import { SensitiveString } from '@platform-sec/sensitive-string-core';
+import { SensitiveString, type SensitiveFieldConfig } from '@platform-sec/sensitive-string-core';
 import http from 'node:http';
 import { describe, expect, test } from 'vitest';
 import { sensitivePlugin } from '../plugin.js';
@@ -161,8 +161,13 @@ describe('header extraction', () => {
   test('a header named like an Object property is an ordinary key', async () => {
     const app = buildPlainApp();
     const seen = capture<SensitiveRequest>();
+    // Assigned rather than written as a literal: `constructor` in a fresh
+    // object literal takes its type from `Object`, not from the index signature
+    // it is being checked against, so it widens to `string`.
+    const headers: SensitiveFieldConfig = {};
+    headers['constructor'] = 'credential';
 
-    await app.register(sensitivePlugin, { headers: { constructor: 'credential' } });
+    await app.register(sensitivePlugin, { headers });
 
     app.get('/proto', async (request) => {
       seen.set(request.sensitive);
