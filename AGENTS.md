@@ -162,7 +162,14 @@ Use pnpm 9; the preinstall hook rejects other package managers.
 - `pnpm build` is also what type-checks a package's own emit. Vitest transforms TypeScript with
   esbuild, which strips types without checking them, so a type error can pass the suite and fail the
   build.
-- `pnpm test:coverage` writes V8 text, JSON, and HTML coverage reports.
+- `pnpm test:coverage` writes V8 text, JSON, and HTML coverage reports. It excludes
+  `src/__benchmarks__`, which is source under `src` that would otherwise be counted as uncovered
+  library code.
+- `pnpm bench` runs the performance benchmarks through `vitest.bench.config.ts`. They live in
+  `packages/*/src/__benchmarks__/*.bench.ts`, are excluded from every package build so they ship
+  nowhere, and take several minutes. Like the timing analysis they measure the wall clock, so they
+  gate nothing; a benchmark is written with a control in its `describe` group, because the ratio
+  between the two is what carries across machines while the absolute figures do not.
 - `pnpm lint` runs type-aware ESLint; `pnpm lint:fix` applies safe fixes. Both set a 6 GB Node heap,
   because they need it: type-aware linting follows imports into the vendor type declarations, and the
   secrets manager providers pull in the AWS SDK, the Kubernetes client and the generated GCP

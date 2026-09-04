@@ -65,7 +65,10 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
       include: ['packages/*/src/**/*.ts'],
-      exclude: ['**/*.test.ts', '**/*.d.ts'],
+      // Benchmarks are source under `src`, so coverage would count them as
+      // uncovered library code. They are measured by `pnpm bench`, never run
+      // by `pnpm test`, and ship in no package.
+      exclude: ['**/*.test.ts', '**/*.d.ts', '**/__benchmarks__/**'],
     },
   },
 });
