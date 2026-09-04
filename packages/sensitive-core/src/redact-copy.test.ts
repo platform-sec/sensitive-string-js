@@ -1,4 +1,6 @@
 import { Readable } from 'node:stream';
+import { inspect } from 'node:util';
+import { serialize as v8Serialize } from 'node:v8';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SensitiveString, redactCopy, registerPolicy, resetPolicies } from './index.js';
 
@@ -160,9 +162,8 @@ describe('redactCopy', () => {
 
     it.each([
       ['a Date', new Date('2026-09-03T00:00:00.000Z')],
-      ['a Map', new Map([['k', 'v']])],
-      ['a Set', new Set(['v'])],
       ['a WeakMap', new WeakMap()],
+      ['a WeakSet', new WeakSet()],
       ['a RegExp', /pattern/u],
       ['a URL', new URL('https://example.com/path')],
       ['an Error', new Error('boom')],
@@ -203,6 +204,91 @@ describe('redactCopy', () => {
       const once = redactCopy({ token: credential(), wire: credential().serialize() });
 
       expect(redactCopy(once)).toEqual(once);
+    });
+  });
+
+  describe('collections', () => {
+    it('copies a Map entry by entry, redacting values and keys alike', () => {
+      const original = new Map<unknown, unknown>([
+        ['wire', credential('token').serialize()],
+        ['live', credential()],
+        [sensitive('key'), 'plain'],
+      ]);
+
+      const copy = redactCopy(original) as Map<unknown, unknown>;
+
+      expect(copy).not.toBe(original);
+      expect(copy).toBeInstanceOf(Map);
+      expect(copy.get('wire')).toBe('[REDACTED:credential]');
+      expect(copy.get('live')).toBe('[REDACTED:credential]');
+      expect([...copy.keys()]).toEqual(['wire', 'live', '[REDACTED:sensitive]']);
+      // The input is untouched, which a serializer given the original will show.
+      expect((original.get('wire') as { value: string }).value).toBe(CANARY);
+    });
+
+    it('copies a Set member by member', () => {
+      const original = new Set<unknown>([credential().serialize(), credential(), 'plain']);
+
+      const copy = redactCopy(original) as Set<unknown>;
+
+      expect(copy).not.toBe(original);
+      expect(copy).toBeInstanceOf(Set);
+      // Two redactions of the same class are one member; the input keeps three.
+      expect([...copy]).toEqual(['[REDACTED:credential]', 'plain']);
+      expect(original.size).toBe(3);
+    });
+
+    it('keeps a collection referenced twice as one copy', () => {
+      const shared = new Map([['wire', credential().serialize()]]);
+
+      const copy = redactCopy({ a: shared, b: shared }) as { a: unknown; b: unknown };
+
+      expect(copy.a).toBeInstanceOf(Map);
+      expect(copy.b).toBe(copy.a);
+    });
+
+    it('keeps a cycle through a Map as a cycle', () => {
+      const original = new Map<string, unknown>([['secret', credential()]]);
+      original.set('self', original);
+
+      const copy = redactCopy(original) as Map<string, unknown>;
+
+      expect(copy.get('secret')).toBe('[REDACTED:credential]');
+      expect(copy.get('self')).toBe(copy);
+    });
+
+    it('keeps a subclass on its own prototype, with its own properties redacted', () => {
+      class Registry extends Map<string, unknown> {
+        owner = credential('owner');
+      }
+
+      const copy = redactCopy(new Registry([['wire', credential().serialize()]])) as Registry;
+
+      expect(copy).toBeInstanceOf(Registry);
+      expect(copy.get('wire')).toBe('[REDACTED:credential]');
+      expect(copy.owner).toBe('[REDACTED:credential]');
+      // Own enumerable properties are the one part of a Map JSON.stringify emits.
+      expect(JSON.stringify(copy)).toBe('{"owner":"[REDACTED:credential]"}');
+    });
+
+    it('CANARY: a serializer that walks entries finds no raw value in the copy', () => {
+      const body = {
+        map: new Map<unknown, unknown>([
+          ['wire', credential('token').serialize()],
+          ['live', credential()],
+        ]),
+        set: new Set<unknown>([sensitive().serialize(), sensitive()]),
+      };
+
+      const copy = redactCopy(body) as typeof body;
+
+      expect(v8Serialize(copy).toString('latin1')).not.toContain(CANARY);
+      expect(inspect(copy, { depth: 6 })).not.toContain(CANARY);
+
+      const cloned = structuredClone(copy);
+
+      expect([...cloned.map.values()]).toEqual(['[REDACTED:credential]', '[REDACTED:credential]']);
+      expect([...cloned.set]).toEqual(['[REDACTED:sensitive]']);
     });
   });
 

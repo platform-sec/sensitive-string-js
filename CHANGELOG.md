@@ -34,6 +34,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   into a `TypeError`; the log-line copy silently dropped that subtree, and an entity copied for a
   response body lost its class. The path helpers already refused the name; the copies did not. The
   global `Object.prototype` was never touched.
+- `redactCopy()` now copies a `Map` or a `Set` entry by entry, keys included, keeping its prototype
+  and memoizing it as it does an object. Both passed through by reference on the argument that
+  nothing inside one reaches `JSON.stringify`, which is true and was the wrong question for the walk
+  whose stated purpose is every serializer other than `JSON.stringify`: a `serialize()` result placed
+  in a `Map` came through untouched, and `v8.serialize`, `structuredClone`, a worker's `postMessage`
+  and `util.inspect` all emitted the raw value. An instance never leaked that way, because a private
+  field crosses none of them. `WeakMap` and `WeakSet` still pass through, since nothing can
+  enumerate them, this walk included. The scrub walk under the error tracking integrations sees a
+  redacted copy where it saw the original, and applies no key name inside one.
 
 ### Added
 

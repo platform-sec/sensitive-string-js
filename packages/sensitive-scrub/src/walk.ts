@@ -196,9 +196,12 @@ function visit(
 ): unknown {
   if (copy === original || copy === null || typeof copy !== 'object') {
     // Either a leaf, or something `redactCopy` passed through by reference:
-    // a Date, a Map, a Set, a RegExp, a URL, an Error, a typed array, a
-    // stream. Not ours to modify, and by `redactCopy`'s contract not
-    // something that reaches a `SensitiveString` on the JSON path either.
+    // a Date, a RegExp, a URL, an Error, a typed array, a stream. Not ours to
+    // modify, and by `redactCopy`'s contract not something that reaches a
+    // `SensitiveString` on the JSON path either. A Map or a Set comes back as
+    // a redacted copy instead, and reaches the loop below with no own
+    // enumerable keys, which is what `JSON.stringify` sees of it too: the
+    // denylist has no key names to apply inside one.
     return copy;
   }
 

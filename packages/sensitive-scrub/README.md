@@ -210,11 +210,12 @@ Stated plainly, because a security package that overstates its coverage is worse
 - **A value revealed and then logged** is a plain string in a breadcrumb by the time any hook sees
   it, indistinguishable from data the application meant to record. The `no-log-reveal` rule in
   `@platform-sec/eslint-plugin-sensitive-string` catches it at build time; nothing here can.
-- **Objects the walk passes through by reference.** `redactCopy` passes `Date`, `Map`, `Set`,
-  `RegExp`, `URL`, `Error`, typed arrays and streams through untouched, and the denylist follows it
-  rather than mutating anything the caller still holds. An `Error` placed in a payload with its own
-  enumerable properties is the case worth knowing about: its properties serialize and are not
-  scrubbed.
+- **Objects the walk passes through by reference.** `redactCopy` passes `Date`, `RegExp`, `URL`,
+  `Error`, typed arrays and streams through untouched, and the denylist follows it rather than
+  mutating anything the caller still holds. An `Error` placed in a payload with its own enumerable
+  properties is the case worth knowing about: its properties serialize and are not scrubbed. A
+  `Map` or `Set` is copied and redacted entry by entry; the denylist does not look inside one,
+  because its entries are not property names.
 - **Prototype getters, symbol keys and non-enumerable properties.** The walk visits own enumerable
   string keys, which is what `JSON.stringify` visits. A wrapped value behind any of those still
   redacts through `toJSON()` on the JSON path, but no key name reaches it.

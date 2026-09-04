@@ -29,10 +29,16 @@ import { assignOwn } from './own-property.js';
  * - memoizes copies, so an object referenced twice stays one shared reference
  *   and a genuine cycle produces a cyclic copy that fails at `JSON.stringify`
  *   exactly as the original would;
- * - passes through by reference what a property copy would break or cannot
- *   contain an instance: `Date`, `Map`, `Set`, `WeakMap`, `WeakSet`, `RegExp`,
- *   `URL`, `Error`, `Promise`, `ArrayBuffer` and its views (`Buffer` among
- *   them), boxed primitives, and anything with a `pipe()` method.
+ * - passes through by reference what a property copy would break or that no
+ *   serializer can walk: `Date`, `WeakMap`, `WeakSet`, `RegExp`, `URL`,
+ *   `Error`, `Promise`, `ArrayBuffer` and its views (`Buffer` among them),
+ *   boxed primitives, and anything with a `pipe()` method;
+ * - copies a `Map` or a `Set` entry by entry, keys included, keeping its
+ *   prototype and memoizing it like an object, because either can hold a
+ *   `serialize()` result and `v8.serialize`, `structuredClone`, a worker's
+ *   `postMessage` and `util.inspect` all walk entries. `JSON.stringify` does
+ *   not, which is why they used to pass through, and was the wrong question
+ *   for a walk whose purpose is every other serializer.
  *
  * Only own enumerable string-keyed properties are visited, which is what
  * `JSON.stringify` visits. A value reachable only through a prototype getter,
@@ -105,6 +111,46 @@ function copyRedacted(value: unknown, copies: WeakMap<object, unknown>): unknown
     return copy;
   }
 
+  // Memoized before the entries are walked, like an object, so a collection
+  // referenced twice stays one reference and a cycle through one stays a
+  // cycle. Iteration is the collection's own code: a Proxy around a Map throws
+  // from `entries()`, and a subclass may throw from its iterator. A partial
+  // copy would claim to be the whole, so the marker stands in, memoized too so
+  // a second reference gets the same answer.
+  if (value instanceof Map) {
+    const copy = new Map<unknown, unknown>();
+
+    copies.set(value, copy);
+
+    try {
+      for (const [key, entry] of value) {
+        copy.set(copyRedacted(key, copies), copyRedacted(entry, copies));
+      }
+    } catch {
+      copies.set(value, UNREADABLE);
+      return UNREADABLE;
+    }
+
+    return finishCollection(value, copy, prototype, copies);
+  }
+
+  if (value instanceof Set) {
+    const copy = new Set<unknown>();
+
+    copies.set(value, copy);
+
+    try {
+      for (const entry of value) {
+        copy.add(copyRedacted(entry, copies));
+      }
+    } catch {
+      copies.set(value, UNREADABLE);
+      return UNREADABLE;
+    }
+
+    return finishCollection(value, copy, prototype, copies);
+  }
+
   // An object that will not be enumerated cannot be copied, and an empty copy
   // of the right class would be worse than saying so: a serializer downstream
   // would emit it as a complete object with no fields. The marker is what
@@ -129,18 +175,51 @@ function copyRedacted(value: unknown, copies: WeakMap<object, unknown>): unknown
 }
 
 /**
- * Objects whose state lives in internal slots or that cannot hold an instance.
+ * Give a copied collection the prototype and the own properties the original
+ * had.
+ *
+ * A subclass instance answers `instanceof` for its class, and a serializer
+ * downstream may check that. Its own enumerable properties are the one part of
+ * a Map or a Set that `JSON.stringify` does emit, so they are copied and
+ * redacted as an object's are.
+ */
+function finishCollection(
+  original: object,
+  copy: object,
+  prototype: object | null,
+  copies: WeakMap<object, unknown>
+): unknown {
+  if (prototype !== Object.getPrototypeOf(copy)) {
+    Object.setPrototypeOf(copy, prototype);
+  }
+
+  const entries = probeEntries(original);
+
+  if (entries === undefined) {
+    copies.set(original, UNREADABLE);
+    return UNREADABLE;
+  }
+
+  for (const [key, child] of entries) {
+    assignOwn(copy, key, copyRedacted(child, copies));
+  }
+
+  return copy;
+}
+
+/**
+ * Objects whose state lives in internal slots, or that no serializer can walk.
  *
  * Copying the prototype and the own properties of any of these would produce
  * something that answers `instanceof` and then throws on use, or lose the
- * message of an Error. None of them can reach a `SensitiveString` through
- * `JSON.stringify`, so passing them through neither leaks nor loses anything.
+ * message of an Error. A `WeakMap` or `WeakSet` cannot be enumerated by anyone,
+ * this walk included, and `structuredClone` refuses both, so nothing inside one
+ * reaches a serializer. `Map` and `Set` are not here: either can hold anything,
+ * and a serializer that walks entries finds it, so they are copied above.
  */
 function passesThrough(value: object): boolean {
   return (
     value instanceof Date ||
-    value instanceof Map ||
-    value instanceof Set ||
     value instanceof WeakMap ||
     value instanceof WeakSet ||
     value instanceof RegExp ||
