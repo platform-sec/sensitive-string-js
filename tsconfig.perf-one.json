@@ -1,6 +1,0 @@
-{
-  "extends": "./tsconfig.base.json",
-  "compilerOptions": { "noEmit": true },
-  "include": ["packages/*/src/**/*.ts", "packages/*/types/**/*.d.ts", "examples/**/*.ts"],
-  "exclude": ["node_modules", "**/dist/**", "packages/sensitive-nestjs"]
-}
