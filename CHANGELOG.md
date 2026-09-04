@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `storedCredential.equals(input)` did not, and which side of the call a credential lands on is not
   a decision anyone makes on purpose. Both operands' policy gates were already consulted; only the
   choice of comparison was one-sided.
+- A `__proto__` key in caller data is now copied as the own data property it was, by every walk that
+  builds a copy: `wrapSensitiveByPath` and `unwrapSensitiveByPath`, `redactInStructure` and the
+  helpers over it, and `redactCopy`. `JSON.parse` produces an own property of that name, inert on the
+  parsed object, and each copy assigned it with `target[key] = value`, which reaches the accessor on
+  `Object.prototype` instead and makes the attacker's object the copy's prototype. A webhook body
+  wrapped at the boundary the function is documented for then answered `wrapped.isAdmin === true`
+  where the body answered `undefined`, and a shadowed `hasOwnProperty` turned the next call on it
+  into a `TypeError`; the log-line copy silently dropped that subtree, and an entity copied for a
+  response body lost its class. The path helpers already refused the name; the copies did not. The
+  global `Object.prototype` was never touched.
 
 ### Added
 

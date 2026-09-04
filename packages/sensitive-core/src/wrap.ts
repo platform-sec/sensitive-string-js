@@ -1,6 +1,7 @@
 import { SensitiveString } from './sensitive-string.js';
 import type { SensitivityClass, RevealContext, SensitiveStringOptions } from './types.js';
 import { getCurrentRevealContext } from './context.js';
+import { assignOwn } from './own-property.js';
 
 /** Class, optional audit label, and optional lifetime for one configured field path. */
 export interface SensitiveFieldOptions {
@@ -108,6 +109,10 @@ function setByPath(obj: Record<string, unknown>, path: string, value: unknown): 
 /**
  * Deep clone an object, preserving most types.
  * Does not clone functions, symbols, or class instances (except Date).
+ *
+ * A key named `__proto__` is copied as the own data property it was, never
+ * assigned: see `assignOwn`. A webhook body is the input this function was
+ * written for, and an attacker chooses its keys.
  */
 function deepClone<T>(obj: T): T {
   if (obj === null || typeof obj !== 'object') {
@@ -128,7 +133,7 @@ function deepClone<T>(obj: T): T {
 
   const cloned: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
-    cloned[key] = deepClone(value);
+    assignOwn(cloned, key, deepClone(value));
   }
 
   return cloned as T;

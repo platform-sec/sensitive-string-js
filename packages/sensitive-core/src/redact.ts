@@ -1,6 +1,7 @@
 import { SensitiveString } from './sensitive-string.js';
 import type { SensitivityClass } from './types.js';
 import { carriesSerializedMarker, redactSerialized, serializedClass } from './serialized.js';
+import { assignOwn } from './own-property.js';
 import {
   UNREADABLE,
   isUnreadable,
@@ -37,6 +38,10 @@ function isOrdinaryObject(obj: object): boolean {
  * marker rather than an empty object. Both are safe; only one is honest. An
  * empty object in a log line reads as "this had no properties", which is a
  * different and more misleading claim than "this could not be read".
+ *
+ * A key named `__proto__` stays a key in the copy rather than becoming its
+ * prototype, which would both drop that subtree from the log line and hand
+ * the copy inherited properties the input never had: see `assignOwn`.
  */
 function redactOwnProperties(
   obj: object,
@@ -54,7 +59,7 @@ function redactOwnProperties(
     if (key === omit) {
       continue;
     }
-    result[key] = redactInStructure(value, seen);
+    assignOwn(result, key, redactInStructure(value, seen));
   }
   return result;
 }

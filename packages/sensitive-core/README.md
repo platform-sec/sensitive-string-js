@@ -114,6 +114,12 @@ const safe = wrapSensitiveByPath(parsed, config);
 const safe = wrapSensitiveByPath(rawBody, config); // Won't work!
 ```
 
+The parsed object is the attacker's shape. A body with a `"__proto__"` key parses to an own property
+of that name, inert where it sits, and the copy `wrapSensitiveByPath` returns keeps it that way: the
+key is copied as an own data property, never assigned, so the wrapped object inherits nothing the
+body supplied and `wrapped.isAdmin` reads what the body read. The same rule applies to the copies
+`redactInStructure` and `redactCopy` build.
+
 ### Validating Your Configuration
 
 Use `validateSensitiveFieldConfig` in tests to catch path typos:

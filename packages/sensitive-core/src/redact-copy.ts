@@ -1,6 +1,7 @@
 import { SensitiveString } from './sensitive-string.js';
 import { UNREADABLE, probeEntries, probePrototype, probeProperty } from './probe.js';
 import { carriesSerializedMarker, redactSerialized } from './serialized.js';
+import { assignOwn } from './own-property.js';
 
 /**
  * Copy a structure with every `SensitiveString` and every serialized sensitive
@@ -36,7 +37,9 @@ import { carriesSerializedMarker, redactSerialized } from './serialized.js';
  * Only own enumerable string-keyed properties are visited, which is what
  * `JSON.stringify` visits. A value reachable only through a prototype getter,
  * a symbol key, or a non-enumerable property is not copied; on the JSON path it
- * is still redacted by `toJSON()`.
+ * is still redacted by `toJSON()`. A key named `__proto__` is copied as the
+ * own data property it was, so an entity keeps the prototype it had rather
+ * than one the payload supplied: see `assignOwn`.
  *
  * @param value - The value to copy
  * @returns A copy with every sensitive value redacted, or the value itself when
@@ -119,7 +122,7 @@ function copyRedacted(value: unknown, copies: WeakMap<object, unknown>): unknown
   copies.set(value, copy);
 
   for (const [key, child] of entries) {
-    copy[key] = copyRedacted(child, copies);
+    assignOwn(copy, key, copyRedacted(child, copies));
   }
 
   return copy;

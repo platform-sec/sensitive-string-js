@@ -263,6 +263,7 @@ app.post('/payment', async (req, res) => {
 | JSON serialization | `toJSON()` returns redacted value |
 | Template literals | `toString()` called, returns redacted value |
 | Timing attacks | Constant-time comparison whenever either operand is a `credential` |
+| Prototype injection through a `__proto__` key | Every copy a walk builds defines it as an own property rather than assigning it |
 
 ### Out of Scope (Documented Limitations)
 
