@@ -9,6 +9,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the HTTP client row: `@platform-sec/sensitive-string-http` as the shared layer, and five
+  client wrappers, `@platform-sec/sensitive-string-axios`, `-got`, `-ky`, `-fetch` and `-undici`.
+  This is the one integration category where the library's default is wrong for the caller's intent.
+  Everywhere else redaction fails closed and a log line loses information; at the wire the intent is
+  to transmit, so `` `Bearer ${token}` `` sends `Bearer [REDACTED:credential]`, nothing throws, the
+  server answers 401, and the first person to debug it pastes the raw token back in.
+- The wrapper owns the call rather than installing a hook. Measured, the clients disagree about which
+  half of a request a hook can still reach: axios's request interceptor sees stringified headers and a
+  structured body, got's `beforeRequest` sees the exact mirror image, ky's `init` does not expose the
+  body at all, and `fetch` and the undici dispatcher have no hook. A hook-based design would need a
+  different correctness argument per client, and would still not reach the settlement paths, which is
+  where the measured damage is.
+- Both settlement paths are scrubbed, driven by a plan the reveal walker records rather than by
+  searching for the raw value, which would mean holding it across the settlement path. The plan holds
+  a position and the value's own redacted form, never a raw value. A revealed credential survives on
+  axios in `error.config.headers`, `error.config.url` and `error.toJSON()`, on got in
+  `error.options.headers`, `error.options._init[n]`, `HTTPError.message` and its stack, and on ky in
+  `error.request.headers` and a frozen `error.options`. The **success** path is worse than the
+  rejection: `console.log(res)` after a 200 through axios or got prints the credential, and no error
+  ever existed for an error handler to catch. The error tracking row does not catch any of it,
+  because by then the value is a plain `string` and `containsSensitive` returns `false`.
+- axios's `response.request` and got's `response.request` and `response.req` are dropped rather than
+  rewritten, conditional on the request having carried a sensitive value. A Node `ClientRequest` keeps
+  the outgoing header block in `_header` and in a `kOutHeaders` symbol, which no supported API
+  reaches; `util.inspect` prints it out of that buffer even after the header bag has been rewritten.
+  With an empty plan the client's own objects come back untouched, `request` included, so a wrapper
+  can be adopted one call site at a time.
+- Auth headers are descriptors, not strings. `bearer`, `basic` and `apiKey` take the instance, and the
+  reveal and the encoding both happen inside the pipeline with the marker guard run on each component
+  before it is encoded. That is what keeps `basic` honest, since base64 hides a marker completely, and
+  it makes the template-literal footgun unreachable through the helpers.
+- The marker guard scans three encodings. Literal for JSON bodies and header values; percent-encoded,
+  because a query string carries `%5BREDACTED%3Acredential%5D` and axios's `params` serializer
+  produces a third, partly encoded form that neither literal scan catches; and base64, off by default,
+  with three needles for the three byte alignments of the `[REDACTED:` prefix. The needle list is
+  built at call time from the policy registry, so a `registerPolicy` call that changes a redaction
+  format does not blind it.
+- `allowedHosts` refuses a redirect to a host the caller never named, and defaults to refusing
+  redirects outright once a credential sits in a header outside the Fetch specification's stripping
+  set. Measured, axios, got and Node's `fetch` all strip `Authorization` and `Cookie` across origins
+  and all three forward `x-api-key` verbatim, because the specification names three headers and no
+  others, and most providers authenticate with a name outside that set.
+- `InsecureTransportError` refuses to reveal a credential into a plaintext `http://` request to a
+  non-loopback host, **before** the reveal, so a request to a host that fails the check never reveals
+  at all. `allowInsecureTransport: true` opts out for a sidecar or a local TLS-terminating proxy.
+- `ResponseDecodeError` replaces the client's own decoder error, naming the method, the URL and the
+  content type, carrying the body's byte length and none of its bytes, and chaining no `cause`. got
+  propagates `JSON.parse`'s quoted body and appends the full request URL to it, so a 14-character API
+  key echoed back lands whole in a string next to the endpoint that produced it. axios is not better,
+  only differently wrong: it swallows the parse failure and hands back the raw body as
+  `response.data`, so a raw secret becomes an ordinary string with no class, no label and no audit
+  trail. Under `responseFields` the wrapper turns that silence into the same error.
+- The refusal rules do not vary by environment. An earlier draft made them strict in development and
+  permissive in production; a security guarantee that weakens where the secrets are real is not a
+  guarantee, and it would mean the property the suite proves is not the property that runs.
+- Every reveal runs under a child of the ambient context carrying `tags.sink: 'http'`,
+  `tags.host`, `tags.client`, `tags.attempt` and `tags.hop`. The last two are separate because they
+  answer different questions: a retry re-sends the same request to the same host, a hop sends it to a
+  host the server chose, and both write the value to a socket. `allowSendToExternal` is deliberately
+  not enforced, because neither default policy sets it, so enforcing it would mean choosing between
+  denying every outbound request and allowing every one.
+- `reveal()` is called in exactly two modules, `reveal.ts` and `auth.ts` in the shared package, and a
+  source scan across all six packages keeps it that way, so the property is checkable by reading two
+  files.
+
 - Added the config and environment row: `@platform-sec/sensitive-string-env`, a loader that reads
   `process.env` and `.env` files into a classified record, and
   `@platform-sec/sensitive-string-envalid`, the one library in the row with an extension point worth

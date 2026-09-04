@@ -65,6 +65,11 @@ pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-expr
 # Fastify: a schema keyword, field maps, header extraction, context, response redaction
 pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-fastify
 
+# HTTP clients: reveal at the wire, the marker guard, and the two-path scrub
+pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-http \
+         @platform-sec/sensitive-string-axios axios
+# ...or -got, -ky, -fetch, -undici
+
 # Test utilities: canaries, leak assertions, matchers, audit mocks
 pnpm add -D @platform-sec/sensitive-string-testing
 
@@ -1049,6 +1054,63 @@ fails `pnpm typecheck` rather than opening quietly. See
 `recommendedDataCollection` object, and the gap around processors registered after `init`, and
 [packages/sensitive-scrub/README.md](packages/sensitive-scrub/README.md) for the denylist and the
 inverted marker rule.
+
+### HTTP Clients
+
+From `@platform-sec/sensitive-string-axios`, `-got`, `-ky`, `-fetch` and `-undici`, over the shared
+`@platform-sec/sensitive-string-http`. This is the one integration category where the library's
+default is actively wrong for the caller's intent. Everywhere else redaction fails closed and a log
+line merely loses information; at the wire the intent is to transmit the value:
+
+```typescript
+await axios.post('/charges', { amount }, { headers: { Authorization: `Bearer ${token}` } });
+```
+
+`Authorization: Bearer [REDACTED:credential]` goes out. axios does not throw, the server answers 401,
+and the first person to debug it pastes the raw token back in.
+
+So the integration has to reveal, and that is where the real problem starts. Measured on axios 1.20.0,
+got 16.0.0 and ky 2.1.0, a revealed value survives the call: on the rejection in
+`error.config.headers`, `error.options.headers` and `error.request`, in `error.toJSON()` for axios,
+and on the **resolution** for axios and got, so `console.log(res)` after a successful call prints the
+credential and no error ever existed for an error handler to catch. The error tracking integration
+does not help, because by then the value is a plain `string` and `containsSensitive` returns `false`.
+
+```typescript
+import axios from 'axios';
+import { bearer, createSensitiveAxios } from '@platform-sec/sensitive-string-axios';
+
+const api = createSensitiveAxios(axios.create({ baseURL: 'https://api.example.com' }), {
+  reason: 'charge authorization',
+  allowedHosts: ['api.example.com'],
+  responseFields: { 'customer.email': 'sensitive' },
+});
+
+const res = await api.post('/charges', { amount, card: { number: cardNumber } }, {
+  headers: { Authorization: bearer(token) },
+});
+
+res.data.customer.email; // SensitiveString<'sensitive'>
+```
+
+`bearer(token)` rather than `` `Bearer ${token}` `` is the whole trick: the helper takes the instance,
+so the reveal and the base64 or prefix encoding both happen inside the wrapper, where a marker guard
+can read the result. The guard scans three encodings, because a query string carries
+`%5BREDACTED%3Acredential%5D` and axios's `params` serializer produces a third, partly encoded form
+that neither literal scan catches.
+
+`allowedHosts` is not optional thinking. A 302 to another origin strips `Authorization` and `Cookie`
+on all three clients, because the Fetch specification names those two and `Proxy-Authorization` and
+nothing else, and forwards `x-api-key` verbatim. Most providers authenticate with a name outside that
+set, so a credential sent to a host the caller trusts is delivered to a host they never named, on that
+host's say-so.
+
+The wrapper owns the call rather than installing a hook: axios's request interceptor sees stringified
+headers and a structured body, got's `beforeRequest` sees the exact mirror image, and `fetch` and
+undici have no hook at all. See
+[packages/sensitive-http/README.md](packages/sensitive-http/README.md) for the full measurement
+tables, the guard's three encodings, and the two places a request object is dropped rather than
+rewritten.
 
 ### Lint Rules
 

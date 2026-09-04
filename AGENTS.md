@@ -95,6 +95,34 @@ This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under 
   REST-only secret sources. Neither has a vendor SDK or any third-party runtime dependency: one
   endpoint over `fetch` each, with the transport interface exported. Neither has a live tier, and
   both READMEs say so.
+- `packages/sensitive-http/src/` contains the shared layer under the HTTP client integrations: the one
+  reveal walker and the `ScrubPlan` it records, the marker guard in its literal, percent-encoded and
+  base64 forms, the auth header descriptors, the scrub for both settlement paths, the redirect host
+  policy and the URL scheme check, the response decoder, and the per-attempt context builder. The
+  recording server every client suite asserts bytes against is a separate entry point, `./testing`.
+  It has no third-party runtime dependencies and takes the core package as a peer. Two modules,
+  `reveal.ts` and `auth.ts`, are the only places in the whole row that call `reveal()`;
+  `src/__tests__/no-bypass.test.ts` is a source scan that keeps that true across all six packages,
+  so a reviewer checks the property by reading two files rather than sixty.
+- `packages/sensitive-axios/src/`, `packages/sensitive-got/src/`, `packages/sensitive-ky/src/`,
+  `packages/sensitive-fetch/src/` and `packages/sensitive-undici/src/` contain the five client
+  wrappers. Each is an `index.ts`, a `client.ts` and a `scrub.ts` holding that client's property
+  list, which is the point of the shared layer. All five take core and `sensitive-http` as peers,
+  plus their client where there is one; `sensitive-fetch` has no third-party peer at all because
+  Node 22 provides `fetch`. The wrapper owns the call rather than installing a hook, because the
+  clients disagree about which half of a request a hook can still reach and because the measured
+  damage is after the send, where no hook runs. Two of the scrubs drop a request object rather than
+  rewriting it: a Node `ClientRequest` keeps the outgoing header block in `_header` and a
+  `kOutHeaders` symbol that no supported API reaches, and that is deliberate, conditional on the
+  request having carried a sensitive value, and documented in both READMEs. The got suite covers both
+  peer majors through the `got14` devDependency alias, whose ambient typings live in
+  `packages/sensitive-got/types/` for the same reason the Express 4 ones do. Each client suite
+  asserts the **bare** client's behaviour before the wrapper's, so the suite records the leak it is
+  compensating for and fails if a client ever fixes it; the `http-client-compat` CI job runs the same
+  suites against the latest client releases rather than the lockfile pins, which is what turns them
+  into regression tests against the clients. `packages/sensitive-http/src/testing.test.ts` tests the
+  recording server itself, because a harness that silently drops a header would make every canary
+  assertion in six packages pass for the wrong reason.
 - `packages/sensitive-eslint-plugin/src/` contains the ESLint rules, their presets, and the
   parser-agnostic AST helpers they share. It has no runtime dependencies, not even on the core
   package: the rules read syntax, never types. Each rule's user-facing documentation is in
@@ -119,6 +147,10 @@ Use pnpm 9; the preinstall hook rejects other package managers.
   runs against `dist` rather than source: build before running one of those, or a change to the
   dependency is invisible to the tests that exercise it. Colocated tests that import by relative
   path are unaffected.
+- The `http-client-compat` job installs `axios@latest`, `got@latest`, `ky@latest` and
+  `undici@latest` over the lockfile and reruns the six HTTP client suites. It is informational, like
+  the two live tiers, and it writes the resolved versions into the run summary so the measurement
+  tables in `packages/sensitive-http/README.md` can say which versions they last held for.
 - A provider package's unit suite runs against fixtures and never a live service. Three of them have
   a second tier under `src/__tests__/live.test.ts`, each self-skipping on an environment variable:
   `sensitive-vault` (`VAULT_ADDR`), `sensitive-k8s` (`K8S_KUBECONFIG`), `sensitive-sops`

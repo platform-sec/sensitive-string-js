@@ -436,6 +436,90 @@ jobs:
         if: always() && matrix.provider == 'aws'
         run: docker rm -f localstack || true
 
+  http-client-compat:
+    name: HTTP client compatibility
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # The HTTP client wrappers are built on measurements of what axios, got, ky
+    # and undici actually do with a revealed credential: which properties a
+    # rejection keeps it in, which ones a 200 keeps it in, and which headers
+    # survive a cross-origin redirect. Those suites assert the bare client's
+    # behaviour first and the wrapper's second, so they are regression tests
+    # against the clients as much as against this repository.
+    #
+    # The lockfile pins the versions the measurements were taken on. This job
+    # runs the same suites against whatever a user installing today would get,
+    # so a client release that changes a measured row is visible here rather
+    # than in a bug report. Informational for the same reason `vault-compat`
+    # is: an upstream release moving is not a reason to block a merge.
+    continue-on-error: true
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Deliberately after the frozen install, and deliberately allowed to
+      # rewrite the manifests: the checkout is thrown away, and the point is to
+      # test against a resolution the lockfile does not describe.
+      - name: Install the latest client releases
+        run: |
+          pnpm --filter @platform-sec/sensitive-string-axios add -D axios@latest
+          pnpm --filter @platform-sec/sensitive-string-got add -D got@latest
+          pnpm --filter @platform-sec/sensitive-string-ky add -D ky@latest
+          pnpm --filter @platform-sec/sensitive-string-undici add -D undici@latest
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Run the HTTP client suites
+        run: |
+          pnpm vitest run \
+            packages/sensitive-http \
+            packages/sensitive-axios \
+            packages/sensitive-got \
+            packages/sensitive-ky \
+            packages/sensitive-fetch \
+            packages/sensitive-undici
+
+      # Recorded rather than gated on, so the row's measurement tables can say
+      # which versions they last held for.
+      - name: Record the versions this ran against
+        if: always()
+        run: |
+          {
+            echo "## HTTP client versions tested"
+            echo ""
+            echo "| Client | Version |"
+            echo "|--------|---------|"
+            for client in axios got ky undici; do
+              version=$(node -p "require('./node_modules/$client/package.json').version" 2>/dev/null || echo 'not resolved')
+              echo "| $client | $version |"
+            done
+            echo "| node | $(node --version) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   coverage:
     name: Test Coverage
     runs-on: ubuntu-latest

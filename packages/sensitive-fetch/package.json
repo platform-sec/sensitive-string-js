@@ -1,0 +1,47 @@
+{
+  "name": "@platform-sec/sensitive-string-fetch",
+  "version": "0.1.0",
+  "description": "fetch integration for SensitiveString - one reveal point at the wire for Node's global fetch and undici.fetch, the marker guard, the redirect host policy, and the response decoder",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "fetch",
+    "undici",
+    "http-client",
+    "security",
+    "sensitive-data",
+    "redaction",
+    "typescript"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "peerDependencies": {
+    "@platform-sec/sensitive-string-core": "^0.1.0",
+    "@platform-sec/sensitive-string-http": "^0.1.0"
+  },
+  "devDependencies": {
+    "@platform-sec/sensitive-string-core": "workspace:*",
+    "@platform-sec/sensitive-string-http": "workspace:*",
+    "@platform-sec/sensitive-string-testing": "workspace:*",
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

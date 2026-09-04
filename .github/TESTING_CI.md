@@ -42,6 +42,11 @@ act -j coverage
 
 # Run the secrets-provider live tiers
 act -j secrets-live --container-options '--volume /tmp/k3s:/tmp/k3s'
+
+# Run the HTTP client suites against the latest client releases.
+# Needs network access to the npm registry; it installs outside the lockfile
+# on purpose, which is the whole point of the job.
+act -j http-client-compat
 ```
 
 ### Run all jobs
@@ -89,11 +94,31 @@ This is a nested-Docker limitation of the local `act` harness, not a failure in
 
 The CI workflow includes these jobs:
 
-1. **Lint** - ESLint and Prettier formatting checks
-2. **Build** - Compiles TypeScript packages
-3. **Test** - Runs Vitest test suite on Node 22 and 24
-4. **Coverage** - Generates test coverage reports
-5. **Security Audit** - Vulnerability scanning and dependency verification
+1. **Workflow Security** - actionlint and zizmor over the workflows themselves
+2. **Lint** - ESLint, Prettier formatting checks, and the root type-check
+3. **Build** - Compiles TypeScript packages and checks the package manifests
+4. **Test** - Runs Vitest test suite on Node 22 and 24
+5. **Coverage** - Generates test coverage reports
+6. **Security Audit** - Vulnerability scanning and dependency verification
+
+Three jobs are informational and set `continue-on-error: true`. Each of them
+tests this repository against something it does not control, so a release or an
+image moving upstream reports rather than blocks:
+
+7. **Vault compatibility** - the `sensitive-vault` live suite against Vault and
+   OpenBao containers, because a fork diverges and a compatibility claim made
+   once is a claim that rots.
+8. **Secrets provider live tier** - the Kubernetes, SOPS and AWS live suites
+   against k3s, the real `sops` binary and a LocalStack emulator. A fixture is
+   only as good as the recording behind it.
+9. **HTTP client compatibility** - the six HTTP client suites against the
+   *latest* axios, got, ky and undici rather than the lockfile pins. Those
+   suites assert the bare client's behaviour before the wrapper's, so they are
+   regression tests against the clients as much as against this repository: a
+   client release that changes a measured row (which property a rejection keeps
+   a revealed credential in, whether a 200 keeps it too, which headers survive a
+   cross-origin redirect) shows up here rather than in a bug report. The job
+   writes the versions it resolved into the run summary.
 
 ## Security Workflows
 

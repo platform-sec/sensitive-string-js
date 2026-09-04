@@ -4,7 +4,9 @@
     "noEmit": true,
     "paths": {
       "@platform-sec/sensitive-string-core": ["../packages/sensitive-core/src/index.ts"],
-      "@platform-sec/sensitive-string-zod": ["../packages/sensitive-zod/src/index.ts"]
+      "@platform-sec/sensitive-string-zod": ["../packages/sensitive-zod/src/index.ts"],
+      "@platform-sec/sensitive-string-fetch": ["../packages/sensitive-fetch/src/index.ts"],
+      "@platform-sec/sensitive-string-http": ["../packages/sensitive-http/src/index.ts"]
     }
   },
   "include": ["./**/*.ts"],
