@@ -186,6 +186,87 @@ jobs:
         run: pnpm test:timing
         continue-on-error: true
 
+  vault-compat:
+    name: Vault compatibility (${{ matrix.flavor }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # A fork diverges, and a compatibility claim made once is a claim that
+    # rots. The unit suite proves the package reads what it believes the server
+    # sends; this job proves that is what the server sends. Informational: a
+    # container image moving is not a reason to block a merge, and the table it
+    # feeds records versions rather than gating on them.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavor: vault
+            image: hashicorp/vault:latest
+          - flavor: openbao
+            image: openbao/openbao:latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build
+
+      # Started with `docker run` rather than as a service container, because
+      # both images need dev-mode arguments and a service container cannot
+      # supply a command.
+      - name: Start ${{ matrix.flavor }}
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          docker run -d --name secret-server -p 8200:8200 \
+            -e VAULT_DEV_ROOT_TOKEN_ID=root \
+            -e BAO_DEV_ROOT_TOKEN_ID=root \
+            --cap-add=IPC_LOCK "$IMAGE"
+
+          for _ in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8200/v1/sys/health > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl -s http://127.0.0.1:8200/v1/sys/health | head -c 400
+          echo
+
+      - name: Run the live suite
+        env:
+          VAULT_ADDR: http://127.0.0.1:8200
+          VAULT_TOKEN: root
+          VAULT_FLAVOR: ${{ matrix.flavor }}
+        run: pnpm vitest run packages/sensitive-vault/src/__tests__/live.test.ts
+
+      - name: Stop ${{ matrix.flavor }}
+        if: always()
+        run: docker rm -f secret-server || true
+
   coverage:
     name: Test Coverage
     runs-on: ubuntu-latest

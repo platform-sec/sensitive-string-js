@@ -9,6 +9,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `@platform-sec/sensitive-string-secrets` and `@platform-sec/sensitive-string-vault`, the
+  shared layer and the first provider of the secrets manager row of roadmap 3.7. A secret arriving
+  from a secrets manager is a `SensitiveString` from the moment the response is destructured, the
+  provider response object never leaves the provider package, the provider's own name for the secret
+  becomes the label, and a lease becomes a deadline bound to the value.
+- The decode guard is the reason the shared layer exists. `JSON.parse` puts its input into the
+  `SyntaxError` message: measured on Node 22.15.0, an input of 20 characters or fewer is echoed
+  whole and a longer one discloses its first 10 characters, while a truncated JSON document reports
+  only a position and is safe. So the failure mode that leaks is the one where the secret is not
+  JSON at all, which is exactly what happens when a JSON read is called on a secret holding a bare
+  API key, and a 20-character key is a common length. Every decoder parses inside a guard that
+  discards the original error and never chains it through `cause`, since every error reporter
+  serializes the cause chain. A sweep case pins the V8 behaviour as well as the fix, so the
+  measurement fails rather than rots if a future Node stops leaking there.
+- `getAll` requires an explicit `fallback` and has no default, which is the one place in this design
+  where no default is better than either. Fail-closed breaks a store that mixes configuration with
+  secrets, and breaks it in a way that does not look like a security control: a wrapped `LOG_LEVEL`
+  makes `config.LOG_LEVEL === 'debug'` permanently false and `if (config.FEATURE_X)` permanently
+  true, because an instance is an object and objects are truthy. Fail-open under-protects a
+  Kubernetes Secret or a Vault KV path, where everything is secret by construction. Only the caller
+  knows which kind of store it is.
+- The write path is a separate entry point, `@platform-sec/sensitive-string-secrets/write`, and it
+  is where the roadmap's claim that this row transmits nothing turned out to be false. A write is a
+  transmit, and a `SensitiveString` handed to a provider's write call stringifies to
+  `[REDACTED:credential]` and is stored under that value: the write succeeds, the provider reports
+  success, and every later reader receives the marker as its database password. `put` and `putJson`
+  reveal under a required `RevealContext`, refuse outgoing bytes containing `[REDACTED:` before any
+  transport call, and read the new version back with `equals()` by default.
+- `core` gained `ClassificationSpec`, `FieldClass` and `compileClassification`, which the config and
+  environment row of 3.7 needs as well, so the precedence rule is written once rather than twice.
+  Patterns are compiled once per source and are stripped of `g` and `y`, because both make a
+  `RegExp` stateful through `lastIndex` and a global pattern tested twice answers `true` then
+  `false` for the same key. `SensitiveFieldOptions` gained `options`, so a path-based wrap can bind
+  a provider's deadline to every field it wrapped rather than leaving it in metadata that nothing
+  enforces.
+- `vault` covers KV v1 and v2, dynamic secret leases, response wrapping, token renewal, and OpenBao
+  as a flavor rather than a second package. `lease_duration` converts to milliseconds in one named
+  function with a test that pins the factor, and `lease_duration: 0` means no lease rather than an
+  already-expired value, because `ttl: 0` in core means exactly the opposite.
+- Two rows of the OpenBao compatibility table moved when they were measured against real servers,
+  Vault 1.21.4 Community Edition and OpenBao 2.6.2 in dev-mode containers. `X-Bao-Token` is not an
+  accepted alias: OpenBao answers it with 403, so `X-Vault-Token` is the compatible header because
+  it is the only one either server accepts. And the silent wrong-secret risk from a stray
+  `X-Vault-Namespace` is not OpenBao's: OpenBao turns the read's 200 into a 404, so a caller
+  notices, while Vault Community Edition accepts the header, ignores it, and serves the root
+  namespace with a 200. The OpenBao case throws at construction; the Vault Community case is
+  documented, because telling Community from Enterprise would mean letting a server response decide
+  how the client behaves, which is what the flavor flag exists to avoid. A `vault-compat` CI job
+  runs the live suite against both containers so the table's version column keeps meaning something.
 - Added `@platform-sec/sensitive-string-scrub` and `@platform-sec/sensitive-string-sentry`, the
   error tracking row of roadmap 3.7. The roadmap described this as "one `beforeSend` hook running
   `redactInStructure`", and all three nouns were wrong. Measured on Node 22.15.0 against

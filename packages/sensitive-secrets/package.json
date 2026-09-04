@@ -1,0 +1,52 @@
+{
+  "name": "@platform-sec/sensitive-string-secrets",
+  "version": "0.1.0",
+  "description": "Shared layer under the secrets manager integrations - the SecretSource interface, classification, the decode guard, the instance cache, and the write guard",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./write": {
+      "types": "./dist/write.d.ts",
+      "default": "./dist/write.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "security",
+    "sensitive-data",
+    "secrets-manager",
+    "vault",
+    "redaction",
+    "typescript"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "peerDependencies": {
+    "@platform-sec/sensitive-string-core": "^0.1.0"
+  },
+  "devDependencies": {
+    "@platform-sec/sensitive-string-core": "workspace:*",
+    "@platform-sec/sensitive-string-testing": "workspace:*",
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

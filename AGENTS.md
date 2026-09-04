@@ -37,6 +37,19 @@ This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under 
   the scope event processor, plus `recommendedDataCollection` and the Sentry-shaped payload paths. It
   takes core, `sensitive-scrub`, and `@sentry/node` as peers, and its suite drives the real SDK to a
   capturing transport rather than mocking it.
+- `packages/sensitive-secrets/src/` contains the shared layer under the secrets manager
+  integrations: the `SecretSource` interface, the classification policy over core's
+  `ClassificationSpec`, the decode guard that keeps a payload out of a `SyntaxError`, the label rule,
+  the instance cache with single-flight and TTL alignment, the file watcher, and the sweep harness
+  provider suites import from `./testing`. The write guard is a separate entry point, `./write`, so
+  an application that only reads never loads it. It has no third-party runtime dependencies and
+  takes the core package as a peer.
+- `packages/sensitive-vault/src/` contains the Vault and OpenBao source: the KV v1 and v2 wire
+  shapes, the `lease_duration` converter, dynamic secret leases, response wrapping, and the flavor
+  flag with its divergence table. It takes core and `sensitive-secrets` as peers and has no vendor
+  SDK, because the API surface it needs is a handful of endpoints over `fetch`. Its unit suite runs
+  against a fake transport; `src/__tests__/live.test.ts` skips itself unless `VAULT_ADDR` and
+  `VAULT_TOKEN` are set, and the `vault-compat` CI job runs it against Vault and OpenBao containers.
 - `packages/sensitive-eslint-plugin/src/` contains the ESLint rules, their presets, and the
   parser-agnostic AST helpers they share. It has no runtime dependencies, not even on the core
   package: the rules read syntax, never types. Each rule's user-facing documentation is in
