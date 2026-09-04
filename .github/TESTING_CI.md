@@ -39,11 +39,14 @@ act -j test --matrix node-version:24
 
 # Run coverage
 act -j coverage
+
+# Run the secrets-provider live tiers
+act -j secrets-live --container-options '--volume /tmp/k3s:/tmp/k3s'
 ```
 
 ### Run all jobs
 ```bash
-act push
+act push --container-options '--volume /tmp/k3s:/tmp/k3s'
 ```
 
 ## Known Limitations with Act
@@ -67,6 +70,20 @@ Failed to save: reserveCache failed: connect EHOSTUNREACH
 ```
 
 **Impact:** Tests run slightly slower without caching, but functionality is unaffected.
+
+### 3. Kubernetes Live Test Volume
+
+The Kubernetes live tier starts k3s through the Docker socket inside the `act` job container. The
+kubeconfig is therefore written to the Docker host's `/tmp/k3s`, which is not the job container's
+`/tmp/k3s` unless it is mounted explicitly. Run any `act` command that includes `secrets-live` with:
+
+```bash
+--container-options '--volume /tmp/k3s:/tmp/k3s'
+```
+
+Without that option, only the Kubernetes matrix entry fails because it cannot see the kubeconfig.
+This is a nested-Docker limitation of the local `act` harness, not a failure in
+`@platform-sec/sensitive-string-k8s`; the GitHub-hosted job does not need the option.
 
 ## CI Workflow Jobs
 
@@ -110,7 +127,7 @@ act -j build
 act -j test --matrix node-version:22
 
 # Or run everything (will take longer):
-act push
+act push --container-options '--volume /tmp/k3s:/tmp/k3s'
 ```
 
 ## Troubleshooting
