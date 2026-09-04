@@ -43,6 +43,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field crosses none of them. `WeakMap` and `WeakSet` still pass through, since nothing can
   enumerate them, this walk included. The scrub walk under the error tracking integrations sees a
   redacted copy where it saw the original, and applies no key name inside one.
+- A `toJSON()` that reveals now gets nothing from a redaction walk. `redactInStructure`, and with it
+  `safeLog()`, `safeStringify()`, `createSensitiveSerializer()` and the winston format, run an
+  object's own `toJSON()` to learn its JSON form, and a DTO whose `toJSON()` called `reveal()` handed
+  the walk a plain string it could not tell from one that was always plain: the raw value was logged,
+  and the reveal was audited as if the application had asked for it. Skipping user `toJSON()`
+  methods would be the wrong fix, since a `toJSON()` that omits a raw field hides it and walking own
+  properties instead would expose that field. Instead the raw-value gate refuses `reveal()`,
+  `mask()`, `serialize()` and every transform while a walk is running caller code, with
+  `RevealDuringRedactionError`, before the deadline check, the policy hook and the audit hook. The
+  walk absorbs the throw as it absorbs any other refusal and redacts the object's own properties,
+  where the instance is still an instance. `equals()` still answers, since a comparison discloses
+  nothing. The mark is process-global, so a walk in one installed copy of core is seen by the gate
+  in another.
 
 ### Fixed
 

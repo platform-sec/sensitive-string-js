@@ -58,6 +58,7 @@ export { SensitiveString } from './sensitive-string.js';
 
 // Expiration
 export { ExpiredSensitiveValueError, RenewalNotAllowedError } from './ttl.js';
+export { RevealDuringRedactionError } from './redaction-scope.js';
 export type { RenewalRefusal } from './ttl.js';
 
 // Anchored patterns for common sensitive-value formats

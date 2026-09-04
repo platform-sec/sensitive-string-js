@@ -11,6 +11,7 @@ import type {
 } from './types.js';
 import { getPolicy, defaultCombineClasses, hasPolicy } from './policy.js';
 import { getCurrentRevealContext } from './context.js';
+import { isInsideRedaction, RevealDuringRedactionError } from './redaction-scope.js';
 import { applyMask, maskAuditDetails, planMask } from './mask.js';
 import {
   ExpiredSensitiveValueError,
@@ -338,6 +339,14 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   ): string {
     if (access === 'safe') {
       return this.#value;
+    }
+
+    // A walk that is running a toJSON() on the object's behalf gets no raw
+    // value: whatever the toJSON() returned would be logged as it is. Refused
+    // before the deadline check, the policy and the audit hook, because a log
+    // line asking is not an access and must fire none of them.
+    if (access === 'expose' && isInsideRedaction()) {
+      throw new RevealDuringRedactionError(this.klass, this.label);
     }
 
     // Before authorization and before the audit hook: a denied read is not a

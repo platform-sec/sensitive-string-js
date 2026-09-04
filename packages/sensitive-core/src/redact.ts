@@ -2,6 +2,7 @@ import { SensitiveString } from './sensitive-string.js';
 import type { SensitivityClass } from './types.js';
 import { carriesSerializedMarker, redactSerialized, serializedClass } from './serialized.js';
 import { assignOwn } from './own-property.js';
+import { runInsideRedaction } from './redaction-scope.js';
 import {
   UNREADABLE,
   isUnreadable,
@@ -80,7 +81,9 @@ function redactOwnProperties(
  * - Error (name, message, and stack copied into a plain object)
  * - Plain objects and class instances (own enumerable properties recursively
  *   processed into a new plain object)
- * - Objects with a toJSON() method (their JSON form, recursively processed)
+ * - Objects with a toJSON() method (their JSON form, recursively processed; a
+ *   reveal() from inside the method is refused, and the object's own
+ *   properties are walked instead)
  * - Other exotic objects such as typed arrays or promises (string form)
  * - Circular references (replaced with '[Circular]')
  *
@@ -209,7 +212,12 @@ export function redactInStructure(obj: unknown, seen = new WeakSet<object>()): u
   // an object with no toJSON takes and still redacts everything it holds.
   const toJson = probeMethod(obj, 'toJSON');
   if (toJson !== undefined) {
-    const called = probeCall(toJson, obj);
+    // With the redaction mark set: a toJSON() that calls reveal() would hand
+    // the walk a plain string it cannot tell from one that was always plain,
+    // so the gate refuses the reveal for the duration of the call. The refusal
+    // is a throw, which lands in the fallback below like any other refusal,
+    // and the instance is redacted as an instance there. See `redaction-scope`.
+    const called = runInsideRedaction(() => probeCall(toJson, obj));
 
     if (called.ok) {
       return called.value === obj

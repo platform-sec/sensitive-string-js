@@ -134,6 +134,7 @@ Calling `.reveal()` strips all protection. The returned value is a plain JavaScr
 *   Once revealed, the value attacks accidental logging protections.
 *   Always limit the scope of the revealed variable (e.g., inside a small block).
 *   Avoid passing the revealed value to other functions if possible; pass the `SensitiveString` instead.
+*   Do not call `reveal()` from a `toJSON()`. A redaction walk (`safeLog`, `safeStringify`, the logger serializers) runs an object's `toJSON()` to learn its JSON form and refuses any reveal made from inside it, redacting the object's own properties instead. Return the `SensitiveString` itself and let the walk redact it.
 
 ### 3. Runtime Safety, Not Memory Isolation
 This library prevents *accidental* exposure (logs, errors, JSON). It does **not** protect against malicious code running in the same Node.js process. Any code with access to the `SensitiveString` instance can call `.reveal()`.
@@ -212,6 +213,16 @@ brand check on the private field refuses the proxy as `toString()`'s receiver.
 Each becomes `UNREADABLE` rather than an exception, and an `Error` whose
 `message` is a getter that throws keeps its `name` and `stack` with the message
 read as absent.
+
+A `toJSON()` that reveals is refused. The walk runs an object's own `toJSON()`
+to learn its JSON form, and could not tell a plain string that was always
+plain from one that was a `SensitiveString` a moment ago, so `reveal()`,
+`mask()`, `serialize()` and every transform throw `RevealDuringRedactionError`
+while a walk is running caller code. The throw is absorbed like any other
+refusal: the object's own properties are walked instead, the instance is
+redacted as an instance, and neither the policy hook nor the audit hook sees
+a reveal that never happened. Comparison still answers, since it discloses
+nothing.
 
 The two detectors answer opposite ways on purpose. `containsSensitive` returns
 `true` for a value it could not read, because reporting it as clean is how a

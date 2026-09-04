@@ -71,13 +71,19 @@ describe('serialized values on the log path', () => {
         constructor(readonly wire: unknown) {}
       }
 
+      // Serialized before the walk. A serialize() from inside a toJSON() the
+      // walk runs is refused like any other disclosure there, and the walk
+      // falls back to own properties; what is under test here is the marker
+      // reaching the walk through a toJSON()'s output.
+      const wireAhead = credential().serialize();
+
       const out = redactInStructure({
         nested: { wire: sensitive().serialize() },
         list: [credential().serialize()],
         map: new Map([['k', credential().serialize()]]),
         set: new Set([credential().serialize()]),
         entity: new Envelope(credential().serialize()),
-        viaToJSON: { toJSON: () => ({ wire: credential().serialize() }) },
+        viaToJSON: { toJSON: () => ({ wire: wireAhead }) },
       }) as {
         nested: { wire: unknown };
         list: unknown[];
