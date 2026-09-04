@@ -9,6 +9,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `@platform-sec/sensitive-string-scrub` and `@platform-sec/sensitive-string-sentry`, the
+  error tracking row of roadmap 3.7. The roadmap described this as "one `beforeSend` hook running
+  `redactInStructure`", and all three nouns were wrong. Measured on Node 22.15.0 against
+  `@sentry/node` 10.73.0: `beforeSend` receives an event the SDK has already normalized through its
+  JSON form, so every `SensitiveString` in it is a string by then and structural redaction there is a
+  no-op; `redactInStructure` replaces the second visit to a shared reference with `'[Circular]'`,
+  which corrupts an event that legitimately holds one object at two paths; and the leak is not
+  unredacted instances at all, because a wrapped value is already safe on every path tested. The
+  leak is the raw strings nobody wrapped, sitting beside the wrapped ones: at stock defaults, with no
+  `sendDefaultPii` and no `dataCollection`, one inbound request puts `request.headers.authorization`,
+  `request.headers.cookie`, `request.cookies`, `request.url` and `request.query_string` into the
+  outgoing event verbatim.
+- `scrub` is the shared layer, with no third-party runtime dependencies. It runs two walks, one per
+  stage, with the report accumulated during the second rather than computed by a third: structural
+  redaction through `redactCopy`, which keeps prototypes and shared references and replaces a
+  `serialize()` result with the marker of the class it names, and then a key and path denylist over
+  the copy. `DEFAULT_DENY_KEYS` is the union of `rollbar` 3.1.0's three key-shaped default lists,
+  which a test asserts is still a superset of what the installed `rollbar` ships, plus the
+  credential-bearing names those lists omit. Matching is on key names and paths and never on values.
+  A denied value is replaced rather than deleted, and `allowKeys` requires a reason string, because
+  taking a key off the default list is the one operation here that makes it leak more. `urlKeys`
+  replaces the denied query parameters of a URL and keeps the route, since deleting the URL removes
+  most of an error report's value. A value structural redaction already replaced keeps its marker
+  rather than being censored over, because the marker names the class and is equally safe.
+- The marker rule inverts here. 3.7 says an integration that transmits throws if the outgoing bytes
+  contain `[REDACTED:`; an error tracker is a sink rather than a wire, so the marker is the desired
+  output and its absence is the failure. A marker in *captured* data is instead evidence that another
+  integration failed, and is reported through the `sensitive.marker_seen` tag rather than thrown on,
+  since throwing would suppress the report of the incident the marker is evidence of.
+- No hook body throws. Measured: a `beforeSend` that throws makes Sentry drop the original event and
+  send a replacement describing the scrubber's own exception, so the error the user needed is gone
+  and the alert names the wrong thing. On an internal failure the payload becomes a stub carrying the
+  exception type, the grouping data the vendor already computed, and a `sensitive.scrub_failed` tag,
+  and `onScrub` is called with `failed: true`. Only two independent failures, a scrub that throws and
+  a stub that throws, drop a payload.
+- `sentry` is an options wrapper rather than an integration, which the measurements force. An
+  integration cannot reach `beforeBreadcrumb`, a client option, and an integration's `processEvent`
+  runs in registration order: one listed before `extraErrorDataIntegration()` never sees the
+  `contexts.<ErrorName>` it writes, which is where a custom property on a thrown error lands with raw
+  values intact. `withSensitiveScrubbing` composes all six `before*` hooks at `init` and appends an
+  integration whose `setup()` registers a scope event processor, which the SDK runs after every
+  integration's `processEvent` regardless of array order. A caller's hook is composed rather than
+  replaced and runs after the scrubber on the already-scrubbed payload; one returning `null` still
+  drops the payload; one that throws does not lose the event. The wrapper is idempotent and does not
+  modify the options object it was given, and it refuses `sendDefaultPii: true` rather than scrubbing
+  harder, because that option enables every collection category and is deprecated in v10.
+- Two rows of the hook map were measured that the design had recorded as unmeasured and assumed:
+  `beforeSendLog` and `beforeSendMetric` both hand over live `SensitiveString` instances, while
+  `beforeSendTransaction` and `beforeSendSpan` do not. Structural redaction runs at every seam
+  regardless, because "already normalized" is a property of one version rather than a documented
+  contract. `beforeSend` runs as a quiet backstop: it scrubs without reporting, so one payload still
+  produces one report, and with marker counting off, since by then the earlier pass has written a
+  marker everywhere a wrapped value stood.
+- Added `recommendedDataCollection`, an object to spread into `Sentry.init` rather than a default
+  this package applies. `sendDefaultPii` defaults to `false` and headers, cookies and query strings
+  were still captured verbatim, because `dataCollection`'s per-category defaults are what governs
+  collection. The object turns off `cookies`, `httpBodies`, `databaseQueryData` and `genAI`, and the
+  README explains each. Silently changing what an error tracker collects is too large a behavioural
+  change to make from inside a scrubbing package.
+- Added a type-level seam check. `COVERED_HOOKS` is asserted against
+  `Extract<keyof NodeOptions, 'before${string}'>` in both directions, so a seventh hook in a future
+  SDK release fails compilation with the new hook's name in the failure, and a stale name here fails
+  it from the other side. Verified by removing `beforeSendMetric` and watching the check name it.
+- Added a canary sweep for each package. Every position an SDK captures gets a canary, a real error
+  is driven through the real SDK to a capturing transport, and the canary is asserted absent from the
+  whole outgoing envelope. A companion case runs the same positions with no scrubbing and requires
+  every one of them to leak, so a fixture that stopped exercising anything fails rather than passing
+  quietly. Nothing in either suite mocks the SDK. Alongside them are five pinning tests recording the
+  vendor behaviour the design depends on, and an import-surface test asserting that shipped source
+  imports only `SensitiveString`, `redactCopy`, `containsSensitive`, `sensitiveClassesIn` and
+  `SensitivityClass` from core, since a scrubbing package that reveals has inverted its own purpose.
+
+### Changed
+
+- Added a `typecheck` script, `tsc --noEmit` over the whole repository including tests, and a CI step
+  that runs it. The type-level seam checks live in `.test-d.ts` files that `vitest` does not collect
+  and a package build excludes, so without this they would have compiled nowhere.
+
 - Added `redactCopy()`, the walk a response body needs before a serializer other than
   `JSON.stringify` sees it. It copies the structure with every `SensitiveString` replaced by its
   redaction and every `serialize()` result, recognised by its `__sensitive: true` marker, replaced by

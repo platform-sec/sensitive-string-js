@@ -27,6 +27,16 @@ This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under 
   `express4` devDependency alias. That alias's ambient typings live in `packages/sensitive-express/types/`
   rather than under `src`, because `.gitignore` and `pnpm clean` both treat a declaration file under a
   package's `src` as build output.
+- `packages/sensitive-scrub/src/` contains the shared layer under the error tracking and APM
+  integrations: the staged payload walk over `redactCopy`, `DEFAULT_DENY_KEYS` and its matcher, the
+  never-throw wrapper, and the canary harness vendor suites import from `./testing`. It has no
+  third-party runtime dependencies and takes the core package as a peer, because structural
+  redaction is `instanceof` checks and two copies of core make them all miss.
+- `packages/sensitive-sentry/src/` contains the Sentry integration: `withSensitiveScrubbing`, which
+  composes all six of the SDK's `before*` hooks and appends an integration whose `setup()` registers
+  the scope event processor, plus `recommendedDataCollection` and the Sentry-shaped payload paths. It
+  takes core, `sensitive-scrub`, and `@sentry/node` as peers, and its suite drives the real SDK to a
+  capturing transport rather than mocking it.
 - `packages/sensitive-eslint-plugin/src/` contains the ESLint rules, their presets, and the
   parser-agnostic AST helpers they share. It has no runtime dependencies, not even on the core
   package: the rules read syntax, never types. Each rule's user-facing documentation is in
@@ -42,9 +52,10 @@ Use pnpm 9; the preinstall hook rejects other package managers.
 
 - `pnpm install --frozen-lockfile` installs the exact dependency graph.
 - `pnpm build` compiles every workspace package to its `dist/` directory.
-- `pnpm exec tsc --noEmit` type-checks packages and examples together, apart from
-  `sensitive-nestjs`; that one is checked with `pnpm --filter @platform-sec/sensitive-string-nestjs
-  exec tsc --noEmit`.
+- `pnpm typecheck` type-checks packages and examples together, apart from `sensitive-nestjs`; that
+  one is checked with `pnpm --filter @platform-sec/sensitive-string-nestjs exec tsc --noEmit`. This
+  is what runs the `.test-d.ts` seam checks, which `vitest` does not collect and a package build
+  excludes, so an integration claiming to cover a vendor's hooks fails here when the vendor adds one.
 - `pnpm test` runs the Vitest suite once; `pnpm test:watch` supports local iteration.
 - `pnpm test:coverage` writes V8 text, JSON, and HTML coverage reports.
 - `pnpm lint` runs type-aware ESLint; `pnpm lint:fix` applies safe fixes.

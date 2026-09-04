@@ -1,0 +1,50 @@
+{
+  "name": "@platform-sec/sensitive-string-scrub",
+  "version": "0.1.0",
+  "description": "Shared payload scrubbing for error tracking and APM integrations - structural redaction, key denylist, and a never-throw contract",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "security",
+    "sensitive-data",
+    "redaction",
+    "error-tracking",
+    "apm",
+    "scrubbing",
+    "typescript"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "peerDependencies": {
+    "@platform-sec/sensitive-string-core": "^0.1.0"
+  },
+  "devDependencies": {
+    "@platform-sec/sensitive-string-core": "workspace:*",
+    "@platform-sec/sensitive-string-testing": "workspace:*",
+    "@types/node": "^22.20.1",
+    "rollbar": "^3.1.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

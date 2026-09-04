@@ -89,6 +89,12 @@ jobs:
       - name: Check formatting
         run: pnpm format:check
 
+      # Compiles every package plus its tests under one program. This is what
+      # runs the type-level seam checks, which fail when a vendor SDK adds or
+      # removes a hook that an integration package claims to cover.
+      - name: Type-check
+        run: pnpm typecheck
+
   build:
     name: Build
     runs-on: ubuntu-latest

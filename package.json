@@ -24,6 +24,7 @@
     "test:timing": "vitest run --config vitest.timing.config.ts",
     "lint": "eslint packages examples",
     "lint:fix": "eslint packages examples --fix",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "format": "prettier --write \"packages/*/src/**/*.ts\" \"examples/**/*.ts\"",
     "format:check": "prettier --check \"packages/*/src/**/*.ts\" \"examples/**/*.ts\"",
     "check:packaging": "node scripts/check-packaging.mjs",
