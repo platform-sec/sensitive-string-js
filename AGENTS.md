@@ -147,7 +147,10 @@ Use pnpm 9; the preinstall hook rejects other package managers.
   imports another workspace package by name resolves it through that package's `exports` map, so it
   runs against `dist` rather than source: build before running one of those, or a change to the
   dependency is invisible to the tests that exercise it. Colocated tests that import by relative
-  path are unaffected.
+  path are unaffected. This also decides whether a check that a test guards what it claims means
+  anything: breaking the dependency on purpose and rerunning proves nothing without the rebuild,
+  because the run still exercises the old `dist`, passes, and leaves a vacuous test looking exactly
+  like a load bearing one.
 - The `http-client-compat` job installs `axios@latest`, `got@latest`, `ky@latest` and
   `undici@latest` over the lockfile and reruns the six HTTP client suites. It is informational, like
   the two live tiers, and it writes the resolved versions into the run summary so the measurement
