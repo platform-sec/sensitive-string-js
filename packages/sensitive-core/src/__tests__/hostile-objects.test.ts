@@ -129,6 +129,29 @@ function hostileObjects(): Record<string, object> {
     }),
     /** No prototype at all, so every `Object.prototype` method is absent. */
     nullPrototype: Object.assign(Object.create(null) as object, { KNOWN: 'known' }),
+    /**
+     * Built-in shapes. Each answers `instanceof` through the prototype the
+     * Proxy forwards, and then throws from the built-in itself, whose internal
+     * slot is on the target and not on the proxy.
+     */
+    proxiedMap: new Proxy(new Map([['KNOWN', 'known']]), {}),
+    proxiedSet: new Proxy(new Set(['known']), {}),
+    /** Throws from every method, the `toJSON()` a serializer calls later included. */
+    proxiedDate: new Proxy(new Date(0), {}),
+    /** The brand check on the private field refuses the proxy as `toString()`'s receiver. */
+    proxiedInstance: new Proxy(new SensitiveString(CANARY, 'credential'), {}),
+    /** An array behind a `get` trap that refuses `length`, `map`, the iterator and every index. */
+    proxiedArray: new Proxy(['known'], {
+      get(): never {
+        throw new Error('[test] array refused');
+      },
+    }),
+    /** An Error whose `message` is a getter that throws, and holds the canary in what it throws. */
+    throwingErrorMessage: Object.defineProperty(new Error('[test] visible'), 'message', {
+      get(): never {
+        throw new Error(`[test] message refused, holding ${CANARY}`);
+      },
+    }),
     /** A handler that answers every trap with a throwing function. */
     everythingRefuses: new Proxy(
       {},
@@ -265,6 +288,69 @@ describe('what a partially readable object becomes', () => {
     const redacted = redactInStructure(hostile['strictGet']) as Record<string, unknown>;
 
     expect(redacted['KNOWN']).toBe('known');
+  });
+});
+
+describe('what a built-in shape that refuses becomes', () => {
+  it('is the marker for a proxied Map, Set, Date or array in a log line', () => {
+    const redacted = redactInStructure({
+      map: hostile['proxiedMap'],
+      set: hostile['proxiedSet'],
+      when: hostile['proxiedDate'],
+      list: hostile['proxiedArray'],
+    });
+
+    expect(redacted).toEqual({
+      map: '[Unreadable]',
+      set: '[Unreadable]',
+      when: '[Unreadable]',
+      list: '[Unreadable]',
+    });
+  });
+
+  it('is the marker for a proxied instance in both copying walks, never the value', () => {
+    expect(redactInStructure(hostile['proxiedInstance'])).toBe('[Unreadable]');
+    expect(redactCopy(hostile['proxiedInstance'])).toBe('[Unreadable]');
+    expect(safeStringify({ token: hostile['proxiedInstance'] })).toBe('{"token":"[Unreadable]"}');
+  });
+
+  it('is the marker for a proxied collection in a redactCopy, with a Date still by reference', () => {
+    const copied = redactCopy({
+      map: hostile['proxiedMap'],
+      set: hostile['proxiedSet'],
+      list: hostile['proxiedArray'],
+      when: hostile['proxiedDate'],
+    }) as Record<string, unknown>;
+
+    expect(copied['map']).toBe('[Unreadable]');
+    expect(copied['set']).toBe('[Unreadable]');
+    expect(copied['list']).toBe('[Unreadable]');
+    // Passed through by contract; `redactInStructure` is the walk that asks it a question.
+    expect(copied['when']).toBe(hostile['proxiedDate']);
+  });
+
+  it('keeps the Error properties that read and empties the ones that throw', () => {
+    const redacted = redactInStructure(hostile['throwingErrorMessage']) as Record<string, unknown>;
+
+    expect(redacted['name']).toBe('Error');
+    expect(redacted['message']).toBeUndefined();
+    // V8 formats `stack` on first access and reads `message` to do it, so the
+    // getter takes the stack down with it. Absent, not an exception.
+    expect(redacted['stack']).toBeUndefined();
+    expect(Object.keys(redacted)).toEqual(['name', 'message', 'stack']);
+    expect(JSON.stringify(redacted)).not.toContain(CANARY);
+  });
+
+  it('is reported as possibly sensitive, and contributes no class', () => {
+    for (const name of ['proxiedMap', 'proxiedSet', 'proxiedArray'] as const) {
+      expect(containsSensitive(hostile[name]), name).toBe(true);
+      expect(sensitiveClassesIn(hostile[name]).size, name).toBe(0);
+    }
+  });
+
+  it('still names the class of a proxied instance, which the proxy forwards', () => {
+    expect(containsSensitive(hostile['proxiedInstance'])).toBe(true);
+    expect(sensitiveClassesIn(hostile['proxiedInstance']).has('credential')).toBe(true);
   });
 });
 

@@ -203,6 +203,16 @@ all, so it never reaches the output either way. An object that refuses to be
 enumerated at all becomes `UNREADABLE`, the string `'[Unreadable]'`, which is
 honest where an empty object would claim the value had no fields.
 
+The built-in branches are guarded the same way. A Proxy around a `Map`, a
+`Set`, a `Date`, an array or a `SensitiveString` answers `instanceof` through
+the prototype it forwards and then throws from the built-in itself:
+`Map.prototype.entries` refuses the proxy as its receiver, a Date proxy throws
+from every method, the `toJSON()` a serializer calls later included, and the
+brand check on the private field refuses the proxy as `toString()`'s receiver.
+Each becomes `UNREADABLE` rather than an exception, and an `Error` whose
+`message` is a getter that throws keeps its `name` and `stack` with the message
+read as absent.
+
 The two detectors answer opposite ways on purpose. `containsSensitive` returns
 `true` for a value it could not read, because reporting it as clean is how a
 caller ships a payload believing it was checked. `sensitiveClassesIn` contributes

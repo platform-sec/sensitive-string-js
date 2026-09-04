@@ -44,6 +44,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enumerate them, this walk included. The scrub walk under the error tracking integrations sees a
   redacted copy where it saw the original, and applies no key name inside one.
 
+### Fixed
+
+- The built-in branches of every redaction walk are now guarded like the rest. A Proxy around a
+  `Map`, a `Set`, a `Date`, an array or a `SensitiveString` answers `instanceof` through the
+  prototype it forwards and then throws from the built-in itself: `Map.prototype.entries` refuses the
+  proxy as its receiver, a Date proxy throws from every method, and the brand check on the private
+  field refuses the proxy as `toString()`'s receiver. `safeStringify`, `safeLog`, `redactInStructure`,
+  `redactCopy`, `containsSensitive` and `sensitiveClassesIn` each threw on one shape or another,
+  against the README's promise that no object can make a redaction throw. Each such object becomes
+  `UNREADABLE` now; an `Error` whose `message` is a getter that throws keeps its `name` and `stack`
+  with the message read as absent; `containsSensitive` answers `true` for a collection it could not
+  iterate and `sensitiveClassesIn` contributes nothing, as the two already do for an object they
+  cannot enumerate.
+
 ### Added
 
 - Added the HTTP client row: `@platform-sec/sensitive-string-http` as the shared layer, and five

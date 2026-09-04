@@ -7,8 +7,9 @@ This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under 
 - `packages/sensitive-core/src/` contains the redaction, policy, context, and wrapping APIs.
   `probe.ts` holds the guarded reads every walk uses against objects it did not create: an arbitrary
   object controls the tag read, the prototype read, `has`, `toJSON`, `ownKeys`,
-  `getOwnPropertyDescriptor`, every enumerable getter and `toString`, and a throw from any of them
-  used to take the redaction down with it. `src/__tests__/hostile-objects.test.ts` drives every one
+  `getOwnPropertyDescriptor`, every enumerable getter, `toString`, and behind a Proxy the iteration
+  of a Map, Set or array and every method of a Date, and a throw from any of them used to take the
+  redaction down with it. `src/__tests__/hostile-objects.test.ts` drives every one
   of those hooks against every walk; extend that table rather than assuming it is complete, because
   each of the three rounds of this defect was found by widening it and none by reading the code.
 - `packages/sensitive-zod/src/` contains the Zod integration and depends on the core package.

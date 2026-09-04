@@ -16,6 +16,8 @@
  * | `obj.toJSON()` | the method body |
  * | `Object.keys(obj)` / `Object.entries(obj)` | `ownKeys`, `getOwnPropertyDescriptor`, and every enumerable getter |
  * | `String(obj)` | a `toString` or `Symbol.toPrimitive` |
+ * | `for (const entry of map)`, `array.map()`, `date.getTime()` | a Proxy in front of the built-in, whose target alone has the internal slot, or a subclass iterator |
+ * | `error.message` | a getter on the instance |
  *
  * The one that matters most in practice is not a Proxy at all. An ordinary
  * object with an enumerable getter that throws is what an ORM produces for a
@@ -127,6 +129,25 @@ export function probeCall(method: () => unknown, thisArg: object): ProbeResult {
     return { ok: true, value: method.call(thisArg) };
   } catch {
     return { ok: false, value: undefined };
+  }
+}
+
+/**
+ * Run one operation a built-in performs on the object, treating a throw as no
+ * answer.
+ *
+ * Iterating a Map or a Set, mapping an array, reading a Date's time: each is
+ * the object's own code once a Proxy stands in front of it. `Map.prototype.entries`
+ * refuses a proxy as its receiver, an array proxy may refuse `length` or an
+ * index, and a Date proxy throws from every method, the `toJSON()` a serializer
+ * calls later included. A partial result would claim to be the whole, so the
+ * caller gets none, and substitutes {@link UNREADABLE} or its own safe answer.
+ */
+export function probeBuiltin<T>(operation: () => T): T | undefined {
+  try {
+    return operation();
+  } catch {
+    return undefined;
   }
 }
 

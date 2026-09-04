@@ -1,5 +1,5 @@
 import { SensitiveString } from './sensitive-string.js';
-import { UNREADABLE, probeEntries, probePrototype, probeProperty } from './probe.js';
+import { UNREADABLE, probeEntries, probePrototype, probeProperty, probeString } from './probe.js';
 import { carriesSerializedMarker, redactSerialized } from './serialized.js';
 import { assignOwn } from './own-property.js';
 
@@ -81,8 +81,12 @@ function copyRedacted(value: unknown, copies: WeakMap<object, unknown>): unknown
     return UNREADABLE;
   }
 
+  // An instance redacts itself. Guarded, because a Proxy around one answers
+  // `instanceof` through the prototype it forwards and then throws from
+  // `toString()`: the brand check refuses the proxy as a receiver. The marker
+  // loses nothing, since the redaction is the whole of what the copy keeps.
   if (value instanceof SensitiveString) {
-    return value.toString();
+    return probeString(value) ?? UNREADABLE;
   }
 
   if (carriesSerializedMarker(value)) {
@@ -99,13 +103,21 @@ function copyRedacted(value: unknown, copies: WeakMap<object, unknown>): unknown
     return existing;
   }
 
+  // Iteration is the array's own code once a Proxy stands in front of it,
+  // which may refuse `length`, an index, or the iterator. The marker stands in
+  // for a partial copy, memoized so a second reference gets the same answer.
   if (Array.isArray(value)) {
     const copy: unknown[] = [];
 
     copies.set(value, copy);
 
-    for (const item of value) {
-      copy.push(copyRedacted(item, copies));
+    try {
+      for (const item of value) {
+        copy.push(copyRedacted(item, copies));
+      }
+    } catch {
+      copies.set(value, UNREADABLE);
+      return UNREADABLE;
     }
 
     return copy;

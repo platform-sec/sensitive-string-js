@@ -5,9 +5,11 @@ import { assignOwn } from './own-property.js';
 import {
   UNREADABLE,
   isUnreadable,
+  probeBuiltin,
   probeCall,
   probeEntries,
   probeMethod,
+  probeProperty,
   probePrototype,
   probeString,
   probeTag,
@@ -120,9 +122,13 @@ export function redactInStructure(obj: unknown, seen = new WeakSet<object>()): u
     return UNREADABLE;
   }
 
-  // Handle SensitiveString - redact to string
+  // A SensitiveString redacts itself. Guarded, because a Proxy around an
+  // instance answers `instanceof` through the prototype it forwards and then
+  // throws from `toString()`: the private field is on the target, and the
+  // brand check refuses the proxy as a receiver. The marker loses nothing,
+  // since the redaction is the whole of what the walk keeps.
   if (obj instanceof SensitiveString) {
-    return obj.toString();
+    return probeString(obj) ?? UNREADABLE;
   }
 
   // A serialize() result carries the raw value by design, and it is a plain
@@ -138,41 +144,57 @@ export function redactInStructure(obj: unknown, seen = new WeakSet<object>()): u
   }
   seen.add(obj);
 
-  // Handle arrays
+  // Arrays. `map` reads `length` and every index through the object, and a
+  // Proxy around an array answers `Array.isArray` and may refuse both.
   if (Array.isArray(obj)) {
-    return obj.map((item) => redactInStructure(item, seen));
+    return probeBuiltin(() => obj.map((item) => redactInStructure(item, seen))) ?? UNREADABLE;
   }
 
-  // Handle Date - preserve as-is
+  // Date, preserved as-is for the logger to format. A Proxy around a Date
+  // answers `instanceof` and then throws from every method, including the
+  // `toJSON()` that `JSON.stringify` calls on it later, so the walk asks it
+  // one question now rather than leaving the throw for the serializer.
   if (obj instanceof Date) {
-    return obj;
+    return probeBuiltin(() => obj.getTime()) === undefined ? UNREADABLE : obj;
   }
 
-  // Handle Error - preserve message but redact any sensitive properties
+  // Error: name, message and stack, each read through a guard, because any of
+  // the three may be a getter the object controls. A property that refuses
+  // reads as absent while the others still read, which is the rule
+  // `probeEntries` applies to every other object.
   if (obj instanceof Error) {
     return {
-      name: obj.name,
-      message: obj.message,
-      stack: obj.stack,
+      name: probeProperty(obj, 'name'),
+      message: probeProperty(obj, 'message'),
+      stack: probeProperty(obj, 'stack'),
     };
   }
 
-  // Handle Map
+  // Map and Set, entry by entry. Iteration is the collection's own code: a
+  // Proxy around either throws from `entries()` or `values()`, and a subclass
+  // may throw from its iterator. A partial copy would claim to be the whole.
   if (obj instanceof Map) {
-    const result = new Map<unknown, unknown>();
-    for (const [key, value] of obj) {
-      result.set(redactInStructure(key, seen), redactInStructure(value, seen));
-    }
-    return result;
+    return (
+      probeBuiltin(() => {
+        const result = new Map<unknown, unknown>();
+        for (const [key, value] of obj) {
+          result.set(redactInStructure(key, seen), redactInStructure(value, seen));
+        }
+        return result;
+      }) ?? UNREADABLE
+    );
   }
 
-  // Handle Set
   if (obj instanceof Set) {
-    const result = new Set<unknown>();
-    for (const value of obj) {
-      result.add(redactInStructure(value, seen));
-    }
-    return result;
+    return (
+      probeBuiltin(() => {
+        const result = new Set<unknown>();
+        for (const value of obj) {
+          result.add(redactInStructure(value, seen));
+        }
+        return result;
+      }) ?? UNREADABLE
+    );
   }
 
   // Objects that define their own JSON form (URL, Buffer, user classes, and a
@@ -387,26 +409,36 @@ export function containsSensitive(obj: unknown, seen = new WeakSet<object>()): b
   }
   seen.add(obj);
 
+  // Iteration is the collection's own code, and a collection that refuses it
+  // answers `true`, for the reason given at the ordinary-object branch below.
   if (Array.isArray(obj)) {
-    return obj.some((item) => containsSensitive(item, seen));
+    return probeBuiltin(() => obj.some((item) => containsSensitive(item, seen))) ?? true;
   }
 
   if (obj instanceof Map) {
-    for (const [key, value] of obj) {
-      if (containsSensitive(key, seen) || containsSensitive(value, seen)) {
-        return true;
-      }
-    }
-    return false;
+    return (
+      probeBuiltin(() => {
+        for (const [key, value] of obj) {
+          if (containsSensitive(key, seen) || containsSensitive(value, seen)) {
+            return true;
+          }
+        }
+        return false;
+      }) ?? true
+    );
   }
 
   if (obj instanceof Set) {
-    for (const value of obj) {
-      if (containsSensitive(value, seen)) {
-        return true;
-      }
-    }
-    return false;
+    return (
+      probeBuiltin(() => {
+        for (const value of obj) {
+          if (containsSensitive(value, seen)) {
+            return true;
+          }
+        }
+        return false;
+      }) ?? true
+    );
   }
 
   if (isOrdinaryObject(obj)) {
@@ -466,7 +498,15 @@ export function sensitiveClassesIn(
   }
 
   if (obj instanceof SensitiveString) {
-    found.add((obj as SensitiveString<SensitivityClass>).klass);
+    // Through a guard: a Proxy around an instance forwards the read, and a
+    // hostile one may refuse it. Nothing to name then, as for any other object
+    // that was never read.
+    const klass = probeProperty(obj, 'klass');
+
+    if (typeof klass === 'string') {
+      found.add(klass as SensitivityClass);
+    }
+
     return found;
   }
 
@@ -485,25 +525,34 @@ export function sensitiveClassesIn(
   }
   seen.add(obj);
 
+  // Iteration is the collection's own code. A collection that refuses it
+  // contributes nothing beyond what was read before the refusal, which is the
+  // answer this walk gives for an object it cannot enumerate.
   if (Array.isArray(obj)) {
-    for (const item of obj) {
-      sensitiveClassesIn(item, found, seen);
-    }
+    probeBuiltin(() => {
+      for (const item of obj) {
+        sensitiveClassesIn(item, found, seen);
+      }
+    });
     return found;
   }
 
   if (obj instanceof Map) {
-    for (const [key, value] of obj) {
-      sensitiveClassesIn(key, found, seen);
-      sensitiveClassesIn(value, found, seen);
-    }
+    probeBuiltin(() => {
+      for (const [key, value] of obj) {
+        sensitiveClassesIn(key, found, seen);
+        sensitiveClassesIn(value, found, seen);
+      }
+    });
     return found;
   }
 
   if (obj instanceof Set) {
-    for (const value of obj) {
-      sensitiveClassesIn(value, found, seen);
-    }
+    probeBuiltin(() => {
+      for (const value of obj) {
+        sensitiveClassesIn(value, found, seen);
+      }
+    });
     return found;
   }
 
