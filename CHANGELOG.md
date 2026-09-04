@@ -70,6 +70,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the message read as absent; `containsSensitive` answers `true` for a collection it could not
   iterate and `sensitiveClassesIn` contributes nothing, as the two already do for an object they
   cannot enumerate.
+- `pnpm test` inside a package directory found no tests. Each package's script ran a bare
+  `vitest run`, which walked up to the repository's `vitest.config.ts` and then resolved its
+  `packages/*/src` include globs against the package directory, where they match nothing. The scripts
+  now run from the repository root with the package as the filter, so
+  `cd packages/sensitive-core && pnpm test` runs that package's suite under the same configuration
+  as the root run, the NestJS package's swc transform included.
 
 ### Added
 

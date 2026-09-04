@@ -16,8 +16,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run --root ../.. packages/sensitive-decorators/",
+    "test:watch": "vitest --root ../.. packages/sensitive-decorators/"
   },
   "keywords": [
     "decorators",

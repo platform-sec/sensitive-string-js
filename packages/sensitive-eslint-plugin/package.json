@@ -17,8 +17,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run --root ../.. packages/sensitive-eslint-plugin/",
+    "test:watch": "vitest --root ../.. packages/sensitive-eslint-plugin/"
   },
   "keywords": [
     "eslint",

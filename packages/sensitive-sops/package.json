@@ -20,8 +20,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run --root ../.. packages/sensitive-sops/",
+    "test:watch": "vitest --root ../.. packages/sensitive-sops/"
   },
   "keywords": [
     "security",

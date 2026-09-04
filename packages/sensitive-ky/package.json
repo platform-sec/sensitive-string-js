@@ -16,8 +16,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run --root ../.. packages/sensitive-ky/",
+    "test:watch": "vitest --root ../.. packages/sensitive-ky/"
   },
   "keywords": [
     "ky",
