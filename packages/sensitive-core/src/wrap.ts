@@ -1,11 +1,20 @@
 import { SensitiveString } from './sensitive-string.js';
-import type { SensitivityClass, RevealContext } from './types.js';
+import type { SensitivityClass, RevealContext, SensitiveStringOptions } from './types.js';
 import { getCurrentRevealContext } from './context.js';
 
-/** Class and optional audit label for one configured field path. */
+/** Class, optional audit label, and optional lifetime for one configured field path. */
 export interface SensitiveFieldOptions {
   klass: SensitivityClass;
   label?: string;
+  /**
+   * Construction options for the wrapped value, most usefully a deadline.
+   *
+   * A secrets manager that reports when a secret expires has to bind that
+   * deadline to every field it wrapped, and a wrapper that could only carry a
+   * class and a label would leave the deadline in provider metadata that
+   * nothing enforces.
+   */
+  options?: SensitiveStringOptions;
 }
 
 /**
@@ -18,6 +27,7 @@ export interface SensitiveFieldOptions {
  * const config: SensitiveFieldConfig = {
  *   'user.email': 'sensitive',
  *   'user.ssn': { klass: 'sensitive', label: 'ssn' },
+ *   'session.refresh': { klass: 'credential', options: { ttl: 60_000 } },
  *   'credentials.apiKey': 'credential',
  *   'session.token': 'credential',
  * };
@@ -168,9 +178,9 @@ export function wrapSensitiveByPath<T extends object>(obj: T, config: SensitiveF
 
     // Only wrap if value exists and is a string
     if (typeof value === 'string') {
-      const { klass, label } =
-        typeof fieldConfig === 'string' ? { klass: fieldConfig, label: undefined } : fieldConfig;
-      const wrapped = new SensitiveString(value, klass, label);
+      const resolved: SensitiveFieldOptions =
+        typeof fieldConfig === 'string' ? { klass: fieldConfig } : fieldConfig;
+      const wrapped = new SensitiveString(value, resolved.klass, resolved.label, resolved.options);
       setByPath(result, path, wrapped);
     }
     // If already a SensitiveString, leave it alone

@@ -103,6 +103,16 @@ export { redactCopy } from './redact-copy.js';
 export { sensitiveFormat } from './winston.js';
 export type { SensitiveFormatOptions, WinstonFormat, WinstonInfo } from './winston.js';
 
+// Field classification, shared by the integrations that decide which keys of a
+// decoded payload get wrapped
+export { compileClassification, classifyField } from './classification.js';
+export type {
+  FieldClass,
+  ClassificationRule,
+  ClassificationSpec,
+  CompiledClassification,
+} from './classification.js';
+
 // Path-based wrapping utilities
 export {
   wrapSensitiveByPath,

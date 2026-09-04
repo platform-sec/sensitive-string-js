@@ -555,3 +555,35 @@ describe('edge cases', () => {
     expect((result.secret as unknown as SensitiveString).klass).toBe('credential');
   });
 });
+
+describe('wrapSensitiveByPath construction options', () => {
+  it('binds a deadline supplied per field', () => {
+    const config: SensitiveFieldConfig = {
+      'creds.password': { klass: 'credential', label: 'db#password', options: { ttl: 60_000 } },
+    };
+
+    const result = wrapSensitiveByPath({ creds: { password: 'pw' } }, config);
+    const wrapped = result.creds.password as unknown as SensitiveString;
+
+    expect(wrapped.label).toBe('db#password');
+    expect(wrapped.isExpired()).toBe(false);
+    expect(wrapped.ttlRemaining()).toBeGreaterThan(0);
+    expect(wrapped.ttlRemaining()).toBeLessThanOrEqual(60_000);
+  });
+
+  it('leaves a field with no options unbounded', () => {
+    const result = wrapSensitiveByPath({ token: 'tok' }, { token: { klass: 'credential' } });
+    const wrapped = result.token as unknown as SensitiveString;
+
+    expect(wrapped.expiresAt).toBeUndefined();
+  });
+
+  it('applies an expired deadline rather than ignoring it', () => {
+    const result = wrapSensitiveByPath(
+      { token: 'tok' },
+      { token: { klass: 'credential', options: { expiresAt: new Date(Date.now() - 1000) } } }
+    );
+
+    expect((result.token as unknown as SensitiveString).isExpired()).toBe(true);
+  });
+});
