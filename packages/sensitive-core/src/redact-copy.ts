@@ -1,4 +1,5 @@
 import { SensitiveString } from './sensitive-string.js';
+import { probeProperty } from './probe.js';
 import { carriesSerializedMarker, redactSerialized } from './serialized.js';
 
 /**
@@ -130,6 +131,6 @@ function passesThrough(value: object): boolean {
     value instanceof String ||
     value instanceof Number ||
     value instanceof Boolean ||
-    typeof (value as { pipe?: unknown }).pipe === 'function'
+    typeof probeProperty(value, 'pipe') === 'function'
   );
 }

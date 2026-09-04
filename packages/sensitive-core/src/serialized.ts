@@ -1,4 +1,5 @@
 import { getPolicy, hasPolicy } from './policy.js';
+import { probeProperty } from './probe.js';
 import type { SensitivityClass } from './types.js';
 
 /**
@@ -15,9 +16,13 @@ import type { SensitivityClass } from './types.js';
  * Whether an object is a serialized sensitive value, judged by its marker
  * alone so that a malformed or truncated copy of one is still replaced rather
  * than emitted.
+ *
+ * The read goes through `probeProperty` because it runs against every object a
+ * walk reaches, and an object that refuses the question is not a `serialize()`
+ * result: that shape is a plain object this library built.
  */
 export function carriesSerializedMarker(value: object): boolean {
-  return (value as { __sensitive?: unknown }).__sensitive === true;
+  return probeProperty(value, '__sensitive') === true;
 }
 
 /**
@@ -25,7 +30,7 @@ export function carriesSerializedMarker(value: object): boolean {
  * when it names none or one that is not registered.
  */
 export function serializedClass(value: object): SensitivityClass | undefined {
-  const { klass } = value as { klass?: unknown };
+  const klass = probeProperty(value, 'klass');
 
   return typeof klass === 'string' && hasPolicy(klass as SensitivityClass)
     ? (klass as SensitivityClass)
@@ -45,7 +50,7 @@ export function redactSerialized(value: object): string {
     return '[REDACTED]';
   }
 
-  const { value: raw } = value as { value?: unknown };
+  const raw = probeProperty(value, 'value');
 
   return getPolicy(klass).redact(typeof raw === 'string' ? raw : '');
 }

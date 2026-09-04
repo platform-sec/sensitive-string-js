@@ -14,6 +14,7 @@ import {
   sensitiveClassesIn,
   sensitiveFormat,
 } from './index.js';
+import { carriesSerializedMarker } from './serialized.js';
 
 const CANARY = 'LEAKED_SECRET_wire_4e2b';
 
@@ -30,6 +31,24 @@ function sink(lines: string[]): winston.transport {
   });
 
   return new winston.transports.Stream({ stream });
+}
+
+/**
+ * A Proxy that throws for any name it was not given, rather than answering
+ * `undefined`. This is the shape envalid's `cleanEnv()` returns, and it is what
+ * every walk in this library meets when a caller logs a validated config
+ * object.
+ */
+function strictProxy<T extends object>(target: T): T {
+  return new Proxy(target, {
+    get(t, name, receiver): unknown {
+      if (typeof name === 'string' && !Object.hasOwn(t, name)) {
+        throw new ReferenceError(`Env var not found: ${name}`);
+      }
+
+      return Reflect.get(t, name, receiver);
+    },
+  });
 }
 
 /**
@@ -153,6 +172,53 @@ describe('serialized values on the log path', () => {
 
       expect(sensitiveClassesIn(value).size).toBe(0);
       expect(containsSensitive(value)).toBe(true);
+    });
+  });
+
+  /**
+   * The marker probe reads a property that is absent from almost every object
+   * it meets, and an object is allowed to throw on that read. Before the guard
+   * in carriesSerializedMarker, each helper below died with the proxy's own
+   * ReferenceError instead of redacting anything.
+   */
+  describe('objects that throw on an unknown property read', () => {
+    it('CANARY: every walk redacts through a strict proxy instead of throwing', () => {
+      const config = strictProxy({ token: credential(), host: 'db.internal' });
+
+      expect(redactInStructure(config)).toEqual({
+        token: '[REDACTED:credential]',
+        host: 'db.internal',
+      });
+      expect(redactCopy(config)).toEqual({
+        token: '[REDACTED:credential]',
+        host: 'db.internal',
+      });
+      expect(containsSensitive(config)).toBe(true);
+      expect([...sensitiveClassesIn(config)]).toEqual(['credential']);
+      expect(safeStringify(config)).not.toContain(CANARY);
+      expect(JSON.stringify(safeLog(config))).not.toContain(CANARY);
+    });
+
+    it('CANARY: reaches one nested inside an ordinary object, which is how it is logged', () => {
+      const payload = { config: strictProxy({ token: credential() }), requestId: 'r-1' };
+
+      const logged = JSON.stringify(safeLog(payload));
+
+      expect(logged).not.toContain(CANARY);
+      expect(logged).toContain('[REDACTED:credential]');
+      expect(containsSensitive(payload)).toBe(true);
+    });
+
+    it('CANARY: still replaces a serialized value the proxy does answer for', () => {
+      const wire = strictProxy(credential().serialize());
+
+      expect(carriesSerializedMarker(wire)).toBe(true);
+      expect(redactInStructure({ wire })).toEqual({ wire: '[REDACTED:credential]' });
+      expect(JSON.stringify(redactInStructure({ wire }))).not.toContain(CANARY);
+    });
+
+    it('reports no marker for an object that refuses the probe', () => {
+      expect(carriesSerializedMarker(strictProxy({ klass: 'credential' }))).toBe(false);
     });
   });
 

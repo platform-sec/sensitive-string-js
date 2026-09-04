@@ -194,6 +194,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The redaction walks no longer fail when an object refuses a property read. `redactInStructure()`,
+  `safeLog()`, `safeStringify()`, `containsSensitive()`, `sensitiveClassesIn()`, and `redactCopy()`
+  each ask an arbitrary object a duck-type question or two: whether it carries the
+  `__sensitive: true` marker that a `serialize()` result has, and in `redactCopy()` whether it has a
+  `pipe` method and is therefore a stream. Both were plain property reads, and reading an absent
+  property is not universally safe, because a Proxy may throw for an unknown name rather than
+  answering `undefined`. envalid's `cleanEnv()` result is such a Proxy, so logging a validated
+  configuration object through any of these helpers raised
+  `ReferenceError: [envalid] Env var not found: __sensitive` instead of redacting anything, and it
+  did so when the object was merely nested inside the record being logged, which is how it is
+  normally logged. The probes now go through one guarded read that treats a refusal as absence, so
+  the walk descends into the object and redacts every `SensitiveString` it holds as it would for any
+  other object. Nothing that answers the question behaves differently.
+
 - `safeStringify()` returns the string its signature promises. It forwarded `JSON.stringify`'s
   `undefined`, which is what that function returns for a value JSON cannot represent: `undefined`
   itself, a function, a class constructor, a symbol, or a root dropped by a caller's replacer.
