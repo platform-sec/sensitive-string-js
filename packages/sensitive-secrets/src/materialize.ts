@@ -1,8 +1,7 @@
-import { SensitiveString, wrapSensitiveByPath } from '@platform-sec/sensitive-string-core';
+import { SensitiveString } from '@platform-sec/sensitive-string-core';
 import type {
   CompiledClassification,
   FieldClass,
-  SensitiveFieldConfig,
   SensitiveStringOptions,
   SensitivityClass,
 } from '@platform-sec/sensitive-string-core';
@@ -14,9 +13,9 @@ import type { FieldSets, ResolvedSecretRef, SecretLifetime } from './types.js';
 /** A value a field declared `'plain'` may hold. */
 export type PlainFieldValue = string | number | boolean | null;
 
-/** One leaf of a decoded payload, addressed by dot path. */
+/** One leaf of a decoded payload. */
 interface Leaf {
-  /** Dot path from the root of the payload. */
+  /** Dot path from the root, which is how a caller names the field. */
   readonly path: string;
   /** The last segment, which is what a rule written without nesting in mind matches. */
   readonly key: string;
@@ -30,9 +29,8 @@ interface Leaf {
  * null, and arrays. Arrays are leaves rather than containers because indexing
  * into one produces field names like `0` and `1`, which classify against
  * nothing and read as noise in an audit record. An already-wrapped value is a
- * leaf too, which is what makes it safe to walk the wrapped clone: descending
- * into a `SensitiveString` would enumerate its own class and label fields as if
- * they were payload.
+ * leaf too: descending into a `SensitiveString` would enumerate its own class
+ * and label fields as if they were payload.
  */
 function leaves(payload: Readonly<Record<string, unknown>>, prefix = ''): Leaf[] {
   const found: Leaf[] = [];
@@ -116,25 +114,57 @@ function isPlainScalar(value: unknown): value is PlainFieldValue {
 }
 
 /**
+ * Reject a payload whose dot paths are ambiguous.
+ *
+ * `{ "a.b": x }` and `{ a: { b: x } }` produce the same path, and a caller
+ * naming `a.b` in a spec would be naming both. Two leaves under one name would
+ * mean one of them silently wins the classification the other was meant to get,
+ * so the payload is refused instead. This is rare enough to be worth being loud
+ * about and dangerous enough to be worth refusing.
+ */
+function assertDistinctPaths(found: readonly Leaf[], ref: ResolvedSecretRef): void {
+  const seen = new Set<string>();
+
+  for (const leaf of found) {
+    if (seen.has(leaf.path)) {
+      throw new SecretPayloadError(
+        `Secret '${ref.path}' version '${ref.version}' has two fields that both address ` +
+          `'${leaf.path}', one as a key containing a dot and one through nesting. ` +
+          `Classification cannot tell them apart.`,
+        ref.path,
+        ref.version
+      );
+    }
+
+    seen.add(leaf.path);
+  }
+}
+
+/**
  * Classify, then wrap.
  *
- * The path walker is core's. This function decides which paths get wrapped and
- * with what, hands `wrapSensitiveByPath` a `{ klass, label, options }` config,
- * and reads the result back into the two maps a caller sees. Wrapping in one
- * pass rather than per field is what keeps a nested payload's structure intact.
+ * Wrapping happens at the leaf, not by dot path. An earlier version of this
+ * function handed a `SensitiveFieldConfig` to core's `wrapSensitiveByPath`,
+ * which is the obvious way to reuse a walker the library already has, and it
+ * silently failed to wrap any key containing a dot: that helper reads `a.b` as
+ * a path into a nested object, so a flat `{ "tls.key": ... }` matched nothing
+ * and the secret came back in the plain map as an ordinary string. Kubernetes
+ * Secret keys are routinely `tls.key`, `ca.crt` and `.dockerconfigjson`, so
+ * that was the common case rather than an edge one, and under-wrapping is the
+ * failure this whole layer exists to prevent.
  *
- * What this cannot fix: the decoder materialized the payload as plain strings
- * before anything was wrapped, and `wrapSensitiveByPath` deep-clones. Both
- * copies exist until collection. JavaScript has no primitive that would let it
- * do better.
+ * Wrapping at the leaf also removes a copy. The dot-path helper deep-clones its
+ * input, so the payload existed twice; now only the decoder's own copy exists
+ * until collection. JavaScript still has no primitive that would let this
+ * function do better than that one.
  */
 export function materialize(options: MaterializeOptions): Materialized {
   const { payload, ref, spec, label, lifetime, declared = [] } = options;
 
   const found = leaves(payload);
+  assertDistinctPaths(found, ref);
+
   const byPath = new Map(found.map((leaf) => [leaf.path, leaf]));
-  const classes = new Map<string, FieldClass>();
-  const config: SensitiveFieldConfig = {};
   const constructionOptions = lifetimeOptions(lifetime);
 
   for (const name of declared) {
@@ -178,53 +208,67 @@ export function materialize(options: MaterializeOptions): Materialized {
     }
   }
 
-  for (const leaf of found) {
-    const matched = spec.classify(leaf.path, [leaf.key]) ?? 'plain';
-
-    // Non-string leaves stay as they are. `port: 5432` is not a secret and
-    // wrapping a number would change its type for no benefit. The class
-    // recorded is the effective one, so a caller reading `classes` sees what
-    // happened rather than what a rule asked for.
-    const klass: FieldClass =
-      matched === 'plain' || typeof leaf.value !== 'string' ? 'plain' : matched;
-    classes.set(leaf.path, klass);
-
-    if (klass === 'plain') {
-      continue;
-    }
-
-    config[leaf.path] = {
-      klass,
-      label: fieldLabel(label, leaf.path),
-      ...(constructionOptions === undefined ? {} : { options: constructionOptions }),
-    };
-  }
-
-  const wrapped = wrapSensitiveByPath(payload as Record<string, unknown>, config);
-  const wrappedLeaves = new Map(leaves(wrapped).map((leaf) => [leaf.path, leaf.value]));
-
+  const classes = new Map<string, FieldClass>();
   const fields = new Map<string, SensitiveString<SensitivityClass>>();
   const plain = new Map<string, string>();
   const raw = new Map<string, unknown>();
   const counts: Record<FieldClass, number> = { credential: 0, sensitive: 0, plain: 0 };
 
   for (const leaf of found) {
-    const klass = classes.get(leaf.path) ?? 'plain';
-    const value = wrappedLeaves.get(leaf.path);
-
-    if (value instanceof SensitiveString) {
-      fields.set(leaf.path, value as SensitiveString<SensitivityClass>);
-      counts[klass] += 1;
+    // A value the provider already wrapped stays as it is. Re-wrapping would
+    // derive a second instance from the first and lose whichever deadline the
+    // provider bound to it.
+    if (leaf.value instanceof SensitiveString) {
+      const existing = leaf.value as SensitiveString<SensitivityClass>;
+      classes.set(leaf.path, existing.klass);
+      fields.set(leaf.path, existing);
+      counts[existing.klass] += 1;
       continue;
     }
 
-    // Either the classification said `plain`, or the leaf was not a string and
-    // so was never a candidate for wrapping.
-    counts.plain += 1;
-    raw.set(leaf.path, leaf.value);
+    const matched = spec.classify(leaf.path, [leaf.key]) ?? 'plain';
+    const value = leaf.value;
 
-    if (typeof leaf.value === 'string') {
-      plain.set(leaf.path, leaf.value);
+    // Non-string leaves stay as they are. `port: 5432` is not a secret and
+    // wrapping a number would change its type for no benefit. The class
+    // recorded is the effective one, so a caller reading `classes` sees what
+    // happened rather than what a rule asked for.
+    if (matched === 'plain' || typeof value !== 'string') {
+      classes.set(leaf.path, 'plain');
+      counts.plain += 1;
+      raw.set(leaf.path, value);
+
+      if (typeof value === 'string') {
+        plain.set(leaf.path, value);
+      }
+
+      continue;
+    }
+
+    classes.set(leaf.path, matched);
+    fields.set(
+      leaf.path,
+      new SensitiveString<SensitivityClass>(
+        value,
+        matched,
+        fieldLabel(label, leaf.path),
+        constructionOptions
+      )
+    );
+    counts[matched] += 1;
+  }
+
+  // Nothing the classification asked to protect may end up in the plain map.
+  // The bug this replaced was exactly that, and it was silent, so the
+  // post-condition stays even though the loop above now makes it unreachable.
+  for (const [path, klass] of classes) {
+    if (klass !== 'plain' && !fields.has(path)) {
+      throw new SecretPayloadError(
+        `Secret '${ref.path}' version '${ref.version}' field '${path}' was classified ` +
+          `'${klass}' but was not wrapped.`,
+        ref.path,
+        ref.version
+      );
     }
   }
 

@@ -145,6 +145,62 @@ describe.skipIf(ADDR === undefined || TOKEN === undefined)(`${FLAVOR}, live`, ()
     expect(data?.reveal({ name: 'live-test' })).toBe(CANARY);
   });
 
+  it('binds no deadline from a real KV v1 read, whose lease_duration is not one', async () => {
+    // This is the case the fixtures got wrong until a real server was asked.
+    // A KV v1 read reports the mount's default TTL with an empty lease id, so
+    // it looks like a month-long lease and expires nothing.
+    const transport = fetchTransport({ endpoint: ADDR ?? '' });
+    const headers = { 'X-Vault-Token': TOKEN ?? '' };
+    const v1Path = 'sensitive-string-kv1/prod';
+
+    await transport
+      .request({
+        method: 'POST',
+        path: 'sys/mounts/sensitive-string-kv1',
+        headers,
+        body: { type: 'kv', options: { version: '1' } },
+      })
+      .catch(() => undefined); // already mounted on a re-run
+
+    await transport.request({ method: 'POST', path: v1Path, headers, body: { password: CANARY } });
+
+    const raw = await transport.request({ method: 'GET', path: v1Path, headers });
+    const envelope = raw.body as { lease_duration: number; lease_id: string };
+
+    expect(envelope.lease_duration).toBeGreaterThan(0);
+    expect(envelope.lease_id).toBe('');
+
+    const vault = new VaultSecretSource({
+      endpoint: ADDR ?? '',
+      token: new SensitiveString(TOKEN ?? '', 'credential', 'vault-token'),
+      flavor: FLAVOR,
+      mounts: [{ path: 'sensitive-string-kv1', kv: 1 }],
+      cache: { ttl: 0 },
+    });
+
+    const record = await vault.getAll(v1Path, { fallback: 'credential' });
+
+    expect(record.ref.version).toBe('unversioned');
+
+    for (const value of record.fields.values()) {
+      expect(value.expiresAt).toBeUndefined();
+    }
+
+    // A KV v1 write reports no version, so a read-back that pinned one would
+    // pin a placeholder. Reading the current version is what makes this work
+    // against a store that overwrites in place.
+    await putJson(
+      vault,
+      v1Path,
+      { password: new SensitiveString(`${CANARY}-rotated`, 'credential') },
+      { context: { name: 'live-test', reason: 'rotate' } }
+    );
+
+    const rotated = await vault.getAll(v1Path, { fallback: 'credential' });
+
+    expect(rotated.fields.get('password')?.reveal({ name: 'live-test' })).toBe(`${CANARY}-rotated`);
+  });
+
   it('takes X-Vault-Token and nothing else, on both servers', async () => {
     // Measured rather than assumed. OpenBao 2.6.2 answers 403 to
     // `X-Bao-Token`, so the alias the design expected is not one this package

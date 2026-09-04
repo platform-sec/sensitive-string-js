@@ -136,13 +136,13 @@ export async function put(
   const written = await source.writeSecret(normalized, { kind: 'string', value: raw });
 
   if (options.verifyReadBack !== false) {
-    source.refresh({ path: normalized.path, version: written.version });
+    const readBack = await readCurrent(source, normalized, written, async () => {
+      const record = await source.get({ path: normalized.path });
 
-    const readBack = await source.get({ path: normalized.path, version: written.version });
+      return record.value.equals(raw, context);
+    });
 
-    // `equals` is constant-time for a credential, which is what it is here by
-    // default. It also never hands either value back to this function.
-    if (!readBack.value.equals(raw, context)) {
+    if (!readBack) {
       throw new SecretWriteRefusedError(
         'read-back',
         `Secret '${normalized.path}' version '${written.version}' did not read back as ` +
@@ -154,6 +154,49 @@ export async function put(
   }
 
   return written;
+}
+
+/**
+ * Read the current version back and report whether it matches.
+ *
+ * The current version, not the one the write reported. Pinning the written
+ * version would seem more precise and is weaker: it would pass even when a
+ * later version immediately superseded ours, and the guarantee worth having is
+ * that a reader now gets what this process sent. It also avoids pinning a
+ * version identifier that is not one, since a store that overwrites in place
+ * has no versions to pin and reports a placeholder.
+ *
+ * A concurrent rotation makes this fail. That is a true report rather than a
+ * false alarm: what is stored is not what this process sent. Rotations are
+ * scheduled, so two of them racing is a deployment problem worth hearing about.
+ *
+ * Any failure of the read itself is reported as a failed verification rather
+ * than escaping as a decode or lookup error, because from the caller's side the
+ * outcome is the same: the write cannot be confirmed.
+ */
+async function readCurrent(
+  source: WritableSecretSource,
+  ref: SecretRef,
+  written: ResolvedSecretRef,
+  compare: () => Promise<boolean>
+): Promise<boolean> {
+  source.refresh({ path: ref.path });
+
+  try {
+    return await compare();
+  } catch (error) {
+    if (error instanceof SecretWriteRefusedError) {
+      throw error;
+    }
+
+    throw new SecretWriteRefusedError(
+      'read-back',
+      `Secret '${ref.path}' version '${written.version}' could not be read back after the ` +
+        `write, so the stored value is unconfirmed.`,
+      ref.path,
+      written.version
+    );
+  }
 }
 
 /**
@@ -186,28 +229,35 @@ export async function putJson(
   const written = await source.writeSecret(normalized, { kind: 'map', value: raw });
 
   if (options.verifyReadBack !== false) {
-    source.refresh({ path: normalized.path, version: written.version });
-
     const declared: FieldMap = Object.fromEntries(
       Object.keys(raw).map((field) => [field, 'credential' as const])
     );
-    const readBack = await source.getJson(
-      { path: normalized.path, version: written.version },
-      { fields: declared }
-    );
 
-    for (const [field, value] of Object.entries(raw)) {
-      const stored = (readBack.fields as Record<string, unknown>)[field];
+    let mismatched: string | undefined;
 
-      if (!(stored instanceof SensitiveString) || !stored.equals(value, context)) {
-        throw new SecretWriteRefusedError(
-          'read-back',
-          `Secret '${normalized.path}' version '${written.version}' field '${field}' did not ` +
-            `read back as written. The stored value is not what this process sent.`,
-          normalized.path,
-          written.version
-        );
+    await readCurrent(source, normalized, written, async () => {
+      const readBack = await source.getJson({ path: normalized.path }, { fields: declared });
+
+      for (const [field, value] of Object.entries(raw)) {
+        const stored = (readBack.fields as Record<string, unknown>)[field];
+
+        if (!(stored instanceof SensitiveString) || !stored.equals(value, context)) {
+          mismatched = field;
+          break;
+        }
       }
+
+      return true;
+    });
+
+    if (mismatched !== undefined) {
+      throw new SecretWriteRefusedError(
+        'read-back',
+        `Secret '${normalized.path}' version '${written.version}' field '${mismatched}' did ` +
+          `not read back as written. The stored value is not what this process sent.`,
+        normalized.path,
+        written.version
+      );
     }
   }
 

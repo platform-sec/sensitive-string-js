@@ -106,9 +106,21 @@ Getting it wrong yields a payload whose fields are `data` and `metadata` rather 
 declared, so the mount version is explicit and a mismatch produces a diagnostic naming the likely
 cause instead of a confusing classification result.
 
-A KV read reports `lease_duration: 0`, which means no lease rather than already expired. Nothing is
-bound for a KV read; mapping zero to `ttl: 0` would produce a value that is expired on arrival,
-because `ttl: 0` in core means exactly the opposite.
+KV v1 overwrites in place and has no versions, so a read reports `unversioned` rather than echoing
+back whatever alias you asked for, and asking for a specific version against a KV v1 mount is refused
+instead of silently returning the current value.
+
+### A KV read binds no deadline
+
+Measured on Vault 1.21.4 and OpenBao 2.6.2: a KV v2 read reports `lease_duration: 0`, and a **KV v1
+read reports 2764800**, the mount's default TTL. Neither is an expiry of the secret. `lease_id` is
+empty for both, so there is no lease to renew or revoke and nothing stops working when the number
+runs out.
+
+So a KV read binds nothing, and the reported duration goes on `ResolvedSecretRef.metadata` where an
+audit trail can have it without anything enforcing it. Binding the v1 number would expire a perfectly
+valid credential after 32 days for no reason. The lease id, not the duration, is what says a lease
+exists, and `dynamic()` is where one is real.
 
 ### The client token
 
@@ -187,8 +199,9 @@ would also leave a request path that does not exist.
   local in-flight request holding the credential continues with it until Vault stops accepting it.
 - **Single-use wrapping tokens.** A wrapping token is single-use server-side, and this package models
   it as a normal credential with the wrap TTL. The count is not enforced locally.
-- **KV v1 versions.** KV v1 overwrites in place and has no versions, so a write reports
-  `'unversioned'` rather than inventing a number that means nothing.
+- **KV v1 versions.** KV v1 overwrites in place and has no versions, so a read and a write both
+  report `'unversioned'` rather than inventing a number that means nothing. A write's read-back
+  verification reads the current value, which is what makes it work against such a mount.
 - **A response body reaching a log through your own transport.** This package consumes the response
   and returns only the decoded body plus a status, and no error it throws carries a body. A transport
   you supply is yours to keep quiet.

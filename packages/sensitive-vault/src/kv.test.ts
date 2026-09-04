@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { SecretPayloadError } from '@platform-sec/sensitive-string-secrets';
 
 import {
+  assertLogicalPath,
+  assertUnversioned,
   kvMetadataPath,
   kvReadPath,
   kvWriteBody,
@@ -40,6 +42,18 @@ describe('kvReadPath', () => {
 
   it('is the same path a write uses', () => {
     expect(kvWritePath('kv/prod/db', 2)).toBe(kvReadPath('kv/prod/db', 2));
+  });
+});
+
+describe('assertLogicalPath', () => {
+  it('accepts a logical path', () => {
+    expect(() => assertLogicalPath('kv/prod/db')).not.toThrow();
+  });
+
+  it('refuses a URL, because the endpoint belongs on the source', () => {
+    expect(() => assertLogicalPath('https://vault.internal:8200/v1/kv/data/prod/db')).toThrow(
+      /logical path within the store/
+    );
   });
 });
 
@@ -114,6 +128,15 @@ describe('parseKvResponse', () => {
       expect(read.data).toEqual({ password: CANARY });
     });
 
+    it('reports unversioned rather than echoing the requested alias', () => {
+      // KV v1 overwrites in place. Echoing back whatever the caller asked for
+      // would report an alias as a concrete version, which is the one thing
+      // `ResolvedSecretRef.version` promises not to do.
+      const read = parseKvResponse(kvV1Body({ a: 'b' }), 1, { path: 'secret/db', version: '3' });
+
+      expect(read.version).toBe('unversioned');
+    });
+
     it('names the likely cause when a KV v2 response arrives', () => {
       // Getting this wrong yields a payload whose fields are `data` and
       // `metadata` rather than the ones the caller named, which would wrap two
@@ -138,6 +161,22 @@ describe('parseKvResponse', () => {
     it('rejects a body with no data', () => {
       expect(() => parseKvResponse({ request_id: 'a' }, 2, REF)).toThrow(/returned no data/);
     });
+  });
+});
+
+describe('assertUnversioned', () => {
+  it('accepts a ref with no version', () => {
+    expect(() => assertUnversioned('secret/prod/db', undefined)).not.toThrow();
+  });
+
+  it('refuses a pinned version and names the mount', () => {
+    expect(() => assertUnversioned('secret/prod/db', '3')).toThrow(/Mount 'secret'/);
+  });
+
+  it('says what the request would otherwise have done', () => {
+    expect(() => assertUnversioned('secret/prod/db', '3')).toThrow(
+      /silently return the current value/
+    );
   });
 });
 

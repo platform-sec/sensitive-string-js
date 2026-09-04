@@ -81,7 +81,6 @@ export class FakeSecretSource extends BaseSecretSource {
       payload: entry.payload,
       ref: {
         path: ref.path,
-        ...(ref.version === undefined ? {} : { version: ref.version }),
         version: entry.version ?? ref.version ?? 'v1',
         metadata: entry.metadata ?? {},
       },
@@ -112,6 +111,26 @@ export class FakeSecretSource extends BaseSecretSource {
     });
 
     return await Promise.resolve({ path: ref.path, version, metadata: {} });
+  }
+}
+
+/**
+ * A source whose write lands and whose next read fails.
+ *
+ * Stands in for a provider that accepted the write and then refused the read:
+ * an expired token, a policy that grants write and not read, a transient
+ * outage. From the caller's side the outcome is the same, the stored value
+ * cannot be confirmed.
+ */
+export class UnreadableAfterWriteSource extends FakeSecretSource {
+  override async writeSecret(
+    ref: SecretRef,
+    payload: WritePayload
+  ): Promise<{ path: string; version: string; metadata: SecretMetadata }> {
+    const written = await super.writeSecret(ref, payload);
+    this.set(ref.path, new Error('read path is down'));
+
+    return written;
   }
 }
 

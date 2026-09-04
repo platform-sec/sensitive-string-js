@@ -103,6 +103,39 @@ describe('dynamic secrets', () => {
       expect(transport.requests.some((request) => request.path === 'sys/leases/renew')).toBe(true);
     });
 
+    it('lands the deadline where Vault says the lease now ends', async () => {
+      // `lease_duration` on a renewal response is the new total remaining
+      // lifetime, and core's `renew` adds to what is left rather than
+      // replacing it. Passing the total straight through set the deadline to
+      // remaining plus granted, so a credential renewed an hour early outlived
+      // its lease by an hour, which is the fail-open direction.
+      const { vault } = leased({ leaseDuration: 3_600 });
+
+      const lease = await vault.dynamic('database/creds/app-readonly');
+      await lease.renew();
+
+      expect(lease.ttlRemaining()).toBeLessThanOrEqual(7_200_000);
+      expect(lease.ttlRemaining()).toBeGreaterThan(7_190_000);
+    });
+
+    it('does not shorten a deadline when Vault grants less than what is left', async () => {
+      const transport = FakeTransport.of({
+        'database/creds/app-readonly': {
+          body: dynamicBody({ password: CANARY }, { leaseDuration: 7_200 }),
+        },
+        'sys/leases/renew': { body: { lease_duration: 60 } },
+      });
+      const vault = source(transport);
+
+      const lease = await vault.dynamic('database/creds/app-readonly');
+      const before = lease.ttlRemaining() ?? 0;
+      await lease.renew();
+
+      // Core cannot move a deadline backwards, and shortening it here would be
+      // guesswork about which of the two claims the server will honour.
+      expect(lease.ttlRemaining()).toBeGreaterThanOrEqual(before - 1_000);
+    });
+
     it('sends the increment in seconds, since the API takes seconds', async () => {
       const { vault, transport } = leased();
 
@@ -188,6 +221,22 @@ describe('dynamic secrets', () => {
 
       expect(password?.reveal({ name: 'test' })).toBe(CANARY);
     });
+  });
+
+  it('binds no deadline when the response carries a duration but no lease id', async () => {
+    // The lease id is what says a lease exists. A duration without one is a
+    // cache hint, which is what a KV v1 read sends, and binding it would
+    // expire a credential nothing is going to revoke.
+    const transport = FakeTransport.of({
+      'database/creds/hint': {
+        body: dynamicBody({ password: CANARY }, { leaseId: '', leaseDuration: 2_764_800 }),
+      },
+    });
+
+    const lease = await source(transport).dynamic('database/creds/hint');
+
+    expect(lease.fields.get('password')?.expiresAt).toBeUndefined();
+    expect(lease.ttlRemaining()).toBeUndefined();
   });
 
   it('reports the header its requests authenticate with', async () => {

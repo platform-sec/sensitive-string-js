@@ -11,7 +11,7 @@ import type { SweepCase } from '@platform-sec/sensitive-string-secrets/testing';
 import { put, putJson } from '@platform-sec/sensitive-string-secrets/write';
 
 import * as vaultPackage from '../index.js';
-import { fetchTransport } from '../transport.js';
+import { VaultRequestError, fetchTransport } from '../transport.js';
 import {
   FakeTransport,
   TEST_TOKEN,
@@ -302,5 +302,31 @@ describe('the registration test', () => {
 describe('the client token', () => {
   it('is a SensitiveString, so it renders as a marker wherever it is logged', () => {
     expect(String(vaultToken())).not.toContain(TEST_TOKEN);
+  });
+});
+
+describe('the transport timeout', () => {
+  it('reports a timeout as this package own error rather than a bare AbortError', async () => {
+    const slow = fetchTransport({
+      endpoint: 'https://vault.test',
+      timeoutMs: 10,
+      fetch: (_url, init) =>
+        new Promise((_resolve, reject) => {
+          const signal = init?.signal;
+          signal?.addEventListener('abort', () => {
+            reject(new DOMException('This operation was aborted', 'AbortError'));
+          });
+        }),
+    });
+
+    try {
+      await slow.request({ method: 'GET', path: 'kv/data/prod/db', headers: {} });
+      expect.unreachable('the request should have timed out');
+    } catch (error) {
+      expect(error).toBeInstanceOf(VaultRequestError);
+      expect((error as VaultRequestError).status).toBe(0);
+      expect((error as Error).message).toMatch(/timed out after 10ms/);
+      expect((error as Error).message).toContain('kv/data/prod/db');
+    }
   });
 });

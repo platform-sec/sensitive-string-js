@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fixed four defects in the secrets manager packages before release, two of them security-relevant.
+  None was findable by the unit suite as it stood, and the two that mattered most came from test data
+  written out of a design document rather than out of a real provider.
+- The shared layer wrapped multi-value payloads by dot path through `wrapSensitiveByPath`, which
+  reads `a.b` as a path into a nested object. A flat key containing a dot therefore matched nothing
+  and was left unwrapped, silently, with no error: a `getAll` on a Kubernetes-shaped secret returned
+  `tls.key` as an ordinary string in the plain map. Kubernetes Secret keys are routinely `tls.key`,
+  `ca.crt` and `.dockerconfigjson`, so this was the common case for that source rather than an edge
+  one, and under-protection is the failure the layer exists to prevent. Wrapping now happens at the
+  leaf of the classification walk, which also removes the deep clone that helper made, and a payload
+  where a dotted key and a nested one address the same name is refused as ambiguous.
+- The Vault package bound a KV v1 read's `lease_duration` as a deadline. Measured on Vault 1.21.4 and
+  OpenBao 2.6.2, a KV v1 read reports 2764800, the mount's default TTL, and not the zero a KV v2 read
+  reports and the fixtures had recorded. A valid credential would have started throwing 32 days after
+  it was loaded with nothing having revoked it. A KV read now binds no deadline on either engine
+  version, the reported duration goes on `metadata` where nothing enforces it, and `lease_id` rather
+  than the duration is what says a lease exists.
+- A dynamic lease renewal passed Vault's new total remaining lifetime to core's `renew`, which adds
+  to what is left rather than replacing it, so a credential renewed an hour before it lapsed outlived
+  its lease by that hour. It now extends by the difference, which is the fail-closed direction.
+- A KV v1 read echoed the requested version back as a resolved one, and KV v1 has no versions. A read
+  now reports `unversioned`, and pinning a version against a KV v1 mount is refused rather than
+  silently served the current value. The write path's read-back reads the current version rather than
+  pinning the one it wrote, which is both a stronger guarantee and what makes it work against a store
+  that overwrites in place.
 - Added `@platform-sec/sensitive-string-secrets` and `@platform-sec/sensitive-string-vault`, the
   shared layer and the first provider of the secrets manager row of roadmap 3.7. A secret arriving
   from a secrets manager is a `SensitiveString` from the moment the response is destructured, the

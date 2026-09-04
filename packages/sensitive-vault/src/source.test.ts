@@ -50,6 +50,69 @@ describe('reads', () => {
     expect(record.fields.password.reveal({ name: 'test' })).toBe(CANARY);
   });
 
+  it('binds no deadline from a KV v1 lease_duration, which is not an expiry', async () => {
+    // Measured on Vault 1.21.4 and OpenBao 2.6.2: a KV v1 read reports the
+    // mount's default TTL of 2764800 seconds with an empty lease id. Binding
+    // it would expire a valid credential after 32 days, and nothing would have
+    // revoked it.
+    const transport = FakeTransport.of({
+      'secret/prod/db': { body: kvV1Body({ password: CANARY }) },
+    });
+
+    const record = await source(transport, { mounts: [{ path: 'secret', kv: 1 }] }).getAll(
+      'secret/prod/db',
+      { fallback: 'credential' }
+    );
+
+    for (const value of record.fields.values()) {
+      expect(value.expiresAt).toBeUndefined();
+    }
+
+    // Kept where an audit trail can have it, with nothing enforcing it.
+    expect(record.ref.metadata['lease_duration']).toBe(2_764_800);
+  });
+
+  it('binds no deadline from a KV v2 read either', async () => {
+    const transport = FakeTransport.of({
+      'kv/data/prod/db': { body: kvV2Body({ password: CANARY }) },
+    });
+
+    const record = await source(transport).getAll('kv/prod/db', { fallback: 'credential' });
+
+    for (const value of record.fields.values()) {
+      expect(value.expiresAt).toBeUndefined();
+    }
+  });
+
+  it('reports a KV v1 read as unversioned rather than echoing an alias', async () => {
+    const transport = FakeTransport.of({
+      'secret/prod/db': { body: kvV1Body({ password: CANARY }) },
+    });
+
+    const record = await source(transport, { mounts: [{ path: 'secret', kv: 1 }] }).getAll(
+      'secret/prod/db',
+      { fallback: 'credential' }
+    );
+
+    expect(record.ref.version).toBe('unversioned');
+  });
+
+  it('refuses a pinned version against a KV v1 mount', async () => {
+    // KV v1 overwrites in place, so the version query is ignored and the read
+    // would silently return the current value under the caller's belief that
+    // they pinned one.
+    const transport = FakeTransport.of({
+      'secret/prod/db': { body: kvV1Body({ password: CANARY }) },
+    });
+
+    await expect(
+      source(transport, { mounts: [{ path: 'secret', kv: 1 }] }).getAll(
+        { path: 'secret/prod/db', version: '3' },
+        { fallback: 'credential' }
+      )
+    ).rejects.toThrow(/has no versions/);
+  });
+
   it('defaults an unlisted mount to KV v2', async () => {
     const transport = FakeTransport.of({ 'other/data/a': { body: kvV2Body({ a: 'b' }) } });
     const vault = source(transport);
@@ -150,7 +213,11 @@ describe('labels', () => {
     ).rejects.toThrow(/logical path within the store/);
   });
 
-  it('strips the KV v2 data segment a caller included', async () => {
+  it('matches the path the caller asked for, rather than rewriting it', async () => {
+    // A caller who writes the `data/` segment themselves gets a request to
+    // `kv/data/data/prod/db`, which does not exist. Rewriting the label to
+    // `kv/prod/db` would make it disagree with what was actually requested and
+    // turn a loud not-found into a confusing one.
     const transport = FakeTransport.of({
       'kv/data/data/prod/db': { body: kvV2Body({ password: CANARY }) },
     });
@@ -159,8 +226,20 @@ describe('labels', () => {
       fields: { password: 'credential' },
     });
 
-    expect(record.fields.password.label).toBe('kv/prod/db#password');
+    expect(record.fields.password.label).toBe('kv/data/prod/db#password');
     expect(describeLabelDisclosure(record.fields.password.label ?? '')).toEqual([]);
+  });
+
+  it('drops a leading slash, which is harmless input rather than a mistake', async () => {
+    const transport = FakeTransport.of({
+      'kv/data/prod/db': { body: kvV2Body({ password: CANARY }) },
+    });
+
+    const record = await source(transport).getJson('/kv/prod/db', {
+      fields: { password: 'credential' },
+    });
+
+    expect(record.fields.password.label).toBe('kv/prod/db#password');
   });
 
   it('discloses nothing under the rule for an ordinary path', async () => {
@@ -262,6 +341,16 @@ describe('response wrapping', () => {
     expect(wrapped.token.label).toBe('kv/prod/db#wrapping-token');
     expect(wrapped.token.ttlRemaining()).toBeLessThanOrEqual(60_000);
     expect(wrapped.accessor).toBe('acc-1');
+  });
+
+  it('pins the same version a plain read would', async () => {
+    const transport = FakeTransport.of({
+      'kv/data/prod/db': { body: { wrap_info: { token: 'hvs.WRAPPED_abc', ttl: 60 } } },
+    });
+
+    await source(transport).getWrapped({ path: 'kv/prod/db', version: '3' }, 60);
+
+    expect(transport.requests[0]?.query).toEqual({ version: '3' });
   });
 
   it('throws where the response came back unwrapped', async () => {

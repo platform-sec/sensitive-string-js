@@ -108,7 +108,11 @@ export function fetchTransport(options: FetchTransportOptions): VaultTransport {
       }
 
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs);
 
       try {
         const response = await doFetch(url, {
@@ -146,6 +150,18 @@ export function fetchTransport(options: FetchTransportOptions): VaultTransport {
         }
 
         return { status: response.status, body };
+      } catch (error) {
+        // A timeout surfaces from `fetch` as an `AbortError`, which names
+        // neither the request nor the reason. Reporting it as this package's
+        // own error means a caller has one type to catch and a message that
+        // says which path gave up. Status 0 because there was no response.
+        if (timedOut) {
+          throw new VaultRequestError(0, request.path, [
+            `the request timed out after ${String(timeoutMs)}ms`,
+          ]);
+        }
+
+        throw error;
       } finally {
         clearTimeout(timer);
       }

@@ -137,8 +137,26 @@ export class VaultLease {
       return undefined;
     }
 
+    // Vault reports the lease's new total remaining lifetime, and core's
+    // `renew` adds to what is left rather than replacing it. Passing the total
+    // straight through would set the deadline to remaining plus granted, so a
+    // credential renewed an hour before it lapsed would outlive its lease by
+    // that hour. Extending by the difference lands the deadline where Vault
+    // says the lease now ends.
     for (const value of this.fields.values()) {
-      value.renew(granted);
+      const remaining = value.ttlRemaining();
+      // `-1` means the deadline has already passed, and core extends an expired
+      // value from now, so the full grant is the right increment there.
+      const held = remaining === undefined || remaining < 0 ? 0 : remaining;
+      const extension = granted - held;
+
+      // Vault granted less than what this value already had. Core cannot move a
+      // deadline backwards, and shortening it here would be guesswork about
+      // which of the two the server will actually honour, so the value keeps
+      // the shorter-lived of the two claims only when Vault's is longer.
+      if (extension > 0) {
+        value.renew(extension);
+      }
     }
 
     return granted;

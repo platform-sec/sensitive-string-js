@@ -4,7 +4,6 @@ import {
   BaseSecretSource,
   SecretPayloadError,
   allSpec,
-  logicalLabel,
   materialize,
   normalizeRef,
 } from '@platform-sec/sensitive-string-secrets';
@@ -23,6 +22,7 @@ import type { VaultFlavor } from './flavor.js';
 import { VaultLease, leaseTtlMs } from './lease.js';
 import {
   assertLogicalPath,
+  assertUnversioned,
   kvResolvedRef,
   kvReadPath,
   kvWriteBody,
@@ -159,24 +159,23 @@ export class VaultSecretSource extends BaseSecretSource {
     return this.#mounts.get(splitMount(path).mount) ?? this.#defaultKv;
   }
 
-  /**
-   * The label for a Vault path.
-   *
-   * The endpoint carries an internal hostname and port, and the request path
-   * carries the `data/` segment KV v2 inserts. Neither belongs in a label,
-   * which appears in every log line that touches the value.
-   */
-  protected override deriveLabel(ref: SecretRef): string {
-    const stripped = logicalLabel(ref.path).replace(/^v1\//, '');
-    const { mount, rest } = splitMount(stripped);
-
-    return rest.startsWith('data/') ? `${mount}/${rest.slice('data/'.length)}` : stripped;
-  }
+  // There is no `deriveLabel` override. A ref's path is already the logical
+  // path within the store, because `assertLogicalPath` refuses anything that
+  // carries an endpoint, and the `data/` segment KV v2 needs is inserted when
+  // the request path is built rather than being part of the ref. An override
+  // that rewrote the label would make it disagree with what was requested: a
+  // caller who wrote `kv/data/prod/db` would see the label `kv/prod/db` while
+  // the request went to `kv/data/data/prod/db` and 404ed.
 
   protected async fetchSecret(ref: SecretRef): Promise<ProviderResult | null> {
     assertLogicalPath(ref.path);
 
     const kv = this.kvVersion(ref.path);
+
+    if (kv === 1) {
+      assertUnversioned(ref.path, ref.version);
+    }
+
     const response = await this.#read(kvReadPath(ref.path, kv), ref.version);
 
     if (response === null) {
@@ -185,15 +184,26 @@ export class VaultSecretSource extends BaseSecretSource {
 
     const read = parseKvResponse(response, kv, ref);
     const resolved = kvResolvedRef(ref, read);
-    const ttl = leaseTtlMs(read.leaseDurationSeconds);
 
+    // A KV read binds no deadline, whatever `lease_duration` says. Measured on
+    // Vault 1.21.4 and OpenBao 2.6.2, a KV v2 read reports 0 and a KV v1 read
+    // reports the mount's default TTL, 2764800 seconds, and neither is an
+    // expiry of the secret: `lease_id` is empty for both, so there is no lease
+    // to renew or revoke and nothing stops working when the number runs out.
+    // Binding the v1 number would expire a perfectly valid credential after 32
+    // days for no reason. The number is kept on metadata, where an audit trail
+    // can have it without anything enforcing it, which is the same treatment a
+    // rotation schedule gets. `dynamic()` is where a lease is real.
     return {
       payload: { kind: 'map', value: read.data },
-      ref: { ...resolved, metadata: { ...resolved.metadata, flavor: this.flavor } },
-      // KV reads report `lease_duration: 0`, which means no lease rather than
-      // already expired, so nothing is bound. A dynamic secret is where the
-      // lease is real, and it comes through `dynamic()`.
-      ...(ttl === undefined ? {} : { lifetime: { ttl, allowRenewal: read.renewable } }),
+      ref: {
+        ...resolved,
+        metadata: {
+          ...resolved.metadata,
+          flavor: this.flavor,
+          lease_duration: read.leaseDurationSeconds,
+        },
+      },
     };
   }
 
@@ -237,7 +247,11 @@ export class VaultSecretSource extends BaseSecretSource {
 
     const leaseId = typeof envelope.lease_id === 'string' ? envelope.lease_id : '';
     const renewable = envelope.renewable === true;
-    const ttl = leaseTtlMs(envelope.lease_duration);
+    // The lease id is what says a lease exists, not the duration. A response
+    // carrying a duration and no lease id is reporting a cache hint, which is
+    // what a KV v1 read does, and binding it would expire a credential nothing
+    // is going to revoke.
+    const ttl = leaseId === '' ? undefined : leaseTtlMs(envelope.lease_duration);
     const resolved: ResolvedSecretRef = {
       path: ref.path,
       version: leaseId === '' ? 'current' : leaseId,
@@ -272,15 +286,20 @@ export class VaultSecretSource extends BaseSecretSource {
    * number of permitted reads, and that gap is in the README rather than
    * papered over.
    */
-  async getWrapped(path: string, wrapTtlSeconds: number): Promise<WrappedSecret> {
+  async getWrapped(path: SecretRef | string, wrapTtlSeconds: number): Promise<WrappedSecret> {
     const ref = normalizeRef(path);
     assertLogicalPath(ref.path);
 
     const kv = this.kvVersion(ref.path);
 
+    if (kv === 1) {
+      assertUnversioned(ref.path, ref.version);
+    }
+
     const response = await this.#transport.request({
       method: 'GET',
       path: kvReadPath(ref.path, kv),
+      ...(ref.version === undefined ? {} : { query: { version: ref.version } }),
       headers: { ...this.#headers(), 'X-Vault-Wrap-TTL': String(wrapTtlSeconds) },
     });
 

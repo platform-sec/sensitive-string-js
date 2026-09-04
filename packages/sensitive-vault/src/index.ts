@@ -47,6 +47,7 @@ export type { FlavorDivergence, VaultFlavor } from './flavor.js';
 
 export {
   assertLogicalPath,
+  assertUnversioned,
   kvMetadataPath,
   kvReadPath,
   kvResolvedRef,

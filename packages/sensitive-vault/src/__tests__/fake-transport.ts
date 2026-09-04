@@ -12,6 +12,12 @@ import type { VaultSecretSourceOptions } from '../source.js';
  * second tier and is not required for the unit suite to pass, so the fixtures
  * here are what the wire-shape assertions run against, and every secret-bearing
  * field in them carries a canary.
+ *
+ * A fixture is only as good as the recording behind it. The KV v1 body here
+ * once said `lease_duration: 0`, which is the KV v2 answer, and that invented
+ * number hid a bug: both servers actually send the mount's default TTL there,
+ * and the package was binding it as a deadline. Every number in these fixtures
+ * is one a real server sent.
  */
 
 export interface Recorded {
@@ -96,9 +102,23 @@ export function kvV2Body(
   };
 }
 
-/** A KV v1 read response. */
+/**
+ * A KV v1 read response.
+ *
+ * `lease_duration` is 2764800, the mount's default TTL, because that is what
+ * Vault 1.21.4 and OpenBao 2.6.2 both actually send for a KV v1 read. It looks
+ * like a 32-day lease and is not one: `lease_id` is empty, so there is nothing
+ * to renew or revoke and nothing about the secret expires. An earlier fixture
+ * here said 0, which is the KV v2 answer, and hid a bug.
+ */
 export function kvV1Body(data: Readonly<Record<string, unknown>>): unknown {
-  return { request_id: 'a1b2', lease_id: '', renewable: false, lease_duration: 0, data };
+  return {
+    request_id: 'a1b2',
+    lease_id: '',
+    renewable: false,
+    lease_duration: 2_764_800,
+    data,
+  };
 }
 
 /** A dynamic secret response, where the lease is real. */

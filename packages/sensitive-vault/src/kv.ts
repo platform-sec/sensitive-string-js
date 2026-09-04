@@ -32,6 +32,17 @@ const IS_URL = /^[a-z][a-z0-9+.-]*:\/\//i;
  * internal hostname and port, so it is refused at the boundary rather than
  * silently normalized into something that only half works.
  */
+export function assertUnversioned(path: string, version: string | undefined): void {
+  if (version !== undefined) {
+    throw new TypeError(
+      `Mount '${splitMount(path).mount}' is configured as KV v1, which overwrites in place ` +
+        `and has no versions, so version '${version}' cannot be served. The request would ` +
+        `silently return the current value instead. Configure the mount as KV v2, or drop ` +
+        `the version.`
+    );
+  }
+}
+
 export function assertLogicalPath(path: string): void {
   if (IS_URL.test(path)) {
     throw new TypeError(
@@ -79,11 +90,26 @@ export function kvMetadataPath(path: string): string {
 
 export interface KvRead {
   readonly data: Record<string, unknown>;
-  /** The concrete version Vault served. `'1'` for KV v1, which has no versions. */
+  /**
+   * The concrete version Vault served.
+   *
+   * `'unversioned'` for KV v1, which overwrites in place and has no versions,
+   * matching what a KV v1 write reports.
+   */
   readonly version: string;
   readonly metadata: SecretMetadata;
-  /** Seconds, straight off the response. Zero for a KV read, which has no lease. */
+  /**
+   * Seconds, straight off the response.
+   *
+   * Not a deadline for a KV read. Measured on Vault 1.21.4 and OpenBao 2.6.2, a
+   * KV v2 read reports 0 and a KV v1 read reports the mount's default TTL,
+   * 2764800 seconds, with an empty `leaseId`. The v1 number looks like a
+   * 32-day lease and is not one: nothing about the secret expires when it runs
+   * out. `leaseId` is what says whether a lease exists.
+   */
   readonly leaseDurationSeconds: number;
+  /** Empty for a KV read on both engine versions. A lease exists only when this does. */
+  readonly leaseId: string;
   readonly renewable: boolean;
 }
 
@@ -133,6 +159,7 @@ export function parseKvResponse(
 
   const leaseDurationSeconds =
     typeof envelope['lease_duration'] === 'number' ? envelope['lease_duration'] : 0;
+  const leaseId = typeof envelope['lease_id'] === 'string' ? envelope['lease_id'] : '';
   const renewable = envelope['renewable'] === true;
   const outer = asRecord(envelope['data']);
 
@@ -168,6 +195,7 @@ export function parseKvResponse(
         ...scalarMetadata(custom, Object.keys(custom)),
       },
       leaseDurationSeconds,
+      leaseId,
       renewable,
     };
   }
@@ -189,9 +217,13 @@ export function parseKvResponse(
 
   return {
     data: outer,
-    version,
+    // Not `version`. KV v1 overwrites in place, so echoing back whatever the
+    // caller asked for would report an alias as a concrete version, which is
+    // the one thing `ResolvedSecretRef.version` promises not to do.
+    version: 'unversioned',
     metadata: {},
     leaseDurationSeconds,
+    leaseId,
     renewable,
   };
 }

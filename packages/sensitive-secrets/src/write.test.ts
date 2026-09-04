@@ -4,7 +4,11 @@ import { SensitiveString } from '@platform-sec/sensitive-string-core';
 import { SecretWriteRefusedError } from './errors.js';
 import { isWritable, put, putJson } from './write.js';
 import type { WritableSecretSource } from './write.js';
-import { CorruptingSecretSource, FakeSecretSource } from './__tests__/fake-source.js';
+import {
+  CorruptingSecretSource,
+  FakeSecretSource,
+  UnreadableAfterWriteSource,
+} from './__tests__/fake-source.js';
 
 const CANARY = 'LEAKED_SECRET_abc123xyz';
 const CONTEXT = { name: 'rotate-db-credential', reason: 'scheduled rotation' };
@@ -111,13 +115,41 @@ describe('put', () => {
   });
 
   describe('read-back verification', () => {
-    it('is on by default and reads the new version back', async () => {
+    it('is on by default and reads the stored value back', async () => {
       const source = writable();
 
       const written = await put(source, 'prod/db', CANARY, { context: CONTEXT });
 
       expect(written.version).toBe('v2');
-      expect(source.calls.some((call) => call.version === 'v2')).toBe(true);
+      expect(source.calls).toHaveLength(1);
+    });
+
+    it('reads the current version rather than pinning the one it wrote', async () => {
+      // Pinning would seem more precise and is weaker: it passes even when a
+      // later version immediately supersedes ours, and the guarantee worth
+      // having is that a reader now gets what this process sent. It also
+      // avoids pinning a version identifier that is not one, since a store
+      // that overwrites in place reports a placeholder.
+      const source = writable();
+
+      await put(source, 'prod/db', CANARY, { context: CONTEXT });
+
+      expect(source.calls[0]?.version).toBeUndefined();
+    });
+
+    it('reports a read that fails outright as an unconfirmed write', async () => {
+      const source = UnreadableAfterWriteSource.of({
+        'prod/db': { payload: { kind: 'string', value: 'old' } },
+      });
+
+      try {
+        await put(source, 'prod/db', CANARY, { context: CONTEXT });
+        expect.unreachable('put should have thrown');
+      } catch (error) {
+        expect((error as SecretWriteRefusedError).reason).toBe('read-back');
+        expect((error as Error).message).toMatch(/unconfirmed/);
+        expect((error as Error).message).not.toContain(CANARY);
+      }
     });
 
     it('throws when the stored value is not what was sent', async () => {

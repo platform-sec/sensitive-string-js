@@ -440,3 +440,89 @@ describe('audit', () => {
     expect(auditReveal).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('keys that contain a dot', () => {
+  // Kubernetes Secret keys are routinely `tls.key`, `ca.crt` and
+  // `.dockerconfigjson`, so this is the common shape rather than an edge case.
+  // An earlier version wrapped by dot path through core's `wrapSensitiveByPath`,
+  // which reads `tls.key` as a path into a nested object, matched nothing, and
+  // put the secret in the plain map as an ordinary string with no error.
+  const tls = {
+    'tls.key': CANARY,
+    'tls.crt': 'public certificate',
+    '.dockerconfigjson': '{"auths":{}}',
+  };
+
+  it('wraps a flat key containing a dot', async () => {
+    const source = FakeSecretSource.of({
+      'payments/tls': { payload: { kind: 'map', value: tls } },
+    });
+
+    const record = await source.getAll('payments/tls', { fallback: 'credential' });
+
+    expect(record.fields.get('tls.key')).toBeInstanceOf(SensitiveString);
+    expect(record.plain.get('tls.key')).toBeUndefined();
+    expect(record.fields.get('tls.key')?.reveal({ name: 'test' })).toBe(CANARY);
+  });
+
+  it('wraps a leading-dot key', async () => {
+    const source = FakeSecretSource.of({
+      'payments/tls': { payload: { kind: 'map', value: tls } },
+    });
+
+    const record = await source.getAll('payments/tls', { fallback: 'credential' });
+
+    expect(record.fields.get('.dockerconfigjson')).toBeInstanceOf(SensitiveString);
+  });
+
+  it('classifies such a key by an exact field match', async () => {
+    const source = FakeSecretSource.of({
+      'payments/tls': { payload: { kind: 'map', value: tls } },
+    });
+
+    const record = await source.getAll('payments/tls', {
+      fields: { 'tls.crt': 'plain' },
+      fallback: 'credential',
+    });
+
+    expect(record.plain.get('tls.crt')).toBe('public certificate');
+    expect(record.fields.get('tls.key')).toBeInstanceOf(SensitiveString);
+  });
+
+  it('declares such a key in getJson', async () => {
+    const source = FakeSecretSource.of({
+      'payments/tls': { payload: { kind: 'map', value: tls } },
+    });
+
+    const record = await source.getJson('payments/tls', {
+      fields: { 'tls.key': 'credential', 'tls.crt': 'plain' },
+    });
+
+    expect(record.fields['tls.key'].reveal({ name: 'test' })).toBe(CANARY);
+    expect(record.fields['tls.crt']).toBe('public certificate');
+  });
+
+  it('refuses a payload where a dotted key and a nested one collide', async () => {
+    const source = FakeSecretSource.of({
+      ambiguous: { payload: { kind: 'map', value: { 'a.b': CANARY, a: { b: 'other' } } } },
+    });
+
+    await expect(source.getAll('ambiguous', { fallback: 'credential' })).rejects.toThrow(
+      /both address 'a\.b'/
+    );
+  });
+});
+
+describe('a value the provider already wrapped', () => {
+  it('is kept rather than re-wrapped, so its deadline survives', async () => {
+    const existing = new SensitiveString(CANARY, 'credential', 'provider-label', { ttl: 30_000 });
+    const source = FakeSecretSource.of({
+      pre: { payload: { kind: 'map', value: { token: existing } } },
+    });
+
+    const record = await source.getAll('pre', { fallback: 'credential' });
+
+    expect(record.fields.get('token')).toBe(existing);
+    expect(record.fields.get('token')?.label).toBe('provider-label');
+  });
+});

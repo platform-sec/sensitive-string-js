@@ -109,6 +109,12 @@ db.extra.fields;      // keys the payload carried that `fields` did not declare
 Classification is `fields`, then `rules` in order, then `fallback`. Patterns run on key names, never
 on values.
 
+Nested payloads are addressed by dot path (`db.password`), and so is a flat key that happens to
+contain a dot (`tls.key`, `.dockerconfigjson`). Wrapping happens at the leaf rather than by parsing
+the path, so a Kubernetes-shaped payload is handled without the caller escaping anything. A payload
+where both forms address the same name, `{ "a.b": x }` alongside `{ a: { b: y } }`, is refused
+rather than silently classifying one of them under the other's rule.
+
 ### `getAll` requires an explicit fallback
 
 ```typescript
@@ -208,9 +214,15 @@ So the write path:
 3. Scans the outgoing bytes for `[REDACTED:` and refuses if found, before any transport call. This
    catches the case the guard exists for: a payload built with template interpolation, where the
    interpolation already stringified an instance and no reveal was ever attempted.
-4. Reads the new version back and compares with `equals()`, which is constant-time for a credential.
-   On by default: it costs one extra call on an operation that happens on a rotation schedule, and it
-   turns a silently corrupted secret into a failed rotation.
+4. Reads the value back and compares with `equals()`, which is constant-time for a credential. On by
+   default: it costs one extra call on an operation that happens on a rotation schedule, and it turns
+   a silently corrupted secret into a failed rotation.
+
+The read-back reads the *current* version, not the one the write reported. Pinning would seem more
+precise and is weaker: it passes even when a later version immediately supersedes yours, and the
+guarantee worth having is that a reader now gets what this process sent. It also works against a
+store that overwrites in place and has no version to pin. A concurrent rotation makes it fail, which
+is a true report rather than a false alarm.
 
 It lives behind its own entry point, so an application that only reads never loads it and a build
 that never imports it can be verified to contain no write call.
@@ -237,8 +249,8 @@ available and is the right choice for a bind mount.
   this package sees it, and some SDKs retain response bodies on the client. What this package can
   promise is that the object does not travel any further.
 - **The decoded payload copy.** Every decoder materializes the payload as plain strings before
-  anything is wrapped, and `wrapSensitiveByPath` deep-clones. Both copies exist until collection.
-  JavaScript has no primitive that would let it do better.
+  anything is wrapped, and that copy exists until collection. JavaScript has no primitive that would
+  let it do better.
 - **Instances already handed out.** `refresh()` evicts the cache; it cannot reach the values a caller
   already holds. After a rotation, an in-flight request holding the old credential continues with it
   until the far side stops accepting it. Vault is the exception, because it has server-side

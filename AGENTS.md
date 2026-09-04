@@ -69,7 +69,14 @@ Use pnpm 9; the preinstall hook rejects other package managers.
   one is checked with `pnpm --filter @platform-sec/sensitive-string-nestjs exec tsc --noEmit`. This
   is what runs the `.test-d.ts` seam checks, which `vitest` does not collect and a package build
   excludes, so an integration claiming to cover a vendor's hooks fails here when the vendor adds one.
-- `pnpm test` runs the Vitest suite once; `pnpm test:watch` supports local iteration.
+- `pnpm test` runs the Vitest suite once; `pnpm test:watch` supports local iteration. A suite that
+  imports another workspace package by name resolves it through that package's `exports` map, so it
+  runs against `dist` rather than source: build before running one of those, or a change to the
+  dependency is invisible to the tests that exercise it. Colocated tests that import by relative
+  path are unaffected.
+- `pnpm build` is also what type-checks a package's own emit. Vitest transforms TypeScript with
+  esbuild, which strips types without checking them, so a type error can pass the suite and fail the
+  build.
 - `pnpm test:coverage` writes V8 text, JSON, and HTML coverage reports.
 - `pnpm lint` runs type-aware ESLint; `pnpm lint:fix` applies safe fixes.
 - `pnpm format` formats package TypeScript sources with Prettier.
