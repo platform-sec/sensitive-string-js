@@ -105,7 +105,7 @@ describe('SensitiveString string-method security', () => {
   });
 
   it('authorizes and audits allowed partial queries', () => {
-    const checkRevealAllowed = vi.fn((ctx: RevealContext | null) => {
+    const checkRevealAllowed = vi.fn((ctx: RevealContext | null): undefined => {
       if (ctx?.name !== 'approved-query') {
         throw new Error('Query context denied');
       }
@@ -136,7 +136,7 @@ describe('SensitiveString string-method security', () => {
   });
 
   it('authorizes and audits every transformation through explicit context', () => {
-    const checkRevealAllowed = vi.fn((ctx: RevealContext | null) => {
+    const checkRevealAllowed = vi.fn((ctx: RevealContext | null): undefined => {
       if (ctx?.name !== 'approved-transform') {
         throw new Error('Transform context denied');
       }

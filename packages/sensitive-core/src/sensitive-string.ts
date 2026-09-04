@@ -92,6 +92,40 @@ const REVEAL_AUDIT_DETAILS: RevealDetails = Object.freeze({ operation: 'reveal' 
  * Safe reads only feed redaction or intentionally public metadata. Comparisons
  * are authorized but are not reveals. Exposing reads are authorized and audited.
  */
+/**
+ * Refuse a policy hook's answer unless it is the one the gate can act on.
+ *
+ * `checkRevealAllowed` denies by throwing, so its only meaningful return is
+ * `undefined`. TypeScript accepts an `async` function where a `void`-returning
+ * one is expected, and an `async` hook that throws after its first `await`
+ * throws into a Promise nobody reads, after the gate has already handed the
+ * raw value back: the hook fails open, silently, on exactly the reads it was
+ * written to refuse. The declared type is `undefined`, which rejects the
+ * `async` form at compile time; this is the same rule at runtime, for a hook
+ * written in JavaScript or cast past the type. A Promise cannot deny a read
+ * that has already returned, so returning one is treated as a denial, and so
+ * is any other value: a hook that returns `false` meant to deny.
+ */
+function refuseHookReturn(returned: unknown, klass: SensitivityClass): void {
+  if (returned === undefined) {
+    return;
+  }
+
+  const why = isThenable(returned)
+    ? 'a Promise. The hook must be synchronous: a Promise cannot deny a read that has already returned'
+    : `${returned === null ? 'null' : `a ${typeof returned}`}. The hook denies by throwing and must return undefined`;
+
+  throw new TypeError(`checkRevealAllowed for sensitivity class '${klass}' returned ${why}`);
+}
+
+function isThenable(value: unknown): boolean {
+  return (
+    (typeof value === 'object' || typeof value === 'function') &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
+}
+
 type RawValueAccess = 'safe' | 'compare' | 'expose';
 
 /**
@@ -316,7 +350,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     const effectiveCtx = ctx ?? getCurrentRevealContext();
     // `access` is narrowed to 'compare' | 'expose' by the early return above, so
     // a policy is never asked to authorize a read that only feeds redaction.
-    this.policy.checkRevealAllowed?.(effectiveCtx, this, access);
+    refuseHookReturn(this.policy.checkRevealAllowed?.(effectiveCtx, this, access), this.klass);
 
     if (access === 'expose') {
       effectiveCtx?.auditReveal?.(this, details);
@@ -578,7 +612,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     const effectiveCtx = ctx ?? getCurrentRevealContext();
     // Renewal reads no value, so it does not go through the gate, but it is
     // still an operation a policy may refuse.
-    this.policy.checkRevealAllowed?.(effectiveCtx, this, 'renew');
+    refuseHookReturn(this.policy.checkRevealAllowed?.(effectiveCtx, this, 'renew'), this.klass);
     effectiveCtx?.auditReveal?.(this, renewAuditDetails(expiry, plan));
 
     expiry.deadline = plan.next;

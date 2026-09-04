@@ -1174,6 +1174,13 @@ registerPolicy({
 }, { overwrite: true });
 ```
 
+`checkRevealAllowed` must be synchronous and return nothing. It denies by
+throwing, and the gate reads the value in the same call, so an `async` hook
+could only ever throw into a Promise after the raw value had been returned.
+Its declared return type is `undefined` rather than `void`, which makes an
+`async` function a compile error, and the gate refuses at runtime any hook
+that returns a value, a Promise included.
+
 The policy registry is process-global and shared across duplicate installed
 copies of core using `Symbol.for()`. This mutable configuration prevents
 accidental misuse; it is not a security boundary against code already running

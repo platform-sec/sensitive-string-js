@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- A policy's `checkRevealAllowed` hook now fails closed when it answers with anything but
+  `undefined`. The hook denies by throwing, and TypeScript accepts an `async` function where a
+  `void`-returning one is expected, so an `async` hook that threw after its first `await` threw into
+  a Promise nobody read, after `reveal()` had already returned the raw value: the authorization hook
+  failed open, silently, on exactly the reads it was written to refuse. The declared return type is
+  now `undefined`, which rejects the `async` form at compile time, and the raw-value gate refuses a
+  Promise, or any other returned value, as a denial, on `reveal()`, `equals()`, `mask()`, every
+  transform, `serialize()` and `renew()` alike. A hook written as a block that throws or returns
+  nothing is unaffected; one written as an expression that returns something now fails to compile,
+  which is the point.
+
 ### Added
 
 - Added the HTTP client row: `@platform-sec/sensitive-string-http` as the shared layer, and five

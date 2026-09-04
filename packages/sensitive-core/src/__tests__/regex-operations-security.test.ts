@@ -41,7 +41,7 @@ describe('SensitiveString regular-expression security', () => {
   });
 
   it('authorizes and audits regex queries when policy permits them', () => {
-    const checkRevealAllowed = vi.fn((ctx: RevealContext | null) => {
+    const checkRevealAllowed = vi.fn((ctx: RevealContext | null): undefined => {
       if (ctx?.name !== 'approved-regex') {
         throw new Error('Regex context denied');
       }
@@ -69,7 +69,7 @@ describe('SensitiveString regular-expression security', () => {
   });
 
   it('authorizes and audits regex extraction exactly once per operation', () => {
-    const checkRevealAllowed = vi.fn((ctx: RevealContext | null) => {
+    const checkRevealAllowed = vi.fn((ctx: RevealContext | null): undefined => {
       if (ctx?.name !== 'approved-extraction') {
         throw new Error('Extraction context denied');
       }

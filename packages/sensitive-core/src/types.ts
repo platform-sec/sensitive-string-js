@@ -217,6 +217,10 @@ export interface RevealContext {
    *
    * `details` distinguishes a full reveal from a partial one and carries the
    * mask options that produced it.
+   *
+   * The return value is ignored. A sink that must stop the reveal throws
+   * synchronously; a Promise it returns is not awaited, so a rejection after an
+   * `await` cannot stop anything and surfaces as an unhandled rejection.
    */
   auditReveal?(value: ISensitiveString, details: RevealDetails): void;
 }
@@ -285,7 +289,15 @@ export interface SensitivityPolicy {
 
   /**
    * Hook to validate whether reveal is allowed in the given context.
-   * Throw an error to deny the reveal.
+   * Throw an error to deny the reveal, and return nothing to allow it.
+   *
+   * ⚠️ The hook must be synchronous. The gate reads the value in the same call,
+   * so an `async` hook cannot deny anything: it throws into a Promise after the
+   * raw value has already been returned, which is the hook failing open on
+   * exactly the reads it was written to refuse. The return type is `undefined`
+   * rather than `void` so that an `async` function is rejected at compile time,
+   * and the gate refuses at runtime any hook that returns a value at all, a
+   * Promise included, since a hook that returns `false` meant to deny.
    *
    * `value` is the instance being read, so a policy can decide on the label or
    * the deadline rather than on the class alone, and `access` says what is
@@ -305,7 +317,7 @@ export interface SensitivityPolicy {
     ctx: RevealContext | null,
     value: ISensitiveString,
     access: RevealAccess
-  ): void;
+  ): undefined;
 
   /**
    * Determine the resulting class when combining two sensitive values.

@@ -110,7 +110,7 @@ describe('sensitive template literal security', () => {
   });
 
   it('stops at the first denied interpolation without assembling a result', () => {
-    const checkRevealAllowed = vi.fn((ctx: RevealContext | null) => {
+    const checkRevealAllowed = vi.fn((ctx: RevealContext | null): undefined => {
       if (ctx?.name !== 'approved') {
         throw new Error('Template context denied');
       }
