@@ -7,6 +7,7 @@ import {
   type RevealContext,
 } from '@platform-sec/sensitive-string-core';
 import { Readable } from 'node:stream';
+import { inspect } from 'node:util';
 import { firstValueFrom, of } from 'rxjs';
 import { describe, expect, test, vi } from 'vitest';
 import { REVEAL_CONTEXT_KEY } from '../constants.js';
@@ -302,14 +303,52 @@ describe('SensitiveResponseInterceptor', () => {
   });
 
   test.each([
-    ['a Map', new Map([['k', 'v']])],
-    ['a Set', new Set(['v'])],
     ['a RegExp', /pattern/u],
     ['a URL', new URL('https://example.com/path')],
   ])('passes %s through, since a property copy would break it', async (_name, member) => {
     const body = (await redact({ member })) as { member: unknown };
 
     expect(body.member).toBe(member);
+  });
+
+  // A Map and a Set are copied entry by entry rather than passed through.
+  // Either can hold a `serialize()` result, and every serializer but
+  // `JSON.stringify` walks entries, so a body NestJS hands to one of those is
+  // where the raw value used to arrive. The copy is also why a property walk
+  // is still wrong: it would produce a collection of the right class holding
+  // nothing, which is what these assert against by reading the entries back.
+  test('copies a Map, redacting what it holds', async () => {
+    const token = new SensitiveString(CANARY, 'credential', 'token');
+    const member = new Map<string, unknown>([
+      ['live', token],
+      ['wire', token.serialize()],
+      ['plain', 'v'],
+    ]);
+
+    const body = (await redact({ member })) as { member: Map<string, unknown> };
+
+    expect(body.member).not.toBe(member);
+    expect(body.member).toBeInstanceOf(Map);
+    expect(body.member.get('plain')).toBe('v');
+    expect(body.member.get('live')).toBe('[REDACTED:credential]');
+    expect(body.member.get('wire')).toBe('[REDACTED:credential]');
+    expect(inspect(body.member)).not.toContain(CANARY);
+    // The handler's own body is untouched, since it may be shared.
+    expect(member.get('live')).toBe(token);
+  });
+
+  test('copies a Set, redacting what it holds', async () => {
+    const token = new SensitiveString(CANARY, 'credential', 'token');
+    const member = new Set<unknown>([token, token.serialize(), 'plain']);
+
+    const body = (await redact({ member })) as { member: Set<unknown> };
+
+    expect(body.member).not.toBe(member);
+    expect(body.member).toBeInstanceOf(Set);
+    // Two redactions of the same class collapse to one member; the input keeps three.
+    expect([...body.member]).toEqual(['[REDACTED:credential]', 'plain']);
+    expect(inspect(body.member)).not.toContain(CANARY);
+    expect(member.size).toBe(3);
   });
 
   test.each([
