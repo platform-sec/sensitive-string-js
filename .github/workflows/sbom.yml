@@ -1,8 +1,5 @@
 name: SBOM Generation
 
-# Note: cyclonedx-npm has compatibility issues with pnpm workspaces in act
-# The workflow works on GitHub Actions with proper npm/pnpm configuration
-
 on:
   push:
     branches: [main]
@@ -42,49 +39,87 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install CycloneDX CLI
+        env:
+          CYCLONEDX_CLI_SHA256: bfc8b2538da86fe239bc53658bbb63c1c8c510a293c1e6891aa5bea5d3c58746
+          CYCLONEDX_CLI_VERSION: 0.33.1
+        run: |
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/cyclonedx" \
+            "https://github.com/CycloneDX/cyclonedx-cli/releases/download/v${CYCLONEDX_CLI_VERSION}/cyclonedx-linux-x64"
+          echo "${CYCLONEDX_CLI_SHA256}  $RUNNER_TEMP/cyclonedx" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/cyclonedx"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
       - name: Generate CycloneDX SBOM
         run: |
-          # Install CycloneDX generator
-          npm install -g @cyclonedx/cyclonedx-npm
-
-          # Generate SBOM for each package
+          # pnpm 11 provides the package-manager-native generator. Run it through
+          # pnpm 9 so dependency installation remains pinned to this repository's
+          # packageManager version.
           for pkg in packages/*/; do
             pkg_name=$(basename "$pkg")
             echo "Generating SBOM for $pkg_name..."
 
-            cd "$pkg"
-            cyclonedx-npm \
-              --output-format JSON \
-              --output-file "../../sbom-${pkg_name}.json" \
-              --omit dev
+            pnpm dlx pnpm@11.25.0 --pm-on-fail=ignore sbom \
+              --filter "./${pkg%/}" \
+              --fail-if-no-match \
+              --prod \
+              --sbom-format cyclonedx \
+              --sbom-spec-version 1.6 \
+              --out "sbom-${pkg_name}.json"
 
-            cyclonedx-npm \
-              --output-format XML \
-              --output-file "../../sbom-${pkg_name}.xml" \
-              --omit dev
-
-            cd ../..
+            cyclonedx convert \
+              --input-file "sbom-${pkg_name}.json" \
+              --input-format json \
+              --output-file "sbom-${pkg_name}.xml" \
+              --output-format xml \
+              --output-version v1_6
           done
 
           # Generate monorepo-wide SBOM
-          cyclonedx-npm \
-            --output-format JSON \
-            --output-file sbom-full.json
+          pnpm dlx pnpm@11.25.0 --pm-on-fail=ignore sbom \
+            --filter './packages/*' \
+            --fail-if-no-match \
+            --sbom-format cyclonedx \
+            --sbom-spec-version 1.6 \
+            --out sbom-full.json
 
-          cyclonedx-npm \
-            --output-format XML \
-            --output-file sbom-full.xml
+          cyclonedx convert \
+            --input-file sbom-full.json \
+            --input-format json \
+            --output-file sbom-full.xml \
+            --output-format xml \
+            --output-version v1_6
 
       - name: Generate SPDX SBOM
         run: |
-          npm install -g @sbom-tool/spdx-sbom-generator
-
-          # Generate SPDX format SBOM
           for pkg in packages/*/; do
             pkg_name=$(basename "$pkg")
             echo "Generating SPDX SBOM for $pkg_name..."
-            spdx-sbom-generator -p "$pkg" -o "sbom-spdx-${pkg_name}.json" || echo "SPDX generation not available"
+
+            pnpm dlx pnpm@11.25.0 --pm-on-fail=ignore sbom \
+              --filter "./${pkg%/}" \
+              --fail-if-no-match \
+              --prod \
+              --sbom-format spdx \
+              --out "sbom-spdx-${pkg_name}.json"
           done
+
+      - name: Verify generated SBOM set
+        run: |
+          package_count=$(find packages -mindepth 2 -maxdepth 2 -type f -name package.json | wc -l)
+          cyclonedx_json_count=$(find . -maxdepth 1 -type f -name 'sbom-*.json' ! -name 'sbom-spdx-*' | wc -l)
+          cyclonedx_xml_count=$(find . -maxdepth 1 -type f -name 'sbom-*.xml' | wc -l)
+          spdx_json_count=$(find . -maxdepth 1 -type f -name 'sbom-spdx-*.json' | wc -l)
+
+          echo "Packages: $package_count"
+          echo "CycloneDX JSON files: $cyclonedx_json_count"
+          echo "CycloneDX XML files: $cyclonedx_xml_count"
+          echo "SPDX JSON files: $spdx_json_count"
+
+          test "$cyclonedx_json_count" -eq "$((package_count + 1))"
+          test "$cyclonedx_xml_count" -eq "$((package_count + 1))"
+          test "$spdx_json_count" -eq "$package_count"
 
       - name: Generate dependency tree
         run: |
@@ -145,19 +180,29 @@ jobs:
         uses: actions/download-artifact@v4
         # Skip in act (local runner) - artifacts not available
         if: ${{ !env.ACT }}
-        continue-on-error: true
         with:
           name: sbom-${{ github.sha }}
 
       - name: Validate CycloneDX SBOM
         run: |
-          npm install -g @cyclonedx/cyclonedx-cli
+          CYCLONEDX_CLI_VERSION=0.33.1
+          CYCLONEDX_CLI_SHA256=bfc8b2538da86fe239bc53658bbb63c1c8c510a293c1e6891aa5bea5d3c58746
 
-          # Validate each SBOM file
-          for sbom in sbom-*.json; do
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/cyclonedx" \
+            "https://github.com/CycloneDX/cyclonedx-cli/releases/download/v${CYCLONEDX_CLI_VERSION}/cyclonedx-linux-x64"
+          echo "${CYCLONEDX_CLI_SHA256}  $RUNNER_TEMP/cyclonedx" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/cyclonedx"
+
+          # This CLI validates CycloneDX, so exclude the SPDX JSON artifacts.
+          for sbom in sbom-*.json sbom-*.xml; do
             if [ -f "$sbom" ]; then
+              case "$sbom" in
+                sbom-spdx-*) continue ;;
+              esac
+
               echo "Validating $sbom..."
-              cyclonedx validate --input-file "$sbom" --fail-on-errors || echo "⚠️  Validation warnings for $sbom"
+              "$RUNNER_TEMP/cyclonedx" validate --input-file "$sbom" --fail-on-errors
             fi
           done
 
@@ -166,6 +211,10 @@ jobs:
           # Check that SBOM contains expected components
           for sbom in sbom-*.json; do
             if [ -f "$sbom" ]; then
+              case "$sbom" in
+                sbom-spdx-*) continue ;;
+              esac
+
               echo "Analyzing $sbom..."
 
               # Count components
