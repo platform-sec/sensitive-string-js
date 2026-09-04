@@ -1,7 +1,7 @@
 lockfileVersion: '9.0'
 
 settings:
-  autoInstallPeers: true
+  autoInstallPeers: false
   excludeLinksFromLockfile: false
 
 importers:
@@ -43,10 +43,10 @@ importers:
         version: 8.69.0(eslint@9.39.5)(typescript@5.9.3)
       unplugin-swc:
         specifier: ^1.5.11
-        version: 1.5.11(@swc/core@1.16.1)(esbuild@0.28.2)(rollup@4.63.1)(vite@7.3.6(@types/node@22.20.1)(yaml@2.9.0))
+        version: 1.5.11(@swc/core@1.16.1)
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.20.1)(yaml@2.9.0))
+        version: 4.1.11(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)
 
   packages/sensitive-aws-secrets:
     devDependencies:
@@ -206,10 +206,10 @@ importers:
     devDependencies:
       '@platform-sec/sensitive-string-core':
         specifier: workspace:*
-        version: link:../sensitive-core
+        version: file:packages/sensitive-core
       '@platform-sec/sensitive-string-testing':
         specifier: workspace:*
-        version: link:../sensitive-testing
+        version: file:packages/sensitive-testing(@platform-sec/sensitive-string-core@file:packages/sensitive-core)
       '@types/node':
         specifier: ^22.20.1
         version: 22.20.1
@@ -224,7 +224,12 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.20.1)(yaml@2.9.0))
+        version: 4.1.11(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11(vitest@4.1.11))
+    dependenciesMeta:
+      '@platform-sec/sensitive-string-core':
+        injected: true
+      '@platform-sec/sensitive-string-testing':
+        injected: true
 
   packages/sensitive-gcp-secrets:
     devDependencies:
@@ -1063,6 +1068,16 @@ packages:
 
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
+
+  '@platform-sec/sensitive-string-core@file:packages/sensitive-core':
+    resolution: {directory: packages/sensitive-core, type: directory}
+    engines: {node: '>=22.12.0'}
+
+  '@platform-sec/sensitive-string-testing@file:packages/sensitive-testing':
+    resolution: {directory: packages/sensitive-testing, type: directory}
+    engines: {node: '>=22.12.0'}
+    peerDependencies:
+      '@platform-sec/sensitive-string-core': ^0.1.0
 
   '@protobufjs/aspromise@1.1.2':
     resolution: {integrity: sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ==}
@@ -3303,7 +3318,6 @@ packages:
       '@vitest/ui': 4.1.11
       happy-dom: '*'
       jsdom: '*'
-      vite: ^6.0.0 || ^7.0.0 || ^8.0.0
     peerDependenciesMeta:
       '@edge-runtime/vm':
         optional: true
@@ -4037,6 +4051,12 @@ snapshots:
 
   '@pinojs/redact@0.4.0': {}
 
+  '@platform-sec/sensitive-string-core@file:packages/sensitive-core': {}
+
+  '@platform-sec/sensitive-string-testing@file:packages/sensitive-testing(@platform-sec/sensitive-string-core@file:packages/sensitive-core)':
+    dependencies:
+      '@platform-sec/sensitive-string-core': file:packages/sensitive-core
+
   '@protobufjs/aspromise@1.1.2': {}
 
   '@protobufjs/base64@1.1.2': {}
@@ -4057,13 +4077,11 @@ snapshots:
 
   '@protobufjs/utf8@1.1.2': {}
 
-  '@rollup/pluginutils@5.4.0(rollup@4.63.1)':
+  '@rollup/pluginutils@5.4.0':
     dependencies:
       '@types/estree': 1.0.9
       estree-walker: 2.0.2
       picomatch: 4.0.7
-    optionalDependencies:
-      rollup: 4.63.1
 
   '@rollup/rollup-android-arm-eabi@4.63.1':
     optional: true
@@ -4519,7 +4537,7 @@ snapshots:
       obug: 2.1.4
       std-env: 4.2.0
       tinyrainbow: 3.1.1
-      vitest: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.20.1)(yaml@2.9.0))
+      vitest: 4.1.11(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)
 
   '@vitest/expect@4.1.11':
     dependencies:
@@ -4537,6 +4555,14 @@ snapshots:
       magic-string: 0.30.21
     optionalDependencies:
       vite: 7.3.6(@types/node@22.20.1)(yaml@2.9.0)
+
+  '@vitest/mocker@4.1.11(vite@7.3.6(@types/node@22.20.1))':
+    dependencies:
+      '@vitest/spy': 4.1.11
+      estree-walker: 3.0.3
+      magic-string: 0.30.21
+    optionalDependencies:
+      vite: 7.3.6(@types/node@22.20.1)
 
   '@vitest/pretty-format@4.1.11':
     dependencies:
@@ -6351,12 +6377,12 @@ snapshots:
 
   unpipe@1.0.0: {}
 
-  unplugin-swc@1.5.11(@swc/core@1.16.1)(esbuild@0.28.2)(rollup@4.63.1)(vite@7.3.6(@types/node@22.20.1)(yaml@2.9.0)):
+  unplugin-swc@1.5.11(@swc/core@1.16.1):
     dependencies:
-      '@rollup/pluginutils': 5.4.0(rollup@4.63.1)
+      '@rollup/pluginutils': 5.4.0
       '@swc/core': 1.16.1
       load-tsconfig: 0.2.5
-      unplugin: 3.3.0(esbuild@0.28.2)(rollup@4.63.1)(vite@7.3.6(@types/node@22.20.1)(yaml@2.9.0))
+      unplugin: 3.3.0
     transitivePeerDependencies:
       - '@farmfe/core'
       - '@rspack/core'
@@ -6368,15 +6394,11 @@ snapshots:
       - vite
       - webpack
 
-  unplugin@3.3.0(esbuild@0.28.2)(rollup@4.63.1)(vite@7.3.6(@types/node@22.20.1)(yaml@2.9.0)):
+  unplugin@3.3.0:
     dependencies:
       '@jridgewell/remapping': 2.3.5
       picomatch: 4.0.7
       webpack-virtual-modules: 0.6.2
-    optionalDependencies:
-      esbuild: 0.28.2
-      rollup: 4.63.1
-      vite: 7.3.6(@types/node@22.20.1)(yaml@2.9.0)
 
   uri-js@4.4.1:
     dependencies:
@@ -6397,6 +6419,18 @@ snapshots:
       assert-plus: 1.0.0
       core-util-is: 1.0.2
       extsprintf: 1.3.0
+
+  vite@7.3.6(@types/node@22.20.1):
+    dependencies:
+      esbuild: 0.28.2
+      fdir: 6.5.0(picomatch@4.0.7)
+      picomatch: 4.0.7
+      postcss: 8.5.27
+      rollup: 4.63.1
+      tinyglobby: 0.2.17
+    optionalDependencies:
+      '@types/node': 22.20.1
+      fsevents: 2.3.3
 
   vite@7.3.6(@types/node@22.20.1)(yaml@2.9.0):
     dependencies:
@@ -6439,6 +6473,82 @@ snapshots:
       '@vitest/coverage-v8': 4.1.11(vitest@4.1.11)
     transitivePeerDependencies:
       - msw
+
+  vitest@4.1.11(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11(vitest@4.1.11)):
+    dependencies:
+      '@vitest/expect': 4.1.11
+      '@vitest/mocker': 4.1.11(vite@7.3.6(@types/node@22.20.1))
+      '@vitest/pretty-format': 4.1.11
+      '@vitest/runner': 4.1.11
+      '@vitest/snapshot': 4.1.11
+      '@vitest/spy': 4.1.11
+      '@vitest/utils': 4.1.11
+      es-module-lexer: 2.3.2
+      expect-type: 1.4.0
+      magic-string: 0.30.21
+      obug: 2.1.4
+      pathe: 2.0.3
+      picomatch: 4.0.7
+      std-env: 4.2.0
+      tinybench: 2.9.0
+      tinyexec: 1.3.1
+      tinyglobby: 0.2.17
+      tinyrainbow: 3.1.1
+      vite: 7.3.6(@types/node@22.20.1)
+      why-is-node-running: 2.3.0
+    optionalDependencies:
+      '@types/node': 22.20.1
+      '@vitest/coverage-v8': 4.1.11(vitest@4.1.11)
+    transitivePeerDependencies:
+      - jiti
+      - less
+      - lightningcss
+      - msw
+      - sass
+      - sass-embedded
+      - stylus
+      - sugarss
+      - terser
+      - tsx
+      - yaml
+
+  vitest@4.1.11(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11):
+    dependencies:
+      '@vitest/expect': 4.1.11
+      '@vitest/mocker': 4.1.11(vite@7.3.6(@types/node@22.20.1))
+      '@vitest/pretty-format': 4.1.11
+      '@vitest/runner': 4.1.11
+      '@vitest/snapshot': 4.1.11
+      '@vitest/spy': 4.1.11
+      '@vitest/utils': 4.1.11
+      es-module-lexer: 2.3.2
+      expect-type: 1.4.0
+      magic-string: 0.30.21
+      obug: 2.1.4
+      pathe: 2.0.3
+      picomatch: 4.0.7
+      std-env: 4.2.0
+      tinybench: 2.9.0
+      tinyexec: 1.3.1
+      tinyglobby: 0.2.17
+      tinyrainbow: 3.1.1
+      vite: 7.3.6(@types/node@22.20.1)
+      why-is-node-running: 2.3.0
+    optionalDependencies:
+      '@types/node': 22.20.1
+      '@vitest/coverage-v8': 4.1.11(vitest@4.1.11)
+    transitivePeerDependencies:
+      - jiti
+      - less
+      - lightningcss
+      - msw
+      - sass
+      - sass-embedded
+      - stylus
+      - sugarss
+      - terser
+      - tsx
+      - yaml
 
   web-streams-polyfill@3.3.3: {}
 
