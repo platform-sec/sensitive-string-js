@@ -32,7 +32,7 @@
     "node": ">=22.12.0"
   },
   "peerDependencies": {
-    "@platform-sec/sensitive-string-core": "^0.1.0",
+    "@platform-sec/sensitive-string-core": "^0.5.0",
     "express": "^4.21.0 || ^5.0.0"
   },
   "devDependencies": {

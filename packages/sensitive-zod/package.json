@@ -31,7 +31,7 @@
     "node": ">=22.12.0"
   },
   "peerDependencies": {
-    "@platform-sec/sensitive-string-core": "^0.1.0",
+    "@platform-sec/sensitive-string-core": "^0.5.0",
     "zod": "^3.22.0"
   },
   "devDependencies": {

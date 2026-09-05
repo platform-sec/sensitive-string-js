@@ -7,10 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-09-04
+## First publication - 2026-09-04
 
-The first published release. Everything below shipped in it; the development history that
-produced it is recorded here rather than split across versions that were never on npm.
+Packages version independently, so this release has no single number. `sensitive-core` starts at
+`0.5.0`, one version per wave of the development recorded below; every other package starts at
+`0.1.0`. Everything below shipped in it. See each package's own `CHANGELOG.md` for its release
+notes, and [`RELEASING.md`](RELEASING.md) for why the starting numbers differ.
 
 ### Added
 
