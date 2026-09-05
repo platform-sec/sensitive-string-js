@@ -83,9 +83,10 @@ adding a name fails here rather than going unnoticed.
 
 Three rules the matcher follows:
 
-- **Matching is on key names and paths, never on values.** A scrubber that decides by looking at a
-  string is a classifier, it is wrong some of the time, and the thing a user does about a tracker
-  that hides values they needed is turn the scrubbing off.
+- **Matching is on key names and paths, never on values,** unless you opt in. A scrubber that decides
+  by looking at a string is a classifier, it is wrong some of the time, and the thing a user does
+  about a tracker that hides values they needed is turn the scrubbing off. `denyValues` is the
+  opt-in, and it is empty by default.
 - **A denied value is replaced, not deleted.** An absent key and a censored key look the same to a
   reader of the event and mean different things to somebody debugging why a header was not sent.
 - **`allowKeys` requires a reason string.** Removing a key from the default denylist is the one
@@ -106,6 +107,7 @@ const policy = resolveScrubPolicy({
   allowKeys: [{ key: 'token', reason: 'opaque request id, not a credential' }],
   denyPaths: ['request.data.card'],
   urlKeys: ['request.url'],
+  denyValues: ['jwt', 'bearer'],
   censor: '[SCRUBBED]',
   onMarker: 'tag',
   reportLabels: false,
@@ -136,6 +138,48 @@ name names it, and a URL carrying one carries a credential by construction.
 Nothing is rewritten just to normalize it. A round trip through `URL` changes percent-encoding and
 default ports, so a string with nothing denied in it comes back byte-identical.
 
+## Matching on value shape, if you ask
+
+`denyValues` is empty by default and this is the whole of the package's answer to "should the
+denylist ever match on value shape". A bearer token forwarded into a field nobody named
+`authorization` is invisible to a key list, and the shapes below are recognizable without guessing,
+so they ship. They are off unless you name one.
+
+Default-on would be wrong for a reason specific to error tracking rather than a general dislike of
+false positives. A false positive censors a value an engineer needed, the tracker becomes less
+useful, and the thing a user does about a tracker that is less useful is turn the scrubbing off
+entirely. That trades a certain small loss for an uncertain large one.
+
+| Name | Shape |
+|---|---|
+| `jwt` | Three base64url segments |
+| `bearer` | An `Authorization: Bearer` value |
+| `basicAuth` | An `Authorization: Basic` value |
+| `pemPrivateKey` | A whole PEM private key block, header to footer |
+| `awsAccessKeyId` | `AKIA`, `ASIA`, `AIDA` or `AROA` plus 16 characters |
+| `githubToken` | `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, or `github_pat_` |
+| `slackToken` | `xoxb-` and its siblings |
+| `openaiKey` | `sk-`, which several vendors have since copied |
+
+Three rules every shipped pattern follows, each with its own test:
+
+- **Anchored at both ends.** A pattern describes the whole value, never something found inside it.
+  Censoring a log line to remove a token from the middle of it would destroy the message, and
+  matching a substring is where a linear scan becomes a scan per position.
+- **Linear time.** No nested quantifier over a shared character class, so a pathological subject
+  cannot turn a scrub on the error path into a stall.
+- **A prefix that is issued rather than chosen.** `ghp_`, `xoxb-`, `AKIA` and a PEM header are
+  namespaces a vendor controls. A pattern that merely describes "looks random" is not here and should
+  not be.
+
+You can pass your own `RegExp` instead of a name. It is taken as written and reported by its source,
+with `g` and `y` stripped, because those carry `lastIndex` between calls and would make the same
+subject match on one payload and not the next.
+
+The report names the shapes that matched, never the values and never where they matched: a path is a
+key name your application chose and is safe on its own, but a path paired with a pattern name is a
+map of where to look.
+
 ## The report
 
 ```typescript
@@ -145,6 +189,7 @@ interface ScrubReport {
   classes: ReadonlySet<SensitivityClass>;
   labels?: readonly string[];   // only when reportLabels is on
   deniedKeys: readonly string[];
+  deniedValues: readonly string[];  // the value recognizers that matched, by name
   markersSeen: number;
   markerClasses: ReadonlySet<string>;
   failed: boolean;

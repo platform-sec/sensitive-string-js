@@ -44,6 +44,9 @@ export type {
   ResolvedScrubPolicy,
 } from './types.js';
 
+export { ALL_VALUE_PATTERNS, VALUE_PATTERNS, compileValuePatterns, matchValue } from './values.js';
+export type { CompiledValuePattern, ValuePatternName } from './values.js';
+
 export {
   DEFAULT_CENSOR,
   ScrubPolicyError,
@@ -61,7 +64,7 @@ export {
   scrubUrl,
 } from './deny.js';
 
-export { failedReport, scrubPayload } from './walk.js';
+export { failedReport, mergeReports, scrubPayload } from './walk.js';
 
-export { composeAfter, guardedScrub } from './failure.js';
+export { composeAfter, guardedScrub, reportScrub } from './failure.js';
 export type { GuardedResult, GuardedScrubOptions, StubBuilder } from './failure.js';

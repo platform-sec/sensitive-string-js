@@ -85,7 +85,7 @@ export function guardedScrub<P>({
       const { payload: scrubbed, report } = scrubPayload(payload, policy, kind);
 
       if (reportSuccess) {
-        report_(policy, report);
+        reportScrub(policy, report);
       }
 
       return { payload: scrubbed as P, report };
@@ -104,7 +104,7 @@ function recover<P>(
 ): GuardedResult<P> {
   const report = failedReport(kind, policy);
 
-  report_(policy, report);
+  reportScrub(policy, report);
 
   try {
     return { payload: stub(payload, error), report };
@@ -122,8 +122,14 @@ function recover<P>(
  * Invariant 10 is that no hook body throws, and a reporting callback is inside
  * the hook body. A failure here is also the one failure with nowhere to go:
  * reporting that the reporter threw would call the reporter.
+ *
+ * Exported because `guardedScrub` does not fit every vendor. A vendor whose
+ * callback contract is "mutate the payload you were given and return a
+ * boolean", which is Bugsnag's, has no replacement payload to hand back and
+ * runs its own guard; it still has to report the same way, and one swallow rule
+ * is better than two.
  */
-function report_(policy: ResolvedScrubPolicy, report: ScrubReport): void {
+export function reportScrub(policy: ResolvedScrubPolicy, report: ScrubReport): void {
   if (policy.onScrub === undefined) {
     return;
   }

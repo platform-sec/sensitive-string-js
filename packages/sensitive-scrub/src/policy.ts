@@ -1,5 +1,6 @@
 import { DEFAULT_DENY_KEYS, DEFAULT_DENY_PATHS } from './deny.js';
 import type { ResolvedScrubPolicy, ScrubPolicy } from './types.js';
+import { compileValuePatterns } from './values.js';
 
 /**
  * The replacement written in place of a denied value.
@@ -27,7 +28,8 @@ export class ScrubPolicyError extends Error {
  * `init` rather than at an event six hours later.
  *
  * @throws ScrubPolicyError when `allowKeys` carries an entry without a
- *         non-empty reason, or when a key is both denied and allowed.
+ *         non-empty reason, when a key is both denied and allowed, or when
+ *         `denyValues` names a pattern that does not exist.
  */
 export function resolveScrubPolicy(policy: ScrubPolicy = {}): ResolvedScrubPolicy {
   const denyKeys = new Set(DEFAULT_DENY_KEYS.map(lower));
@@ -69,6 +71,7 @@ export function resolveScrubPolicy(policy: ScrubPolicy = {}): ResolvedScrubPolic
     denyKeys,
     denyPaths,
     urlKeys: new Set((policy.urlKeys ?? []).map(lower)),
+    denyValues: compileValues(policy),
     censor: policy.censor ?? DEFAULT_CENSOR,
     onMarker: policy.onMarker ?? 'tag',
     reportLabels: policy.reportLabels ?? false,
@@ -100,6 +103,7 @@ export function mergeScrubPolicy(vendor: ScrubPolicy, caller: ScrubPolicy = {}):
     ],
     denyPaths: [...(vendor.denyPaths ?? []), ...(caller.denyPaths ?? [])],
     urlKeys: [...(vendor.urlKeys ?? []), ...(caller.urlKeys ?? [])],
+    denyValues: [...(vendor.denyValues ?? []), ...(caller.denyValues ?? [])],
     censor: caller.censor ?? vendor.censor ?? DEFAULT_CENSOR,
     onMarker: caller.onMarker ?? vendor.onMarker ?? 'tag',
     reportLabels: caller.reportLabels ?? vendor.reportLabels ?? false,
@@ -115,6 +119,22 @@ export function mergeScrubPolicy(vendor: ScrubPolicy, caller: ScrubPolicy = {}):
     ...(allowKeys === undefined ? {} : { allowKeys }),
     ...(onScrub === undefined ? {} : { onScrub }),
   };
+}
+
+/**
+ * Compile the opt-in value recognizers, rewriting an unknown name as a policy
+ * error.
+ *
+ * `compileValuePatterns` throws a plain `Error` so `values.ts` stays free of
+ * this file's imports. Everything a caller can get wrong in a policy should
+ * arrive as the same type, so it is rewritten here rather than there.
+ */
+function compileValues(policy: ScrubPolicy): ResolvedScrubPolicy['denyValues'] {
+  try {
+    return compileValuePatterns(policy.denyValues);
+  } catch (error) {
+    throw new ScrubPolicyError(error instanceof Error ? error.message : String(error));
+  }
 }
 
 function lower(value: string): string {

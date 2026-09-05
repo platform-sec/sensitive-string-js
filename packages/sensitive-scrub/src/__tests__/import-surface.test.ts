@@ -22,7 +22,7 @@ const ALLOWED = new Set([
   'SensitivityClass',
 ]);
 
-const PACKAGES = ['sensitive-scrub', 'sensitive-sentry'];
+const PACKAGES = ['sensitive-scrub', 'sensitive-sentry', 'sensitive-bugsnag', 'sensitive-rollbar'];
 
 /**
  * The `packages` directory.

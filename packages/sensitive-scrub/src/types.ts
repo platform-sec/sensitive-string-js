@@ -1,5 +1,7 @@
 import type { SensitivityClass } from '@platform-sec/sensitive-string-core';
 
+import type { CompiledValuePattern, ValuePatternName } from './values.js';
+
 /**
  * The kinds of payload an error tracker or APM agent emits.
  *
@@ -50,6 +52,16 @@ export interface ScrubPolicy {
    * a dot rather than a path of two).
    */
   urlKeys?: readonly string[];
+  /**
+   * Value shape recognizers, by name or as a caller's own `RegExp`. Empty by
+   * default, which is the whole of this package's answer to "should the
+   * denylist ever match on value shape".
+   *
+   * A string that matches one is replaced wherever it sits, whatever its key is
+   * called. See `values.ts` for the shipped names and for why none is on unless
+   * a caller asks.
+   */
+  denyValues?: readonly (ValuePatternName | RegExp)[];
   /** Replacement written in place of a denied value. */
   censor?: string;
   /** What to do on seeing a redaction marker in captured data. Default `'tag'`. */
@@ -73,6 +85,8 @@ export interface ResolvedScrubPolicy {
   readonly denyPaths: ReadonlySet<string>;
   /** Lowercased URL paths and key names. */
   readonly urlKeys: ReadonlySet<string>;
+  /** Compiled value recognizers, empty unless the caller opted in. */
+  readonly denyValues: readonly CompiledValuePattern[];
   readonly censor: string;
   readonly onMarker: 'tag' | 'ignore';
   readonly reportLabels: boolean;
@@ -96,6 +110,16 @@ export interface ScrubReport {
   readonly labels?: readonly string[];
   /** The denied key names that actually matched, deduplicated, in encounter order. */
   readonly deniedKeys: readonly string[];
+  /**
+   * The names of the value recognizers that matched, deduplicated.
+   *
+   * Names, never the values they matched, and never where they matched either:
+   * a path is a key name the application chose and is safe on its own, but a
+   * path paired with a pattern name says a JWT sat at `request.data.callback`,
+   * and that is a map of where to look. Invariant 2 is that a report carries
+   * classes, key names and counts; this is the count of a shape.
+   */
+  readonly deniedValues: readonly string[];
   /** Redaction markers found in captured data. See the marker rule in `walk.ts`. */
   readonly markersSeen: number;
   /** The classes those markers named, when they named a registered one. */

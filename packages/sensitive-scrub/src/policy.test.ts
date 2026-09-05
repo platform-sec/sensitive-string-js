@@ -125,6 +125,16 @@ describe('mergeScrubPolicy', () => {
     expect(merged.urlKeys).toEqual(['request.url', 'url']);
   });
 
+  it('unions the value recognizers too, so a vendor default is not dropped', () => {
+    // The list fields are enumerated one by one rather than spread, so a field
+    // added to `ScrubPolicy` and forgotten here would silently discard whatever
+    // a vendor package put in it.
+    const own = /^token-[0-9]+$/;
+    const merged = mergeScrubPolicy({ denyValues: ['jwt'] }, { denyValues: ['bearer', own] });
+
+    expect(merged.denyValues).toEqual(['jwt', 'bearer', own]);
+  });
+
   it('lets the caller win on the single-valued fields', () => {
     const merged = mergeScrubPolicy(
       { censor: '[VENDOR]', onMarker: 'tag', reportLabels: false },

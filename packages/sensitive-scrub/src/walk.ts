@@ -7,6 +7,7 @@ import {
 
 import { denied, isUrlPosition, scrubUrl } from './deny.js';
 import type { PayloadKind, ResolvedScrubPolicy, ScrubReport } from './types.js';
+import { matchValue } from './values.js';
 
 /**
  * The staged walk over a captured payload.
@@ -96,6 +97,7 @@ interface Accumulator {
   readonly classes: Set<SensitivityClass>;
   readonly labels: Set<string>;
   readonly deniedKeys: Set<string>;
+  readonly deniedValues: Set<string>;
   markersSeen: number;
   readonly markerClasses: Set<string>;
 }
@@ -119,6 +121,7 @@ export function scrubPayload(
     classes: new Set(),
     labels: new Set(),
     deniedKeys: new Set(),
+    deniedValues: new Set(),
     markersSeen: 0,
     markerClasses: new Set(),
   };
@@ -153,11 +156,52 @@ export function failedReport(kind: PayloadKind, policy: ResolvedScrubPolicy): Sc
       classes: new Set(),
       labels: new Set(),
       deniedKeys: new Set(),
+      deniedValues: new Set(),
       markersSeen: 0,
       markerClasses: new Set(),
     },
     true
   );
+}
+
+/**
+ * Fold a second pass's findings into the report a seam will publish.
+ *
+ * A vendor package sometimes has to walk one payload in more than one piece.
+ * The reason is always the same: a region of the payload has already been
+ * through this library's own scrubber at an earlier seam, so stage 1 has
+ * written a marker everywhere a wrapped value stood in it, and a marker
+ * sighting means a marker arrived in *captured* data, which is evidence that
+ * some other integration sent a placeholder where a value belonged. A pass over
+ * such a region runs with `onMarker: 'ignore'` and its findings arrive here.
+ *
+ * So the markers come from the primary report alone, and everything else is the
+ * union. Invariant 18 is one report per payload, and this is what keeps that
+ * true when the walk had to happen twice.
+ *
+ * @param primary - The pass over the regions the seam sees first
+ * @param secondary - A pass over a region an earlier seam already scrubbed
+ */
+export function mergeReports(primary: ScrubReport, secondary: ScrubReport): ScrubReport {
+  const labels =
+    primary.labels === undefined
+      ? undefined
+      : [...new Set([...primary.labels, ...(secondary.labels ?? [])])];
+
+  const merged = {
+    kind: primary.kind,
+    instances: primary.instances + secondary.instances,
+    classes: new Set([...primary.classes, ...secondary.classes]),
+    deniedKeys: [...new Set([...primary.deniedKeys, ...secondary.deniedKeys])],
+    deniedValues: [...new Set([...primary.deniedValues, ...secondary.deniedValues])],
+    markersSeen: primary.markersSeen,
+    markerClasses: primary.markerClasses,
+    failed: primary.failed || secondary.failed,
+  };
+
+  // `exactOptionalPropertyTypes` is on, so `labels` is absent rather than
+  // present and undefined when the caller did not opt in.
+  return labels === undefined ? merged : { ...merged, labels };
 }
 
 function buildReport(
@@ -171,6 +215,7 @@ function buildReport(
     instances: accumulator.instances,
     classes: accumulator.classes,
     deniedKeys: [...accumulator.deniedKeys],
+    deniedValues: [...accumulator.deniedValues],
     markersSeen: policy.onMarker === 'ignore' ? 0 : accumulator.markersSeen,
     markerClasses: policy.onMarker === 'ignore' ? new Set<string>() : accumulator.markerClasses,
     failed,
@@ -253,6 +298,22 @@ function visit(
           accumulator.deniedKeys.add(name);
         }
 
+        continue;
+      }
+    }
+
+    // After the URL branch, so a position whose route is worth keeping is
+    // rewritten rather than censored whole. The shipped patterns are anchored
+    // and none of them describes a URL, so the two do not compete in practice;
+    // the order is what settles it when a caller's own pattern does. Skipped
+    // for a value stage 1 already replaced, for the reason the denylist skips
+    // it: the marker names a class and the censor does not.
+    if (!redactedByStageOne && typeof child === 'string' && policy.denyValues.length > 0) {
+      const shape = matchValue(child, policy.denyValues);
+
+      if (shape !== null) {
+        container[key] = policy.censor;
+        accumulator.deniedValues.add(shape.name);
         continue;
       }
     }
