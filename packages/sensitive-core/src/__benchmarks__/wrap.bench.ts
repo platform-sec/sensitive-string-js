@@ -6,9 +6,12 @@
  * clones before it wraps, so its cost tracks the whole payload and not just
  * the configured paths, which is the fact the first group is here to show.
  *
- * The classification group prices the compiled form against `classifyField`,
- * which compiles the spec on every call. That gap is the argument for hoisting
- * `compileClassification` out of a per-field loop.
+ * The classification group prices the compiled form against `classifyField`.
+ * `classifyField` compiled the spec on every call until the compiled form was
+ * memoized per spec object, and the gap it used to show, better than tenfold
+ * over a payload of keys, is what argued for the memo. The group is kept
+ * because it is what would show the gap returning: a spec that misses the memo
+ * pays the full compile, which is still the expensive thing.
  */
 
 import { bench, describe } from 'vitest';
@@ -126,7 +129,7 @@ describe('classification, one key', () => {
     consume(compiled.classify('unmatchedKeyName'));
   });
 
-  bench('classifyField, compiles the spec each call', () => {
+  bench('classifyField, memoized spec', () => {
     consume(classifyField('apiSecret', SPEC));
   });
 });
@@ -138,8 +141,10 @@ describe('classification, a whole payload of keys', () => {
     }
   });
 
-  bench('compileClassification then five keys', () => {
-    const fresh = compileClassification(SPEC);
+  // A spec object the memo has not seen, so this is what a caller pays when
+  // the spec is rebuilt per call rather than held.
+  bench('an unseen spec, compiled then five keys', () => {
+    const fresh = compileClassification({ ...SPEC });
 
     for (const key of KEYS) {
       consume(fresh.classify(key));
