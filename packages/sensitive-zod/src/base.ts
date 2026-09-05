@@ -177,9 +177,10 @@ export function zSensitiveOptional<C extends SensitivityClass>(
  *
  * Reconstruction is delegated to `SensitiveString.deserialize()`, so this path
  * enforces exactly what the core wire format does: the sensitivity class must be
- * registered, and a deadline carried by the payload is carried into the value.
- * Rebuilding the value here instead would silently drop the deadline, which
- * fails open: an expiring token would arrive as one that never expires.
+ * registered, a deadline carried by the payload is carried into the value, and a
+ * payload that marks the value revoked produces a revoked value. Rebuilding the
+ * value here instead would silently drop both, which fails open: an expiring
+ * token would arrive as one that never expires, and a revoked one as live.
  *
  * A class mismatch, an unregistered class, and a malformed payload are all
  * reported as Zod issues, so `safeParse` reports them rather than throwing.
@@ -210,6 +211,8 @@ export function zSensitiveDeserialize<C extends SensitivityClass>(
     value: string;
     label?: string | undefined;
     expiresAt?: string | undefined;
+    revoked?: true | undefined;
+    revocationReason?: string | undefined;
   }
 > {
   return withSensitiveMethods(
@@ -220,6 +223,14 @@ export function zSensitiveDeserialize<C extends SensitivityClass>(
         value: z.string(),
         label: z.string().optional(),
         expiresAt: z.string().optional(),
+        // Declared so the object schema does not strip them before
+        // `deserialize()` sees them. An unlisted key is dropped, and dropping
+        // these two would turn a payload that says "do not use this" into one
+        // that says nothing, which is the same fail-open shape as losing the
+        // deadline. Validating them is still core's job, so both are accepted
+        // loosely here and rejected there.
+        revoked: z.literal(true).optional(),
+        revocationReason: z.string().optional(),
       })
       .transform((serialized, ctx): SensitiveString<C> => {
         // Reported as issues rather than thrown. A throw from inside a

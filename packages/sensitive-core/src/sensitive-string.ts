@@ -32,43 +32,23 @@ import {
   type RevealBudget,
   type RevealConstrained,
 } from './reveal-budget.js';
+import {
+  observedRevocation,
+  planRevocation,
+  requireReason,
+  revocationInForce,
+  revokeAuditDetails,
+  RevokedSensitiveValueError,
+  revokeStates,
+  type RevocationCell,
+  type RevocationRecord,
+} from './revocation.js';
+import { snapshotRegExp } from './regexp.js';
 
 /**
  * Node.js custom inspect symbol for util.inspect() and console.log().
  */
 const NODE_INSPECT_SYMBOL = Symbol.for('nodejs.util.inspect.custom');
-
-/* eslint-disable @typescript-eslint/unbound-method --
-   Detaching these getters from RegExp.prototype is the point: a subclass or an
-   instance with an overridden `source` cannot influence what is read. Each is
-   annotated `this: RegExp` and invoked through .call() with the pattern as the
-   receiver, which is the binding the rule asks for. */
-const REGEXP_SOURCE_GETTER = Object.getOwnPropertyDescriptor(RegExp.prototype, 'source')?.get as (
-  this: RegExp
-) => string;
-const REGEXP_FLAGS_GETTER = Object.getOwnPropertyDescriptor(RegExp.prototype, 'flags')?.get as (
-  this: RegExp
-) => string;
-/* eslint-enable @typescript-eslint/unbound-method */
-
-/**
- * Copy a caller-provided regular expression into a plain RegExp.
- *
- * RegExp subclasses and instances with overridden `exec` or symbol methods must
- * not receive a sensitive value. Taking a snapshot also prevents these methods
- * from mutating the caller's `lastIndex`.
- */
-function snapshotRegExp(pattern: RegExp, operation: string): RegExp {
-  try {
-    // Calling the intrinsic getters verifies the RegExp internal slots, works
-    // across realms, and bypasses an instance's overridden `source`/`flags`.
-    const source = REGEXP_SOURCE_GETTER.call(pattern);
-    const flags = REGEXP_FLAGS_GETTER.call(pattern);
-    return new RegExp(source, flags);
-  } catch {
-    throw new TypeError(`SensitiveString.${operation} requires a regular expression`);
-  }
-}
 
 /**
  * Name the kind of value the constructor refused, and nothing of its content:
@@ -153,6 +133,12 @@ interface SensitiveStringState {
   reveals: number;
   /** The limits on those exposures, or undefined when there are none. */
   readonly budget: RevealBudget | undefined;
+  /**
+   * Whether this value has been revoked, and the label and registry that decide
+   * it. Mutable, unlike everything else here that is not a counter: a revocation
+   * arrives after construction by definition.
+   */
+  readonly revocation: RevocationCell;
 }
 
 /** A state that carries reveal limits. */
@@ -363,6 +349,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       expiry: planExpiry(options, klass, getPolicy(klass)),
       reveals: 0,
       budget: planRevealBudget(options),
+      revocation: planRevocation(options, label),
     };
 
     this.#own = state;
@@ -465,6 +452,22 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     // line asking is not an access and must fire none of them.
     if (access === 'expose' && isInsideRedaction()) {
       throw new RevealDuringRedactionError(this.klass, this.label);
+    }
+
+    // Ahead of the deadline, because when both refuse, the revocation is the
+    // one worth reporting: expiry invites a renewal and a retry, and a revoked
+    // value must never look renewable. It is also the check that can consult
+    // something outside the process, so a caller sees the reason that came from
+    // there rather than a lapsed clock.
+    const revoked = revocationInForce(this.#states);
+    if (revoked !== undefined) {
+      throw new RevokedSensitiveValueError(
+        revoked.reason,
+        new Date(revoked.at),
+        this.label,
+        revoked.scope,
+        revoked.cause
+      );
     }
 
     // Before authorization and before the audit hook: a denied read is not a
@@ -596,13 +599,16 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * The redacted form stays exactly what the class policy produces: expiry is
    * reported next to it rather than in place of it, so a custom redaction is
    * never replaced by a lifecycle marker. Inspecting is not an access, so this
-   * does not fire `onExpire`.
+   * does not fire `onExpire`, and it neither calls out to an external
+   * revocation registry nor latches what it finds: a log line must not make a
+   * network call, and a value that was only printed has not been used.
    */
   [NODE_INSPECT_SYMBOL](): string {
     const klassLabel = this.label ? `${this.klass}:${this.label}` : this.klass;
+    const revoked = observedRevocation(this.#states) !== undefined ? ' REVOKED' : '';
     const expired = this.#expiredDeadline(false) !== undefined ? ' EXPIRED' : '';
     const exhausted = isBudgetExhausted(this.#constrained) ? ' EXHAUSTED' : '';
-    return `SensitiveString<${klassLabel}> { ${this.toString()}${expired}${exhausted} }`;
+    return `SensitiveString<${klassLabel}> { ${this.toString()}${revoked}${expired}${exhausted} }`;
   }
 
   /**
@@ -613,6 +619,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param ctx - Optional explicit reveal context.
    * @throws If policy checking fails.
    * @throws ExpiredSensitiveValueError If the value has expired.
+   * @throws RevokedSensitiveValueError If the value has been revoked, or a registry it consults cannot be reached.
    * @throws RevealLimitExceededError If `maxReveals` has been reached.
    * @throws RevealRateLimitError If `maxRevealsPerWindow` has been reached within the window.
    */
@@ -781,6 +788,22 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       throw new RenewalNotAllowedError('derived', this.label);
     }
 
+    // Renewal does not read the value, so it does not go through the gate, and
+    // without this a revoked value could still have its deadline extended. It
+    // would stay unreadable, but a lifecycle control that keeps working on a
+    // revoked value is one somebody will eventually mistake for the value
+    // working.
+    const revoked = revocationInForce(this.#states);
+    if (revoked !== undefined) {
+      throw new RevokedSensitiveValueError(
+        revoked.reason,
+        new Date(revoked.at),
+        this.label,
+        revoked.scope,
+        revoked.cause
+      );
+    }
+
     const { expiry } = own;
     const plan = planRenewal(expiry, additionalTtl, options, this.label);
 
@@ -794,6 +817,106 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     expiry.renewalCount++;
     // The new deadline is a new expiration, so its own notification is due.
     expiry.notified = false;
+  }
+
+  /**
+   * The revocation in force on this value, or `undefined`. Shared by the three
+   * public accessors below; the gate calls the same module function directly,
+   * so that its decision never routes through anything a subclass could
+   * override.
+   *
+   * Latches what it finds, so a value that has once been refused stays refused
+   * even if the entry behind it is pruned, and consults an external registry,
+   * so each accessor is a live question rather than a cached answer.
+   */
+  #revocation(): RevocationRecord | undefined {
+    return revocationInForce(this.#states);
+  }
+
+  /**
+   * Stop this value from being read, permanently.
+   *
+   * There is no way back. Nothing lifts a revocation: not a policy, not a new
+   * options object, not a round trip through the wire format.
+   *
+   * Revocation runs along derivation edges in both directions. Every value this
+   * one was derived from is revoked too, and so is everything else derived from
+   * those, because a derivative is made of its sources' material: a leaked
+   * substring is a leaked secret. Refusing to revoke through the handle a
+   * caller happens to be holding would fail open in exactly the incident this
+   * exists for, which is why this is the one piece of shared state a derived
+   * value may write, where `renew()` refuses.
+   *
+   * Nothing may refuse a revocation, so no policy hook is consulted and the
+   * audit record is reported after the fact, with anything the sink throws
+   * swallowed. `renew()` audits first for the opposite reason.
+   *
+   * Revoking an already-revoked value changes nothing and reports nothing: the
+   * first reason and timestamp stand, because a revocation is a fact that
+   * already happened.
+   *
+   * @param reason - Why, for the error message and the audit record. Developer
+   *   text: it must not carry any part of the protected value.
+   * @param ctx - Optional reveal context for auditing.
+   * @throws TypeError If `reason` is not a string.
+   *
+   * @example
+   * ```ts
+   * apiKey.revoke('Rotated 2026-08-01');
+   * apiKey.reveal(); // throws RevokedSensitiveValueError
+   * ```
+   */
+  revoke(reason: string, ctx?: RevealContext): void {
+    const why = requireReason(reason, 'SensitiveString.revoke');
+    const record = revokeStates(this.#states, why);
+
+    if (record === undefined) {
+      return;
+    }
+
+    const effectiveCtx = ctx ?? getCurrentRevealContext();
+
+    try {
+      effectiveCtx?.auditReveal?.(this, revokeAuditDetails(record));
+    } catch {
+      // The value is already revoked. A sink that fails must not make it look
+      // as though the revocation did.
+    }
+  }
+
+  /**
+   * Whether this value has been revoked, by any of the four sources: its own
+   * `revoke()`, the process-global label and pattern lists, or the registry it
+   * was constructed with.
+   *
+   * `true` as well when a registry it was given cannot be reached, because a
+   * value whose revocation cannot be checked is not one to hand out.
+   */
+  get isRevoked(): boolean {
+    return this.#revocation() !== undefined;
+  }
+
+  /**
+   * Why this value was revoked, or `undefined` when it was not.
+   *
+   * The reason recorded by whichever source refused first. For a value revoked
+   * through several of them, that is the one observed earliest rather than the
+   * one highest in any precedence order: a latched revocation is a fact that
+   * already happened.
+   */
+  get revocationReason(): string | undefined {
+    return this.#revocation()?.reason;
+  }
+
+  /**
+   * When this value was revoked, or `undefined` when it was not.
+   *
+   * For a label or pattern revocation this is when the list was written, not
+   * when this value first noticed.
+   */
+  get revokedAt(): Date | undefined {
+    const record = this.#revocation();
+    return record === undefined ? undefined : new Date(record.at);
   }
 
   /**
@@ -1086,7 +1209,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param ctx - Optional reveal context for authorization and auditing.
    */
   test(pattern: RegExp, ctx?: RevealContext): boolean {
-    const regex = snapshotRegExp(pattern, 'test');
+    const regex = snapshotRegExp(pattern, 'SensitiveString.test');
     return regex.test(this.#readPartialQueryValue(ctx));
   }
 
@@ -1099,7 +1222,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param ctx - Optional reveal context for authorization and auditing.
    */
   search(pattern: RegExp, ctx?: RevealContext): number {
-    const regex = snapshotRegExp(pattern, 'search');
+    const regex = snapshotRegExp(pattern, 'SensitiveString.search');
     return this.#readPartialQueryValue(ctx).search(regex);
   }
 
@@ -1113,7 +1236,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param ctx - Optional reveal context for authorization and auditing.
    */
   match(pattern: RegExp, ctx?: RevealContext): SensitiveString<C>[] | null {
-    const regex = snapshotRegExp(pattern, 'match');
+    const regex = snapshotRegExp(pattern, 'SensitiveString.match');
     const matches = this.#readRawValue('expose', ctx).match(regex);
 
     if (matches === null) {
@@ -1135,7 +1258,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param ctx - Optional reveal context for authorization and auditing.
    */
   matchGroups(pattern: RegExp, ctx?: RevealContext): Record<string, SensitiveString<C>> | null {
-    const regex = snapshotRegExp(pattern, 'matchGroups');
+    const regex = snapshotRegExp(pattern, 'SensitiveString.matchGroups');
     const match = regex.exec(this.#readRawValue('expose', ctx));
 
     if (match === null) {
@@ -1171,7 +1294,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param ctx - Optional reveal context for authorization and auditing.
    */
   matchAll(pattern: RegExp, ctx?: RevealContext): IterableIterator<SensitiveString<C>[]> {
-    const regex = snapshotRegExp(pattern, 'matchAll');
+    const regex = snapshotRegExp(pattern, 'SensitiveString.matchAll');
 
     if (!regex.global) {
       throw new TypeError('SensitiveString.matchAll requires a global regular expression');
@@ -1199,7 +1322,9 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    */
   split(separator: string | RegExp, limit?: number, ctx?: RevealContext): SensitiveString<C>[] {
     const safeSeparator =
-      typeof separator === 'string' ? separator : snapshotRegExp(separator, 'split');
+      typeof separator === 'string'
+        ? separator
+        : snapshotRegExp(separator, 'SensitiveString.split');
     const value = this.#readRawValue('expose', ctx);
     return value
       .split(safeSeparator, limit)
@@ -1226,7 +1351,9 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     }
 
     const safeSearchValue =
-      typeof searchValue === 'string' ? searchValue : snapshotRegExp(searchValue, 'replace');
+      typeof searchValue === 'string'
+        ? searchValue
+        : snapshotRegExp(searchValue, 'SensitiveString.replace');
     return this.#transform((value) => value.replace(safeSearchValue, replaceValue), ctx);
   }
 
@@ -1250,7 +1377,9 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     }
 
     const safeSearchValue =
-      typeof searchValue === 'string' ? searchValue : snapshotRegExp(searchValue, 'replaceAll');
+      typeof searchValue === 'string'
+        ? searchValue
+        : snapshotRegExp(searchValue, 'SensitiveString.replaceAll');
 
     if (safeSearchValue instanceof RegExp && !safeSearchValue.global) {
       throw new TypeError('SensitiveString.replaceAll requires a global regular expression');
@@ -1298,8 +1427,14 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * renewal counts do not travel, so a payload cannot grant the right to extend
    * a credential's lifetime.
    *
+   * A revoked value is not transmittable: reading it to build the payload goes
+   * through the same gate as any other read, so this throws rather than
+   * emitting the wire format's `revoked` flag. That flag is for the receiving
+   * side, and `deserialize()` honours it.
+   *
    * @param ctx - Optional context for audit/permission checks
    * @throws ExpiredSensitiveValueError If the value has expired.
+   * @throws RevokedSensitiveValueError If the value has been revoked.
    */
   serialize(ctx?: RevealContext): SerializedSensitiveString {
     const value = this.#readRawValue('expose', ctx);
@@ -1364,12 +1499,58 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     const label =
       'label' in serialized && typeof serialized.label === 'string' ? serialized.label : undefined;
 
-    return new SensitiveString(
+    const value = new SensitiveString<C>(
       serialized.value,
       serialized.klass as C,
       label,
       SensitiveString.#deserializeOptions(serialized)
     );
+
+    const revoked = SensitiveString.#deserializeRevocation(serialized);
+
+    if (revoked !== undefined) {
+      revokeStates(value.#states, revoked, 'wire');
+    }
+
+    return value;
+  }
+
+  /**
+   * The reason a payload carries for a value it marks revoked, or `undefined`.
+   *
+   * `serialize()` never writes these fields, because the gate refuses to read a
+   * revoked value at all. They exist so a payload assembled elsewhere can tell
+   * the receiver not to use what it is sending, and they can only tighten:
+   * there is no spelling of "not revoked" here, which is why `revoked: false`
+   * is rejected rather than honoured. A reason without the flag is rejected
+   * too, since it reads as a revocation that would silently not happen.
+   */
+  static #deserializeRevocation(serialized: object): string | undefined {
+    const flag = 'revoked' in serialized ? serialized.revoked : undefined;
+    const reason = 'revocationReason' in serialized ? serialized.revocationReason : undefined;
+
+    if (flag !== undefined && flag !== true) {
+      throw new Error(
+        'Invalid SerializedSensitiveString: revoked must be true or absent; ' +
+          'there is no way to mark a value as not revoked'
+      );
+    }
+
+    if (reason !== undefined && typeof reason !== 'string') {
+      throw new Error('Invalid SerializedSensitiveString: revocationReason must be a string');
+    }
+
+    if (flag === undefined) {
+      if (reason !== undefined) {
+        throw new Error(
+          'Invalid SerializedSensitiveString: revocationReason without revoked: true'
+        );
+      }
+
+      return undefined;
+    }
+
+    return reason ?? 'revoked by the sender';
   }
 
   /**

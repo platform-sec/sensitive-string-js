@@ -80,6 +80,55 @@ export interface SensitiveStringOptions {
 
   /** Exposures allowed within `revealWindow`. Must be at least 1. */
   maxRevealsPerWindow?: number;
+
+  /**
+   * A revocation list consulted on every read of this value, in addition to the
+   * process-global one that `revokeByLabel()` and `revokeByPattern()` write.
+   *
+   * It is matched against the label this value is constructed with. A value
+   * with no label is still consulted for, with `undefined` as the label, so a
+   * registry decides for itself whether it can refuse one; the built-in
+   * `RevocationList` cannot, and answers false.
+   */
+  revocationRegistry?: RevocationRegistry;
+}
+
+/**
+ * Where a revocation came from.
+ *
+ * - `instance`: somebody called `revoke()` on the value or on something derived
+ *   from it.
+ * - `label`, `pattern`: the process-global lists.
+ * - `registry`: the `revocationRegistry` the value was constructed with.
+ * - `wire`: the value arrived from `deserialize()` already marked revoked.
+ * - `unavailable`: the registry could not be reached, or did not answer the
+ *   contract, so the read is refused because nothing could confirm it.
+ */
+export type RevocationScope =
+  'instance' | 'label' | 'pattern' | 'registry' | 'wire' | 'unavailable';
+
+/**
+ * A revocation list a value consults, which may be backed by an external store.
+ *
+ * `isRevoked` must answer synchronously and must return a boolean. A read
+ * happens in one call, so an implementation that returns a Promise has already
+ * handed the value back by the time it resolves; the library refuses a
+ * non-boolean answer rather than guessing which way to read it. An
+ * implementation backed by a store therefore keeps a local cache and refreshes
+ * it out of band, which is what `sync()` is for.
+ *
+ * Anything thrown from `isRevoked` denies the read. A store that cannot be
+ * reached cannot confirm a value is usable.
+ */
+export interface RevocationRegistry {
+  /** Whether this label is revoked. Must be synchronous and must return a boolean. */
+  isRevoked(label: string | undefined): boolean;
+  /** Why, for a revoked label. Anything it throws is swallowed. */
+  getReason?(label: string): string | undefined;
+  /** Record a revocation, for a registry that is writable from this process. */
+  revoke?(label: string, reason: string): void;
+  /** Refresh from the backing store. Never called by the library. */
+  sync?(): Promise<void>;
 }
 
 /**
@@ -169,10 +218,27 @@ export interface RenewAuditDetails {
 }
 
 /**
- * What the audited operation was, so an audit sink can tell a full reveal from
- * a partial one, and either from a lifetime extension.
+ * Audit record for a revocation through `revoke()`.
+ *
+ * Reported after the revocation has taken effect, not before it: nothing may
+ * refuse a revocation, so a sink that throws is swallowed rather than allowed
+ * to keep a value alive. That is the opposite of `renew()`, which is audited
+ * first precisely so a sink can stop it.
  */
-export type RevealDetails = RevealAuditDetails | MaskAuditDetails | RenewAuditDetails;
+export interface RevokeAuditDetails {
+  readonly operation: 'revoke';
+  /** The caller-supplied reason. Developer text; it must not carry the value. */
+  readonly reason: string;
+  readonly revokedAt: string;
+  readonly scope: RevocationScope;
+}
+
+/**
+ * What the audited operation was, so an audit sink can tell a full reveal from
+ * a partial one, and either from a lifetime extension or a revocation.
+ */
+export type RevealDetails =
+  RevealAuditDetails | MaskAuditDetails | RenewAuditDetails | RevokeAuditDetails;
 
 /**
  * What a policy is being asked to authorize.
@@ -380,4 +446,20 @@ export interface SerializedSensitiveString {
    * credential's lifetime" from a payload.
    */
   expiresAt?: string;
+  /**
+   * Set when the sender is marking the value revoked.
+   *
+   * `serialize()` never emits it, because a revoked value cannot be read to be
+   * serialized at all: the gate refuses. It exists for the other direction, so
+   * a payload assembled by hand, or by a gateway that checked its own list, can
+   * tell the receiver not to use what it is sending. Like every other field
+   * here it may only tighten: there is no way to spell "not revoked" that
+   * lifts a revocation the receiving process already holds.
+   *
+   * Only `true` is accepted. `false` is rejected rather than read as "not
+   * revoked", so a payload that means to say nothing says nothing.
+   */
+  revoked?: true;
+  /** Why, for a payload carrying `revoked`. Ignored without it. */
+  revocationReason?: string;
 }

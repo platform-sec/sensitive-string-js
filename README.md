@@ -338,6 +338,12 @@ class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   readonly revealCount: number;
   readonly revealsRemaining?: number;
   isExhausted(): boolean;
+
+  // Revocation
+  readonly isRevoked: boolean;
+  readonly revocationReason?: string;
+  readonly revokedAt?: Date;
+  revoke(reason: string, ctx?: RevealContext): void;
   
   // Manipulation
   concat(other: string | SensitiveString, ctx?: RevealContext): SensitiveString;
@@ -808,6 +814,121 @@ Counters are per instance and per process. This finds a runaway loop, a retry st
 being used twice inside one service. It is not a defense against credential stuffing or against an
 attacker who has the value: they hold their own copy of the string and never touch this instance
 again.
+
+### Revocation
+
+```typescript
+interface SensitiveStringOptions {
+  revocationRegistry?: RevocationRegistry; // consulted on every read of this value
+}
+
+function revokeByLabel(label: string, reason: string): void;
+function revokeByPattern(pattern: RegExp, reason: string): void;
+function pruneRevocations(olderThan: Date | number): number;
+function revocationCount(): { labels: number; patterns: number };
+```
+
+After a rotation the old secret is still in memory, still held by whatever closed over it, and still
+works. Expiry does not help: the deadline was set when the value was made, and a compromise is
+news that arrives later.
+
+```typescript
+apiKey.revoke('Rotated 2026-08-01');
+
+apiKey.isRevoked;        // true
+apiKey.revocationReason; // 'Rotated 2026-08-01'
+apiKey.revokedAt;        // Date
+apiKey.reveal();         // throws RevokedSensitiveValueError
+```
+
+For the instances a caller no longer holds a reference to, revoke by the label they were built
+with:
+
+```typescript
+revokeByLabel('api_key', 'Emergency rotation');
+revokeByPattern(/^session:/, 'User logged out');
+```
+
+Both lists are process-global and both reach values constructed before or after the revocation. A
+`revocationRegistry` passed at construction is a fourth source, consulted on every read, which is
+where a list backed by Redis or a control plane belongs. `RevocationList` is the in-process
+implementation; anything with a synchronous `isRevoked(label)` satisfies the interface.
+
+```typescript
+const registry = new RevocationList();
+registry.revoke('api_key:user_123', 'Account suspended');
+
+const key = new SensitiveString(raw, 'credential', 'api_key:user_123', {
+  revocationRegistry: registry,
+});
+```
+
+A registry that throws denies the read, and so does one that answers with anything but a boolean. A
+store that cannot be reached cannot confirm a value is usable, and an `async isRevoked` returns a
+Promise, which is truthy and is not `true`: reading it either way would silently revoke everything
+or nothing.
+
+**There is no way back.** No `unrevoke`, no reset, no options object and no wire payload that lifts
+a revocation. `pruneRevocations()` shrinks the global lists, and it cannot resurrect anything that
+has already been refused: a value latches its own revocation the first time it observes one. That is
+also the rule for when pruning is safe. Drop an entry only once nothing that could match it is still
+reachable, after the rotation has drained and the requests that held those values have finished,
+because a value that never looked between the revocation and the prune will not know.
+
+The check lives in the same gate expiry and reveal limits do, so `mask()`, `serialize()`, `map()`,
+and every string, regex, and template operation refuse alongside `reveal()`. So does `equals()`: a
+comparison reads the value, and a rotated credential must not still be able to answer whether a
+guess matches it. So does `renew()`, which reads nothing but must not keep working on a value
+somebody deliberately took away. Redaction and metadata do not: `toString()`, `toJSON()`, `length`,
+`klass`, and `label` keep working, because a value that can no longer be used still has to be safe
+to log.
+
+Revocation runs along derivation edges in both directions:
+
+```typescript
+const token = new SensitiveString(raw, 'credential', 'api_key');
+const prefix = token.substring(0, 8);
+
+prefix.revoke('the prefix leaked');
+token.reveal(); // throws: the derivative carries the material it was made from
+```
+
+This is the opposite of `renew()`, which refuses on a derivative, and the asymmetry is about which
+way each fails. Refusing to extend a lifetime fails closed. Refusing to end one does not: an
+incident responder holding a substring, a match group, or a template result has no way to know it is
+derived, and refusing them would leave the credential alive.
+
+Label and pattern revocation match the label a value was **constructed** with. A derived value is
+matched against its sources' labels rather than the one the derivation gave it, so revoking
+`api_key` reaches every substring, match group, and template built from that value, while revoking
+the combined label `a/b` that `concat()` produced matches nothing, because no value was ever
+constructed under it.
+
+Nothing may refuse a revocation. No policy hook is consulted, and the audit record is reported after
+the fact with anything the sink throws swallowed, which is the mirror image of `renew()`. Revoking
+an already-revoked value changes nothing and reports nothing, keeping the first reason and
+timestamp.
+
+`revokeByPattern` rejects a pattern that applies an unbounded quantifier to a group that can match
+the same input more than one way. A stored pattern is tested against every label a value carries, on
+a thread nothing can interrupt, so `(a+)+` in the list is a process that hangs on the first read
+after somebody revokes something. The heuristic is strict and rejects some safe patterns; the
+message says what to rewrite. Patterns are copied out of the caller's RegExp with `g` and `y`
+dropped, which would otherwise make a stored pattern match every other time it was consulted.
+
+A revoked value is not transmittable: `serialize()` reads the value, so it throws. The wire format
+carries a `revoked` flag for the other direction, so a payload assembled elsewhere can tell the
+receiver not to use what it is sending, and it can only ever tighten.
+
+```typescript
+SensitiveString.deserialize({ __sensitive: true, klass: 'credential', value, revoked: true });
+// isRevoked: true. `revoked: false` is rejected rather than read as permission.
+```
+
+Revocation is a control over the values this process holds. It stops code from using a secret
+somebody took away; it does not erase the secret from memory, it does not reach a raw string that
+was already revealed, and it does not defend against code already executing in the process, which
+can revoke anything or prune anything.
 
 ### Development Mode
 

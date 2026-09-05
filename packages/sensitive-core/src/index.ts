@@ -48,6 +48,9 @@ export type {
   RevealAuditDetails,
   RevealContext,
   RevealDetails,
+  RevocationRegistry,
+  RevocationScope,
+  RevokeAuditDetails,
   ISensitiveString,
 } from './types.js';
 
@@ -63,6 +66,17 @@ export type { RenewalRefusal } from './ttl.js';
 
 // Reveal limits and rate limiting
 export { RevealLimitExceededError, RevealRateLimitError } from './reveal-budget.js';
+
+// Revocation
+export {
+  RevokedSensitiveValueError,
+  RevocationList,
+  revokeByLabel,
+  revokeByPattern,
+  pruneRevocations,
+  revocationCount,
+} from './revocation.js';
+export type { RevocationRecord } from './revocation.js';
 
 // Development mode
 export { setDevMode, getDevModeConfig, withDevMode } from './dev-mode.js';

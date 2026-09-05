@@ -145,13 +145,15 @@ appear in inspection and audit metadata without exposing the protected value.
 
 ## Process-global state
 
-The policy registry, the reveal-context storage and the development mode
-configuration are shared across duplicate installed copies of core through
-`Symbol.for()`. Policy registration is mutable process-global configuration: it
-protects against accidental misuse and misconfiguration, but code already
-executing in the process can replace a policy and must be trusted. The same is
-true of `setDevMode()`, which is why enabling it under `NODE_ENV=production`
-prints a warning.
+The policy registry, the reveal-context storage, the development mode
+configuration and the revocation lists are shared across duplicate installed
+copies of core through `Symbol.for()`. Policy registration is mutable
+process-global configuration: it protects against accidental misuse and
+misconfiguration, but code already executing in the process can replace a policy
+and must be trusted. The same is true of `setDevMode()`, which is why enabling
+it under `NODE_ENV=production` prints a warning, and of `revokeByLabel()`,
+`revokeByPattern()` and `pruneRevocations()`, which defend against a stale
+secret rather than against a hostile caller.
 
 ## API
 
