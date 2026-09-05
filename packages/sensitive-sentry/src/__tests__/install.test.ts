@@ -280,6 +280,38 @@ describe('tags', () => {
     expect((event['extra'] as Record<string, string>)['responseBody']).toContain('[REDACTED:');
   });
 
+  // TEST-SENTRY-MARKER-OWN
+  it('does not count the markers its own breadcrumb hook wrote', async () => {
+    // A marker sighting is meant to be evidence that some *other* integration
+    // sent a placeholder where a value belonged. Every breadcrumb on an event
+    // has already been through this package's `beforeBreadcrumb`, where stage 1
+    // wrote a marker everywhere a wrapped value stood, so counting those in the
+    // event pass had the package manufacturing that evidence about itself:
+    // measured, two breadcrumbs each holding one wrapped value produced
+    // `sensitive.marker_seen: 2` on an event that had no marker of its own.
+    const { capture, transport } = createCapture();
+
+    await runIsolated(withSensitiveScrubbing({ transport }), () => {
+      Sentry.addBreadcrumb({
+        message: 'auth',
+        data: { a: new SensitiveString('x', 'credential') },
+      });
+      Sentry.addBreadcrumb({
+        message: 'auth',
+        data: { b: new SensitiveString('y', 'sensitive') },
+      });
+      Sentry.getCurrentScope().setExtra('direct', new SensitiveString('z', 'credential'));
+      Sentry.captureException(new Error('boom'));
+    });
+
+    const tags = (capture.lastEvent()['tags'] ?? {}) as Record<string, string>;
+
+    expect(tags[MARKER_TAG]).toBeUndefined();
+    // The event still reports what its own regions held, so the assertion above
+    // is not passing because nothing was reported at all.
+    expect(tags[CLASSES_TAG]).toBe('credential');
+  });
+
   it('is silent when nothing was found', async () => {
     const { capture, transport } = createCapture();
 

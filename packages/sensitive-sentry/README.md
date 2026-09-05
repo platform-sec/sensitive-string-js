@@ -168,6 +168,12 @@ The event carries what was found, and none of what it said:
 
 A marker sighting is tagged, never thrown on. See the marker rule in the `scrub` README.
 
+Markers this package's own `beforeBreadcrumb` wrote are not counted. Every breadcrumb on an event has
+already been through that hook, where structural redaction wrote a marker wherever a wrapped value
+stood, and counting those would have the package manufacturing evidence about itself. Breadcrumbs are
+still walked in the event pass, which is what catches one an event processor registered before this
+one added straight to `event.breadcrumbs`.
+
 One known source of a false sighting: `extraErrorDataIntegration()` normalizes a thrown error's
 custom properties before any event processor runs, so a wrapped value there arrives already rendered
 as its marker, indistinguishable from a marker that arrived in captured data. That integration is not

@@ -1,6 +1,10 @@
 import * as Sentry from '@sentry/node';
-import type { Event, NodeOptions } from '@sentry/node';
-import { guardedScrub, type ResolvedScrubPolicy } from '@platform-sec/sensitive-string-scrub';
+import type { Breadcrumb, Event, NodeOptions } from '@sentry/node';
+import {
+  guardedScrub,
+  mergeReports,
+  type ResolvedScrubPolicy,
+} from '@platform-sec/sensitive-string-scrub';
 
 import { buildEventStub, tagEvent } from './stub.js';
 
@@ -48,13 +52,54 @@ export type SentryIntegration = Extract<
 export function sensitiveScrubbingIntegration(policy: ResolvedScrubPolicy): SentryIntegration {
   const scrub = guardedScrub<Event>({ kind: 'event', policy, stub: buildEventStub });
 
+  // The breadcrumbs on an event have already been through this package's own
+  // `beforeBreadcrumb`, where stage 1 wrote a marker everywhere a wrapped value
+  // stood. A marker sighting is meant to be evidence that some *other*
+  // integration sent a placeholder where a value belonged, so counting these
+  // would have the package manufacturing that evidence about itself: measured,
+  // two breadcrumbs each holding one wrapped value produced
+  // `sensitive.marker_seen: 2` on an event that had no marker of its own.
+  //
+  // The pass is kept rather than dropped, because it is what catches a
+  // breadcrumb an event processor registered before this one added straight to
+  // `event.breadcrumbs`, which never went through `addBreadcrumb`. It reports
+  // nothing on its own, and `mergeReports` folds its classes and denied keys
+  // into the event's report while leaving the marker count alone.
+  //
+  // `onScrub` is dropped rather than suppressed with `reportSuccess` alone.
+  // Invariant 18 is one report per payload including on the failure path, and
+  // the failure path of `guardedScrub` reports whatever `reportSuccess` says,
+  // so a breadcrumb region that threw would have produced a second call for the
+  // same event. `mergeReports` carries `failed` into the event's own report,
+  // which is where a caller learns about it.
+  const scrubCrumbs = guardedScrub<Breadcrumb[] | undefined>({
+    kind: 'breadcrumb',
+    policy: { ...policy, onMarker: 'ignore', onScrub: undefined },
+    stub: () => [],
+    reportSuccess: false,
+  });
+
   return {
     name: INTEGRATION_NAME,
     setup() {
       Sentry.addEventProcessor((event) => {
-        const { payload, report } = scrub(event);
+        // `Event` is a plain object, so the breadcrumbs can be lifted out and
+        // put back. `exactOptionalPropertyTypes` is on, so an event that never
+        // had the key must not come back carrying it as undefined.
+        const { breadcrumbs, ...rest } = event;
+        const { payload, report } = scrub(rest);
+        const crumbs = scrubCrumbs(breadcrumbs);
 
-        return tagEvent(payload, report, policy);
+        if (payload === null) {
+          return tagEvent(payload, report, policy);
+        }
+
+        const reassembled =
+          crumbs.payload === undefined
+            ? payload
+            : ({ ...payload, breadcrumbs: crumbs.payload } as Event);
+
+        return tagEvent(reassembled, mergeReports(report, crumbs.report), policy);
       });
     },
   };
