@@ -5,6 +5,10 @@ node_modules/
 # Build outputs
 dist/
 *.tsbuildinfo
+# The mutex sensitive-datadog's suite takes while compiling into dist/ for its
+# child processes. Removed on the way out; ignored so a crashed run cannot
+# commit one.
+dist.build.lock
 
 # Prevent accidental build artifacts in src
 packages/*/src/**/*.js
