@@ -578,6 +578,40 @@ describe('TTL and expiration', () => {
       expect(() => received.reveal()).toThrow(ExpiredSensitiveValueError);
     });
 
+    it('reports the renewed deadline rather than the one it rendered first', () => {
+      const session = new SensitiveString('tok', 'sensitive', 'session', { ttl: 5 * MINUTE });
+
+      expect(session.serialize().expiresAt).toBe(
+        new Date(START.getTime() + 5 * MINUTE).toISOString()
+      );
+
+      session.renew(5 * MINUTE);
+
+      expect(session.serialize().expiresAt).toBe(
+        new Date(START.getTime() + 10 * MINUTE).toISOString()
+      );
+    });
+
+    it('renders every deadline across more of them than it holds at once', () => {
+      // More distinct deadlines than the ISO rendering is memoized for, so the
+      // memo is discarded partway through and has to rebuild. Each value is
+      // then asked twice, once while the memo is cold for it and once after.
+      const tokens = Array.from(
+        { length: 300 },
+        (_unused, index) =>
+          new SensitiveString('tok', 'credential', 'token', { ttl: MINUTE + index })
+      );
+
+      for (const pass of [1, 2]) {
+        for (const [index, token] of tokens.entries()) {
+          expect({ pass, at: token.serialize().expiresAt }).toEqual({
+            pass,
+            at: new Date(START.getTime() + MINUTE + index).toISOString(),
+          });
+        }
+      }
+    });
+
     it('omits the deadline for a value that does not expire', () => {
       const serialized = new SensitiveString('tok', 'credential', 'token').serialize();
 

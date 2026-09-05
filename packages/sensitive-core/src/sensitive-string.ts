@@ -197,6 +197,33 @@ export let deriveSensitiveString: DeriveSensitiveString;
  * const raw = apiKey.reveal({ name: 'api-call', reason: 'authenticating' });
  * ```
  */
+/**
+ * ISO 8601 renderings of deadlines, memoized.
+ *
+ * `serialize()` formatted one on every call, which cost more than the rest of
+ * the method put together. A deadline is a plain number that already travels
+ * on the wire in this form, so nothing secret is held here. Keyed by the
+ * deadline itself, so a renewal misses and re-renders on its own.
+ */
+const isoDeadlines = new Map<number, string>();
+
+function isoDeadline(deadline: number): string {
+  let iso = isoDeadlines.get(deadline);
+
+  if (iso === undefined) {
+    iso = new Date(deadline).toISOString();
+
+    // A service with many distinct deadlines must not grow this without bound.
+    if (isoDeadlines.size >= 256) {
+      isoDeadlines.clear();
+    }
+
+    isoDeadlines.set(deadline, iso);
+  }
+
+  return iso;
+}
+
 export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   /**
    * The raw value. Using ES2022 #private for true runtime encapsulation.
@@ -309,12 +336,23 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * `isExpired()`, which a subclass could override to lift it.
    */
   #expiredDeadline(notify: boolean): number | undefined {
-    const now = Date.now();
+    // Read at most once, and only when a state can actually expire. An
+    // unconditional read cost more than the rest of the gate put together on a
+    // value with no deadline, which is most of them.
+    let now = -1;
     let earliest: number | undefined;
 
     // Every source state is checked rather than only the first match, so a
     // derivative of two expiring values fires both onExpire callbacks.
     for (const state of this.#states) {
+      if (state.expiry.deadline === undefined) {
+        continue;
+      }
+
+      if (now < 0) {
+        now = Date.now();
+      }
+
       const deadline = expiredDeadline(state.expiry, now, notify);
 
       if (deadline !== undefined && (earliest === undefined || deadline < earliest)) {
@@ -383,6 +421,16 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       label,
       DERIVED_CONSTRUCTION as unknown as SensitiveStringOptions
     );
+    const only = sources.length === 1 ? sources[0] : undefined;
+
+    // One source is the common case, and its state array is already exactly
+    // what the derivative needs. `#states` is assigned once and never mutated,
+    // and the state objects are shared between derivatives by design.
+    if (only !== undefined) {
+      derived.#states = only.#states;
+      return derived;
+    }
+
     const states = new Set<SensitiveStringState>();
 
     for (const source of sources) {
@@ -1104,7 +1152,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     }
 
     if (deadline !== undefined) {
-      serialized.expiresAt = new Date(deadline).toISOString();
+      serialized.expiresAt = isoDeadline(deadline);
     }
 
     return serialized;
