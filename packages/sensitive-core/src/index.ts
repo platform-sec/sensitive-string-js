@@ -73,6 +73,19 @@ export type {
 // Anchored patterns for common sensitive-value formats
 export { patterns } from './patterns.js';
 
+// Keyed derivation, shared by deterministic redaction and by LLM entity
+// handles. One implementation, because a truncated keyed HMAC over a
+// low-entropy value has exactly one correct shape.
+export {
+  deriveKeyedToken,
+  assertKeyedDerivationOptions,
+  DEFAULT_DERIVED_TOKEN_LENGTH,
+  MIN_DERIVED_TOKEN_LENGTH,
+  MAX_DERIVED_TOKEN_LENGTH,
+  MIN_DERIVATION_KEY_BYTES,
+} from './derive.js';
+export type { KeyedDerivationOptions } from './derive.js';
+
 // Template literals
 export { sensitiveTemplate, st } from './template.js';
 export type { TemplateValue, SensitiveTemplateOptions, SensitiveTemplateTag } from './template.js';

@@ -35,6 +35,14 @@ const DEFAULT_POLICIES: SensitivityPolicy[] = [
       allowPersistPlain: false,
       allowPersistEncrypted: true,
       allowSendToLog: true,
+      // Written explicitly, though `undefined` is a refusal wherever this flag
+      // is read. Absent and `false` behave identically and read completely
+      // differently to somebody reviewing a policy: absent looks like an
+      // oversight. `sensitive` starts closed because the class is deliberately
+      // coarse and covers a customer email as readily as an internal note. A
+      // caller who wants either in a prompt registers a policy saying so, in
+      // one place, in code that shows up in review.
+      allowSendToExternal: false,
       criticality: 'medium',
     },
   },
@@ -48,6 +56,9 @@ const DEFAULT_POLICIES: SensitivityPolicy[] = [
       allowPersistPlain: false,
       allowSendToLog: true,
       allowHash: true, // credentials can typically be hashed for comparison
+      // See the note on `sensitive` above. A credential bound for a third
+      // party is the case this flag exists for.
+      allowSendToExternal: false,
       criticality: 'high',
     },
   },
