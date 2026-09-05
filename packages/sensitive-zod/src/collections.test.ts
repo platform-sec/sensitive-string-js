@@ -177,7 +177,7 @@ describe('Collections', () => {
 
     it('test_recursive_schemas', () => {
       type Node = { value: SensitiveString<'sensitive'>; children: Node[] };
-      const schema: z.ZodType<Node, z.ZodTypeDef, unknown> = z.lazy(() =>
+      const schema: z.ZodType<Node, unknown> = z.lazy(() =>
         z.object({ value: zSensitive('node_value'), children: z.array(schema) })
       );
 

@@ -51,7 +51,10 @@ describe('zConditionalSensitive', () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues[0]?.code).toBe('invalid_union_discriminator');
+      // v4 folded `invalid_union_discriminator` into `invalid_union`, carrying
+      // a `note` instead of its own code. Neither shape leaks.
+      expect(result.error.issues[0]?.code).toBe('invalid_union');
+      expect(result.error.issues[0]).toMatchObject({ note: 'No matching discriminator' });
       // The discriminator is rejected before the value is looked at.
       expect(JSON.stringify(result.error.issues)).not.toContain(CANARY);
     }

@@ -24,7 +24,7 @@
  * @example Collections, normalization, and refinements
  * ```ts
  * const SignupSchema = z.object({
- *   email: zSensitivePreprocess({ trim: true, lowercase: true }, 'email', z.string().email()),
+ *   email: zSensitivePreprocess({ trim: true, lowercase: true }, 'email', z.email()),
  *   password: zCredential('password').refineSensitive((raw) => raw.length >= 12, {
  *     message: 'Password must be at least 12 characters',
  *   }),
@@ -94,6 +94,7 @@ export {
   sensitiveSafeParseAsync,
   REDACTED_ISSUE_VALUE,
 } from './error-map.js';
+export type { SensitiveParseOptions } from './error-map.js';
 
 // Shared types
 export type {

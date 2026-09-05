@@ -67,11 +67,7 @@ describe('Preprocessing', () => {
   });
 
   it('test_preprocess_validates_after_normalizing', () => {
-    const schema = zSensitivePreprocess(
-      { trim: true, lowercase: true },
-      'email',
-      z.string().email()
-    );
+    const schema = zSensitivePreprocess({ trim: true, lowercase: true }, 'email', z.email());
 
     // Only valid once the surrounding whitespace is gone.
     expect(schema.safeParse('  Alice@Example.com  ').success).toBe(true);
@@ -105,11 +101,23 @@ describe('Preprocessing', () => {
     expect(schema.safeParse('  sk_x  ').success).toBe(true);
   });
 
+  it('test_preprocess_accepts_a_v4_format_constructor_as_the_inner_schema', () => {
+    // `z.email()` is a `ZodEmail` and is not a `ZodString`, so the narrower
+    // parameter this used to declare would push callers onto the deprecated
+    // `z.string().email()` spelling to use this package at all.
+    const schema = zSensitiveStringPreprocess('sensitive', { trim: true }, 'email', z.email());
+
+    expect(schema.parse('  a@b.com  ').reveal()).toBe('a@b.com');
+    expect(schema.safeParse('  not-an-email  ').success).toBe(false);
+  });
+
   it('test_preprocess_field_is_required_in_an_object', () => {
     const schema = z.object({ email: zSensitivePreprocess({ trim: true }, 'email') });
 
-    // `z.preprocess` declares an `unknown` input, which would mark the field
-    // optional in the input type while still failing here at runtime.
+    // v3 declared `z.preprocess`'s input as `unknown`, and `undefined` extends
+    // it, so the field read as optional wherever this schema sat. v4 made the
+    // input required; the runtime behaviour was correct in both and is pinned
+    // here either way.
     expect(schema.safeParse({}).success).toBe(false);
   });
 

@@ -34,18 +34,18 @@ const DEFAULT_REFINE_MESSAGE = 'Invalid value';
  * interpolates the value into their own message is the one leaking it.
  */
 function refinementIssue(params: RefineSensitiveParams | undefined): {
-  code: typeof z.ZodIssueCode.custom;
+  code: 'custom';
   message: string;
   path?: (string | number)[];
   fatal?: boolean;
 } {
   const issue: {
-    code: typeof z.ZodIssueCode.custom;
+    code: 'custom';
     message: string;
     path?: (string | number)[];
     fatal?: boolean;
   } = {
-    code: z.ZodIssueCode.custom,
+    code: 'custom',
     message: params?.message ?? DEFAULT_REFINE_MESSAGE,
   };
 
@@ -84,8 +84,8 @@ function refinementIssue(params: RefineSensitiveParams | undefined): {
  * ```
  *
  * @remarks
- * An async check requires `parseAsync`. Zod throws rather than skipping it if
- * it is reached from a synchronous `parse()`.
+ * An async check requires `parseAsync`. Zod throws `$ZodAsyncError` rather
+ * than skipping it if it is reached from a synchronous `parse()`.
  *
  * A reveal the policy refuses, or one denied by a lapsed deadline, throws out
  * of the parse rather than becoming an issue, and that is deliberate. An issue
@@ -96,7 +96,7 @@ function refinementIssue(params: RefineSensitiveParams | undefined): {
  * failures really are the payload's fault and so are reported as issues.
  */
 export function refineSensitive<C extends SensitivityClass, Input>(
-  schema: z.ZodType<SensitiveString<C>, z.ZodTypeDef, Input>,
+  schema: z.ZodType<SensitiveString<C>, Input>,
   check: SensitiveCheck,
   params?: RefineSensitiveParams
 ): SensitiveSchema<C, Input> {
@@ -130,7 +130,7 @@ export function refineSensitive<C extends SensitivityClass, Input>(
  * @internal
  */
 export function withSensitiveMethods<C extends SensitivityClass, Input>(
-  schema: z.ZodType<SensitiveString<C>, z.ZodTypeDef, Input>
+  schema: z.ZodType<SensitiveString<C>, Input>
 ): SensitiveSchema<C, Input> {
   const refine: SensitiveSchemaMethods<C, Input>['refineSensitive'] = (check, params) =>
     refineSensitive(schema, check, params);

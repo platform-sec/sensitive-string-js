@@ -115,11 +115,7 @@ export function zConditionalSensitive<
   M extends ConditionalConditions,
 >(
   config: ConditionalSensitiveConfig<D, V, M>
-): z.ZodType<
-  ConditionalSensitiveOutput<D, V, M>,
-  z.ZodTypeDef,
-  ConditionalSensitiveInput<D, V, M>
-> {
+): z.ZodType<ConditionalSensitiveOutput<D, V, M>, ConditionalSensitiveInput<D, V, M>> {
   // Compared as plain strings: inside the function `D` and `V` are unresolved
   // type parameters, and tsc reads a direct comparison of two of those as
   // having no overlap.
@@ -151,9 +147,20 @@ export function zConditionalSensitive<
 
   // The branches are built from a runtime map, so their literal types are not
   // recoverable by inference. The declared return type states the union those
-  // branches produce; the cast on `options` is the seam between the two.
-  return z.discriminatedUnion(
+  // branches produce, and the two casts are the seam between the two.
+  //
+  // The first is on `options`, because a runtime-built array does not satisfy
+  // the non-empty tuple `z.discriminatedUnion` asks for. Erasing the branch
+  // types to `$ZodTypeDiscriminable` is what makes the second necessary: v4
+  // infers the union's output from its option tuple, so an erased tuple infers
+  // `unknown` and the result has to be re-stated.
+  const union = z.discriminatedUnion(
     config.discriminator,
-    options as unknown as [z.ZodDiscriminatedUnionOption<D>, ...z.ZodDiscriminatedUnionOption<D>[]]
+    options as unknown as [z.core.$ZodTypeDiscriminable, ...z.core.$ZodTypeDiscriminable[]]
   );
+
+  return union as unknown as z.ZodType<
+    ConditionalSensitiveOutput<D, V, M>,
+    ConditionalSensitiveInput<D, V, M>
+  >;
 }

@@ -50,7 +50,7 @@ const raw = apiKey.reveal({ name: 'api-call', reason: 'authenticating' });
 # Using pnpm (recommended)
 pnpm add @platform-sec/sensitive-string-core
 
-# With Zod integration
+# With Zod integration (Zod 4; v3 schemas cannot compose with v4 ones)
 pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-zod zod
 
 # Stage 3 decorators: declarative field wrapping and reveal context
@@ -103,7 +103,7 @@ import { zCredential, zSensitiveWithValidation } from '@platform-sec/sensitive-s
 
 const WebhookSchema = z.object({
   token: zCredential('session_token'),
-  email: zSensitiveWithValidation('sensitive', z.string().email(), 'email'),
+  email: zSensitiveWithValidation('sensitive', z.email(), 'email'),
   note: z.string().optional(),
 });
 
@@ -725,8 +725,9 @@ zSensitive(label?)
 // Credential (passwords, API keys, tokens)
 zCredential(label?)
 
-// With custom validation
-zSensitiveWithValidation(klass, zodStringSchema, label?)
+// With custom validation. The schema is any string-to-string schema, so Zod 4's
+// format constructors (z.email(), z.uuid(), ...) work as well as z.string().
+zSensitiveWithValidation(klass, stringSchema, label?)
 
 // Optional values (returns null for missing)
 zSensitiveOptional(klass, label?)
@@ -747,7 +748,8 @@ zSensitivePreprocess(spec, label?, stringSchema?)
 zCredentialPreprocess(spec, label?, stringSchema?)
 zSensitiveStringPreprocess(klass, spec, label?, stringSchema?)
 
-// A default produced as a raw string and wrapped by the schema
+// A default produced as a raw string and wrapped by the schema. The fallback
+// lives in a closure, so z.toJSONSchema() cannot publish it.
 zSensitiveDefault(klass, label, valueOrFactory)
 
 // Sensitivity decided by a sibling field
@@ -765,6 +767,10 @@ redactZodError(error)
 redactZodIssues(issues)
 installSensitiveErrorMap()
 ```
+
+`issue.path` is the one channel these helpers deliberately leave alone, because redacting it would
+collapse a multi-issue error into a list of unattributed complaints. Do not key an object, record,
+or map by a sensitive value; put it in the value position, which is what `zSensitiveRecord` does.
 
 ### Utility Functions
 
@@ -1470,7 +1476,7 @@ wrapping:
 ```typescript
 zSensitiveWithValidation(
   'sensitive',
-  z.string().email().endsWith('@company.com', 'Must be company email'),
+  z.email().endsWith('@company.com', 'Must be company email'),
   'email'
 )
 ```

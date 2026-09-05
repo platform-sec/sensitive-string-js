@@ -15,9 +15,9 @@ import type {
  * A predicate run against the raw value of an already-wrapped SensitiveString.
  *
  * Returning a promise is supported, but only under `parseAsync`. Zod throws
- * `Async refinement encountered during synchronous parse operation` if a
- * promise-returning check is reached from `parse()`, so an async check can
- * never be silently skipped.
+ * `$ZodAsyncError: Encountered Promise during synchronous parse. Use
+ * .parseAsync() instead.` if a promise-returning check is reached from
+ * `parse()`, so an async check can never be silently skipped.
  */
 export type SensitiveCheck = (rawValue: string) => boolean | Promise<boolean>;
 
@@ -34,7 +34,13 @@ export interface RefineSensitiveParams {
   message?: string;
   /** Path appended to the issue, for refinements that report against a nested field. */
   path?: (string | number)[];
-  /** Stop parsing after this issue rather than collecting further ones. */
+  /**
+   * Stop parsing after this issue rather than collecting further ones.
+   *
+   * Zod 4 spells this `continue: false` internally and keeps `fatal` as a
+   * documented v3 compatibility path. The name stays here because it is the
+   * public API of this package, and a test pins that it still aborts.
+   */
   fatal?: boolean;
   /**
    * Reveal context used to read the raw value.
@@ -51,9 +57,10 @@ export interface RefineSensitiveParams {
  * A Zod schema that produces a `SensitiveString` of a known class, carrying the
  * refinement helper that reads the raw value under audit.
  *
- * The declared shape is `z.ZodType` rather than the concrete `z.ZodEffects` the
- * factories build, so that a chained `refineSensitive` keeps the same type
- * instead of nesting one `ZodEffects` per call.
+ * The declared shape is `z.ZodType` rather than the concrete `z.ZodPipe` the
+ * factories build, because the intersection with `SensitiveSchemaMethods` needs
+ * a name that does not move when a factory changes how it composes. Naming the
+ * pipe would put each factory's internal shape in the public type.
  *
  * `refineSensitive` is attached to the schemas this package builds. Standard Zod
  * combinators (`.optional()`, `.array()`, `.default()`) return plain Zod schemas
@@ -62,7 +69,6 @@ export interface RefineSensitiveParams {
  */
 export type SensitiveSchema<C extends SensitivityClass, Input = string> = z.ZodType<
   SensitiveString<C>,
-  z.ZodTypeDef,
   Input
 > &
   SensitiveSchemaMethods<C, Input>;

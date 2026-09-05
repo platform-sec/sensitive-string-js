@@ -102,11 +102,15 @@ function compileSpec(spec: PreprocessSpec): (value: string) => string {
  * reports the usual `invalid_type` issue rather than the preprocessor throwing
  * on it.
  *
+ * The inner schema is any string-to-string schema, not specifically a
+ * `z.ZodString`, so that Zod 4's format constructors work: `z.email()` is a
+ * `ZodEmail` and is not a `ZodString`.
+ *
  * @typeParam C - The sensitivity class for the resulting SensitiveString
  * @param klass - The sensitivity classification to apply
  * @param spec - Normalization options, a function, or a list of functions
  * @param label - Optional label for audit/compliance
- * @param schema - Optional string schema, validated after normalization
+ * @param schema - Optional string-to-string schema, validated after normalization
  * @returns A schema that transforms normalized strings to SensitiveString<C>
  * @throws TypeError If the spec is malformed.
  *
@@ -116,7 +120,7 @@ function compileSpec(spec: PreprocessSpec): (value: string) => string {
  *   'sensitive',
  *   { trim: true, lowercase: true },
  *   'email',
- *   z.string().email()
+ *   z.email()
  * );
  *
  * email.parse('  Alice@Example.COM  ').reveal(); // 'alice@example.com'
@@ -126,7 +130,7 @@ export function zSensitiveStringPreprocess<C extends SensitivityClass>(
   klass: C,
   spec: PreprocessSpec,
   label?: string,
-  schema?: z.ZodString
+  schema?: z.ZodType<string, string>
 ): SensitiveSchema<C, string> {
   const normalize = compileSpec(spec);
 
@@ -137,13 +141,15 @@ export function zSensitiveStringPreprocess<C extends SensitivityClass>(
     )
     .transform((value): SensitiveString<C> => new SensitiveString(value, klass, label));
 
-  // `z.preprocess` declares its input as `unknown`, and `undefined` extends
-  // `unknown`, so carrying that through would mark the field optional wherever
-  // this schema sits in an object. A missing value is rejected at runtime, so
-  // the declared input is the string the schema actually asks for.
-  return withSensitiveMethods(
-    built as unknown as z.ZodType<SensitiveString<C>, z.ZodTypeDef, string>
-  );
+  // `z.preprocess` declares its input as a required `unknown`, which is wider
+  // than the string this schema actually asks for and would let a caller pass
+  // anything without a compile error. The cast narrows it to that string.
+  //
+  // Under v3 the same cast fixed a different problem: `undefined` extends
+  // `unknown`, so the declared input marked the field optional wherever this
+  // schema sat in an object. v4 closed that, and the runtime case pinning it
+  // still passes.
+  return withSensitiveMethods(built as unknown as z.ZodType<SensitiveString<C>, string>);
 }
 
 /**
@@ -152,7 +158,7 @@ export function zSensitiveStringPreprocess<C extends SensitivityClass>(
  *
  * @param spec - Normalization options, a function, or a list of functions
  * @param label - Optional label for audit/compliance
- * @param schema - Optional string schema, validated after normalization
+ * @param schema - Optional string-to-string schema, validated after normalization
  * @returns A schema producing SensitiveString<'sensitive'>
  *
  * @example
@@ -163,7 +169,7 @@ export function zSensitiveStringPreprocess<C extends SensitivityClass>(
 export function zSensitivePreprocess(
   spec: PreprocessSpec,
   label?: string,
-  schema?: z.ZodString
+  schema?: z.ZodType<string, string>
 ): SensitiveSchema<'sensitive', string> {
   return zSensitiveStringPreprocess('sensitive', spec, label, schema);
 }
@@ -174,7 +180,7 @@ export function zSensitivePreprocess(
  *
  * @param spec - Normalization options, a function, or a list of functions
  * @param label - Optional label for audit/compliance
- * @param schema - Optional string schema, validated after normalization
+ * @param schema - Optional string-to-string schema, validated after normalization
  * @returns A schema producing SensitiveString<'credential'>
  *
  * @example
@@ -186,7 +192,7 @@ export function zSensitivePreprocess(
 export function zCredentialPreprocess(
   spec: PreprocessSpec,
   label?: string,
-  schema?: z.ZodString
+  schema?: z.ZodType<string, string>
 ): SensitiveSchema<'credential', string> {
   return zSensitiveStringPreprocess('credential', spec, label, schema);
 }

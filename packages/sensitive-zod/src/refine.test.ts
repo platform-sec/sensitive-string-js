@@ -94,6 +94,31 @@ describe('refineSensitive', () => {
     }
   });
 
+  it('test_refine_fatal_stops_the_chain', () => {
+    // Zod 4 spells this `continue: false` and keeps `fatal` as a documented v3
+    // compatibility path. An option that quietly stops being read is the exact
+    // failure this migration turned up elsewhere, so it is pinned here.
+    const stopping = zCredential('password')
+      .refineSensitive(() => false, { message: 'first', fatal: true })
+      .refineSensitive(() => false, { message: 'second' });
+
+    const stopped = stopping.safeParse('x');
+    expect(stopped.success).toBe(false);
+    if (!stopped.success) {
+      expect(stopped.error.issues.map((issue) => issue.message)).toEqual(['first']);
+    }
+
+    const collecting = zCredential('password')
+      .refineSensitive(() => false, { message: 'first' })
+      .refineSensitive(() => false, { message: 'second' });
+
+    const collected = collecting.safeParse('x');
+    expect(collected.success).toBe(false);
+    if (!collected.success) {
+      expect(collected.error.issues.map((issue) => issue.message)).toEqual(['first', 'second']);
+    }
+  });
+
   it('test_refine_appends_a_supplied_path', () => {
     const result = zCredential()
       .refineSensitive(() => false, { message: 'nope', path: ['confirm'] })
@@ -202,8 +227,11 @@ describe('refineSensitive', () => {
     it('test_async_check_is_refused_rather_than_skipped_under_sync_parse', () => {
       const schema = zSensitive('email').refineSensitive(() => Promise.resolve(false));
 
-      // Zod throws rather than treating the pending promise as a pass.
-      expect(() => schema.parse('a@example.com')).toThrow(/Async refinement/);
+      // Zod throws rather than treating the pending promise as a pass. v4
+      // raises `$ZodAsyncError` with a new message; the invariant is the same.
+      expect(() => schema.parse('a@example.com')).toThrow(
+        /Encountered Promise during synchronous parse/
+      );
     });
   });
 

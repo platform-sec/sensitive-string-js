@@ -1,18 +1,24 @@
 /**
  * Zod Enhancement Security Tests
  *
- * Two guarantees, checked against every schema the package builds.
+ * Three guarantees, checked against every schema the package builds.
  *
  * A parsed value never renders its input. That is the core library's promise,
  * and it holds here because everything ends up inside a SensitiveString.
  *
- * A rejected value never renders its input either. That one is not free. Zod
- * puts the input in the issue for four codes, so the sweep below feeds a canary
+ * A rejected value never renders its input either. That one is not free. Zod 4
+ * puts input-derived data in `unrecognized_keys.keys`, in `custom.params`, in
+ * `invalid_element.key`, and in `issue.input`, so the sweep below feeds a canary
  * into each schema, in every shape it will accept, and scans the whole error:
- * the message, the issue objects, and both of the shapes Zod formats them into.
+ * the message, the issue objects, and every shape Zod formats them into.
+ *
+ * A *published* schema never renders it either. `z.toJSONSchema` is new in v4
+ * and turns a schema definition into a document, calling function defaults to
+ * do it. Anything this package puts in a definition is therefore a publication
+ * surface, which is why `zSensitiveDefault` holds its fallback in a closure.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { z } from 'zod';
 import {
   installSensitiveErrorMap,
@@ -40,12 +46,18 @@ import {
 
 const CANARY = 'LEAKED_SECRET_zod_abc123xyz';
 
+const previousCustomError = z.config().customError;
+
 afterEach(() => {
-  z.setErrorMap(z.defaultErrorMap);
+  z.config({ customError: previousCustomError });
 });
 
 /**
  * Everything a caller could reasonably read off a failed parse.
+ *
+ * `.format()` and `.flatten()` are deprecated in v4 in favour of
+ * `z.treeifyError` and `z.prettifyError`, so both generations are scanned: a
+ * caller who has not migrated still reads the old ones.
  */
 function renderError(error: unknown): string {
   if (!(error instanceof z.ZodError)) {
@@ -56,8 +68,10 @@ function renderError(error: unknown): string {
     error.message,
     JSON.stringify(error),
     JSON.stringify(error.issues),
-    JSON.stringify(error.format()),
-    JSON.stringify(error.flatten()),
+    JSON.stringify(z.treeifyError(error)),
+    JSON.stringify(z.flattenError(error)),
+    JSON.stringify(z.formatError(error)),
+    z.prettifyError(error),
     error.issues.map((issue) => issue.message).join('\n'),
   ].join('\n');
 }
@@ -78,13 +92,13 @@ function renderValue(value: unknown): string {
  */
 const SCHEMAS: ReadonlyArray<{
   name: string;
-  schema: z.ZodType<unknown, z.ZodTypeDef, unknown>;
+  schema: z.ZodType<unknown, unknown>;
   inputs: readonly unknown[];
   /**
    * Set where the entry is an object a caller composes around the package's
-   * schemas, so it can reach the four leaking issue codes. Those entries are
-   * clean only through the redaction helpers, which is what the leak-and-fix
-   * test below pins.
+   * schemas, so it can reach the leaking issue codes. Those entries are clean
+   * only through the redaction helpers, which is what the leak-and-fix test
+   * below pins.
    */
   composedByCaller?: true;
 }> = [
@@ -103,11 +117,16 @@ const SCHEMAS: ReadonlyArray<{
         .string()
         .min(50)
         .max(60)
-        .email()
         .startsWith('sk_')
         .regex(/^never$/),
       'password'
     ),
+    inputs: [CANARY],
+  },
+  {
+    // The widened parameter: a v4 format constructor is not a `z.ZodString`.
+    name: 'zSensitiveWithValidation',
+    schema: zSensitiveWithValidation('sensitive', z.email(), 'email'),
     inputs: [CANARY],
   },
   {
@@ -143,17 +162,17 @@ const SCHEMAS: ReadonlyArray<{
   { name: 'zCredentialRecord', schema: zCredentialRecord('secret'), inputs: [{ key: CANARY }] },
   {
     name: 'zSensitiveStringPreprocess',
-    schema: zSensitiveStringPreprocess('credential', { trim: true }, 'token', z.string().uuid()),
+    schema: zSensitiveStringPreprocess('credential', { trim: true }, 'token', z.uuid()),
     inputs: [CANARY],
   },
   {
     name: 'zSensitivePreprocess',
-    schema: zSensitivePreprocess({ trim: true, lowercase: true }, 'email', z.string().email()),
+    schema: zSensitivePreprocess({ trim: true, lowercase: true }, 'email', z.email()),
     inputs: [CANARY, `  ${CANARY}  `],
   },
   {
     name: 'zCredentialPreprocess',
-    schema: zCredentialPreprocess({ stripWhitespace: true }, 'api_key', z.string().uuid()),
+    schema: zCredentialPreprocess({ stripWhitespace: true }, 'api_key', z.uuid()),
     inputs: [CANARY],
   },
   {
@@ -166,6 +185,11 @@ const SCHEMAS: ReadonlyArray<{
   {
     name: 'zSensitiveDefault',
     schema: zSensitiveDefault('credential', 'token', CANARY),
+    inputs: [undefined, CANARY],
+  },
+  {
+    name: 'zSensitiveDefault',
+    schema: zSensitiveDefault('credential', 'token', () => CANARY),
     inputs: [undefined, CANARY],
   },
   {
@@ -235,6 +259,61 @@ describe('Zod Enhancement Security', () => {
     }
   });
 
+  describe('CANARY: no schema the package builds publishes its input as JSON Schema', () => {
+    // `z.toJSONSchema` is what every OpenAPI generator calls, and `io: 'input'`
+    // is what a request-body generator passes.
+    //
+    // The two sides are asserted separately rather than as "throws or is
+    // clean". Every factory here emits on the input side and refuses on the
+    // output side, so accepting either would let a future Zod turn this sweep
+    // into a no-op: a version that started throwing on the input side, or one
+    // that started emitting something for a SensitiveString, would both pass a
+    // test that treats a throw as success.
+    for (const { name, schema, composedByCaller } of SCHEMAS) {
+      if (composedByCaller) {
+        continue;
+      }
+
+      it(`${name} emits a canary-free input schema and refuses the output side`, () => {
+        const input = JSON.stringify(z.toJSONSchema(schema, { io: 'input' }));
+
+        expect(input).not.toContain(CANARY);
+        expect(input).toContain('$schema');
+
+        expect(() => z.toJSONSchema(schema, { io: 'output' })).toThrow(
+          /cannot be represented in JSON Schema/
+        );
+      });
+    }
+  });
+
+  it('CANARY: a function default is not invoked while generating a JSON Schema', () => {
+    // The failure this prevents is the documented example: a default that reads
+    // `process.env.API_KEY` at generation time embeds the live key in the
+    // document. A value-only assertion would miss a call whose result happened
+    // not to match, so the call itself is what is asserted.
+    const factory = vi.fn(() => CANARY);
+    const Config = z.object({ apiKey: zSensitiveDefault('credential', 'api_key', factory) });
+
+    const schema = JSON.stringify(z.toJSONSchema(Config, { io: 'input' }));
+
+    expect(factory).not.toHaveBeenCalled();
+    expect(schema).not.toContain(CANARY);
+    expect(schema).not.toContain('default');
+
+    // The default still works, and still runs once per parse that needs it.
+    expect(Config.parse({}).apiKey.reveal()).toBe(CANARY);
+    expect(factory).toHaveBeenCalledTimes(1);
+  });
+
+  it('CANARY: the output side of toJSONSchema refuses rather than emitting', () => {
+    // Pins the safe-by-default behaviour, so a future Zod that starts emitting
+    // something for a SensitiveString is caught here.
+    const Config = z.object({ token: zCredential('token') });
+
+    expect(() => z.toJSONSchema(Config)).toThrow(/cannot be represented in JSON Schema/);
+  });
+
   it('no schema the package builds throws out of safeParse', () => {
     for (const { schema, inputs, composedByCaller } of SCHEMAS) {
       if (composedByCaller) {
@@ -253,7 +332,9 @@ describe('Zod Enhancement Security', () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(renderError(result.error)).not.toContain(CANARY);
-      expect(result.error.issues[0]?.message).toBe('String must contain at least 200 character(s)');
+      expect(result.error.issues[0]?.message).toBe(
+        'Too small: expected string to have >=200 characters'
+      );
     }
   });
 
@@ -279,14 +360,31 @@ describe('Zod Enhancement Security', () => {
     }
   });
 
-  it('CANARY: a sibling enum leaks without the error map and not with it', () => {
-    const schema = z.object({
+  it('CANARY: a sibling enum no longer leaks, and an unknown key still does', () => {
+    // This case pins the gap as well as the fix, and v4 moved the gap.
+    //
+    // The enum half asserts an upstream fix rather than one of ours:
+    // `invalid_enum_value` became `invalid_value`, which carries the allowed
+    // set instead of what arrived. If a future Zod puts the input back there,
+    // this fails and the enum branch of `sensitiveErrorMap` comes back.
+    const withEnum = z.object({
       role: z.enum(['admin', 'user']),
       password: zCredential('password'),
     });
 
-    // The gap this closes: Zod's own default map puts the input in the message.
-    const unprotected = schema.safeParse({ role: CANARY, password: 'pw' });
+    const enumResult = withEnum.safeParse({ role: CANARY, password: 'pw' });
+    expect(enumResult.success).toBe(false);
+    if (!enumResult.success) {
+      expect(enumResult.error.issues[0]?.code).toBe('invalid_value');
+      expect(renderError(enumResult.error)).not.toContain(CANARY);
+    }
+
+    // `unrecognized_keys` is the surviving instance of the gap the module
+    // exists to close: it leaks under the default configuration, in both the
+    // message and the structured field.
+    const strict = withEnum.strict();
+
+    const unprotected = strict.safeParse({ role: 'admin', password: 'pw', [CANARY]: 1 });
     expect(unprotected.success).toBe(false);
     if (!unprotected.success) {
       expect(renderError(unprotected.error)).toContain(CANARY);
@@ -294,12 +392,13 @@ describe('Zod Enhancement Security', () => {
     }
 
     installSensitiveErrorMap();
-    const withMap = schema.safeParse({ role: CANARY, password: 'pw' });
+    const withMap = strict.safeParse({ role: 'admin', password: 'pw', [CANARY]: 1 });
     expect(withMap.success).toBe(false);
     if (!withMap.success) {
-      // The message is clean, but `received` survives an error map, so the
+      // The message is clean, but `keys` survives an error map, so the
       // structured issue still needs redacting.
       expect(withMap.error.issues[0]?.message).not.toContain(CANARY);
+      expect(JSON.stringify(withMap.error.issues)).toContain(CANARY);
       expect(renderError(redactZodError(withMap.error))).not.toContain(CANARY);
     }
   });

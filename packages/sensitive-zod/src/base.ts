@@ -88,9 +88,15 @@ export function zCredential(label?: string): SensitiveSchema<'credential', strin
 /**
  * Create a Zod schema with additional string validation before wrapping.
  *
+ * The schema parameter is any string-to-string schema, not specifically a
+ * `z.ZodString`. Zod 4 promoted the string formats to top-level constructors
+ * with classes of their own, so `z.email()` is a `ZodEmail` and is not a
+ * `ZodString`; requiring the narrower type would push callers back onto the
+ * deprecated `z.string().email()` spelling to use this package.
+ *
  * @typeParam C - The sensitivity class for the resulting SensitiveString
  * @param klass - The sensitivity classification to apply
- * @param schema - A Zod string schema with validations
+ * @param schema - A Zod schema that takes and returns a string
  * @param label - Optional label for audit/compliance
  * @returns A Zod schema that validates then transforms to SensitiveString<C>
  *
@@ -102,6 +108,9 @@ export function zCredential(label?: string): SensitiveSchema<'credential', strin
  *   z.string().min(32, 'API key too short'),
  *   'api_key'
  * );
+ *
+ * // A v4 format constructor works directly.
+ * const emailSchema = zSensitiveWithValidation('sensitive', z.email(), 'email');
  *
  * // Password with complexity requirements
  * const passwordSchema = zSensitiveWithValidation(
@@ -115,7 +124,7 @@ export function zCredential(label?: string): SensitiveSchema<'credential', strin
  */
 export function zSensitiveWithValidation<C extends SensitivityClass>(
   klass: C,
-  schema: z.ZodString,
+  schema: z.ZodType<string, string>,
   label?: string
 ): SensitiveSchema<C, string> {
   return withSensitiveMethods(
@@ -147,11 +156,7 @@ export function zSensitiveWithValidation<C extends SensitivityClass>(
 export function zSensitiveOptional<C extends SensitivityClass>(
   klass: C,
   label?: string
-): z.ZodEffects<
-  z.ZodOptional<z.ZodNullable<z.ZodString>>,
-  SensitiveString<C> | null,
-  string | null | undefined
-> {
+): z.ZodType<SensitiveString<C> | null, string | null | undefined> {
   return z
     .string()
     .nullable()
@@ -223,7 +228,7 @@ export function zSensitiveDeserialize<C extends SensitivityClass>(
         // whose whole job is handling a payload from another service.
         if (expectedKlass && serialized.klass !== expectedKlass) {
           ctx.addIssue({
-            code: z.ZodIssueCode.custom,
+            code: 'custom',
             message: `Expected sensitivity class '${expectedKlass}', got '${serialized.klass}'`,
           });
           return z.NEVER;
@@ -233,7 +238,7 @@ export function zSensitiveDeserialize<C extends SensitivityClass>(
           return SensitiveString.deserialize<C>(serialized);
         } catch (error) {
           ctx.addIssue({
-            code: z.ZodIssueCode.custom,
+            code: 'custom',
             message: error instanceof Error ? error.message : 'Invalid serialized sensitive value',
           });
           return z.NEVER;

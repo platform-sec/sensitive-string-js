@@ -24,6 +24,15 @@ import type { SensitiveSchema } from './types.js';
  * client sent, and treating them as absent would silently substitute a secret
  * for input that should have been rejected.
  *
+ * The fallback is held in the transform's closure rather than in a
+ * `.default()`, and that placement is the security-relevant part.
+ * `z.toJSONSchema(schema, { io: 'input' })` reads a schema definition's
+ * `default` and emits it verbatim, calling a function default to do so; every
+ * OpenAPI generator in the ecosystem takes that path. The documented example
+ * below reads `process.env.API_KEY`, so under a `.default()` the live key
+ * would be embedded in a document whose whole purpose is publication. A
+ * closure is not part of the definition and has nothing to read.
+ *
  * @typeParam C - The sensitivity class for the resulting SensitiveString
  * @param klass - The sensitivity classification to apply
  * @param label - Optional label for audit/compliance
@@ -44,12 +53,13 @@ export function zSensitiveDefault<C extends SensitivityClass>(
   label: string | undefined,
   defaultValue: string | (() => string)
 ): SensitiveSchema<C, string | undefined> {
-  const withDefault =
-    typeof defaultValue === 'function'
-      ? z.string().default(defaultValue)
-      : z.string().default(defaultValue);
-
   return withSensitiveMethods(
-    withDefault.transform((value): SensitiveString<C> => new SensitiveString(value, klass, label))
+    z
+      .string()
+      .optional()
+      .transform((value): SensitiveString<C> => {
+        const raw = value ?? (typeof defaultValue === 'function' ? defaultValue() : defaultValue);
+        return new SensitiveString(raw, klass, label);
+      })
   );
 }
