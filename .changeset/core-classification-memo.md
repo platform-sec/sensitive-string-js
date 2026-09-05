@@ -14,6 +14,14 @@ should have to know about to avoid.
 to 17ns, `classifyField` on one key from 868ns to 66ns, and over five keys from 4339ns to 281ns. The
 entry is held only as long as the spec object is, so a spec built per request is collected with it.
 
+`compileClassification` now also refuses a specification that is not an object, with
+`Invalid classification specification: expected an object, received string.` A primitive reached
+`Object.entries(spec.fields ?? {})`, compiled to a classification that matched nothing and reported
+that to nobody, so a caller who passed the wrong argument got an answer instead of an error. The
+check sits ahead of the memo because `WeakMap` refuses a primitive key and would otherwise report
+the mistake as `Invalid value used as weak map key`, which names an implementation detail rather
+than what the caller did.
+
 One consequence worth stating, since it is observable. Reuse goes by object identity, so the same
 spec object hands back the same compiled form, two equal specs compile separately, and a spec
 mutated after it has been classified with keeps the form it compiled to the first time. A

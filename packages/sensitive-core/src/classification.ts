@@ -107,6 +107,18 @@ function stateless(pattern: RegExp): RegExp {
 const compiledSpecs = new WeakMap<ClassificationSpec, CompiledClassification>();
 
 export function compileClassification(spec: ClassificationSpec): CompiledClassification {
+  // Checked before the memo, because `WeakMap.set` refuses a primitive key and
+  // would report this as "Invalid value used as weak map key", which names an
+  // implementation detail and not the caller's mistake. A primitive used to
+  // compile to a classification that matched nothing and said so to no one.
+  if (spec === null || typeof spec !== 'object') {
+    throw new TypeError(
+      `Invalid classification specification: expected an object, received ${
+        spec === null ? 'null' : typeof spec
+      }.`
+    );
+  }
+
   const memoized = compiledSpecs.get(spec);
 
   if (memoized !== undefined) {

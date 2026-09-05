@@ -157,6 +157,21 @@ describe('compileClassification', () => {
       ).toThrow(/rule at index 0: pattern must be a RegExp/);
     });
 
+    it.each([
+      ['null', null],
+      ['undefined', undefined],
+      ['a string', 'spec'],
+      ['a number', 42],
+      ['a boolean', true],
+    ])('refuses %s in place of a specification', (_name, bad) => {
+      // A primitive reached `Object.entries(spec.fields ?? {})` and compiled to
+      // a classification that matched nothing, so a caller who passed the wrong
+      // argument got an answer rather than an error.
+      expect(() => compileClassification(bad as never)).toThrow(TypeError);
+      expect(() => compileClassification(bad as never)).toThrow(/expected an object/);
+      expect(() => classifyField('token', bad as never)).toThrow(/expected an object/);
+    });
+
     it('names the offending rule index', () => {
       expect(() =>
         compileClassification({
