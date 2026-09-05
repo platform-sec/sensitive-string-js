@@ -7,8 +7,8 @@ catch.
 A type keeps a secret wrapped. It cannot stop `console.log(secret.reveal())`,
 because the reveal produces an ordinary string and logging a string is ordinary
 code. The same goes for `password.reveal() === input`, which type-checks
-perfectly and leaks the password to a timing attack. Five rules read the shape
-of the call instead.
+perfectly and leaks the password to a timing attack. Seven rules read the call
+instead: five from its shape alone, two from the types of its arguments.
 
 ## Installation
 
@@ -16,9 +16,14 @@ of the call instead.
 pnpm add -D @platform-sec/eslint-plugin-sensitive-string
 ```
 
-ESLint 8.40 or newer is a peer dependency. Nothing else is: the rules work from
-the syntax alone, so they run under any parser and cost nothing beyond the
-parse.
+ESLint 8.40 or newer is a peer dependency, and nothing else is. The five
+untyped rules work from the syntax alone, so they run under any parser and cost
+nothing beyond the parse.
+
+The other two ask what a value's type *contains*, which no syntax answers, so
+they need a TypeScript program: `@typescript-eslint/parser` with `project` or
+`projectService` set. They live only in the `-type-checked` presets, so a
+project that has not configured one never meets them.
 
 ## Usage
 
@@ -53,11 +58,17 @@ Or set rules individually:
 }
 ```
 
+Those five are the untyped rules. `no-stringify-sensitive` and `prefer-safe-log`
+are set the same way, under a config that gives them a program: see
+[Type-aware linting](#type-aware-linting).
+
 The plugin's package name is `eslint-plugin-sensitive-string` under the
 `@platform-sec` scope, so ESLint addresses it as
 `@platform-sec/sensitive-string`.
 
 ## Rules
+
+Syntax only, in `recommended`:
 
 | Rule | `recommended` | Catches |
 |---|---|---|
@@ -67,14 +78,27 @@ The plugin's package name is `eslint-plugin-sensitive-string` under the
 | [explicit-class](docs/rules/explicit-class.md) | warn | `new SensitiveString(v)` with no class |
 | [require-reveal-context](docs/rules/require-reveal-context.md) | warn | `x.reveal()` with no context and no enclosing `withRevealContext` |
 
+Type-aware, in `recommended-type-checked` only:
+
+| Rule | `recommended-type-checked` | Catches |
+|---|---|---|
+| [no-stringify-sensitive](docs/rules/no-stringify-sensitive.md) | error | `JSON.stringify(payload)` where `payload` holds a `SensitiveString` or a `serialize()` result |
+| [prefer-safe-log](docs/rules/prefer-safe-log.md) | warn | `console.log(user)` where `user` holds one |
+
 ## Presets
 
-| Preset | Format |
-|---|---|
-| `configs.recommended` | flat |
-| `configs.strict` | flat |
-| `configs['legacy-recommended']` | eslintrc |
-| `configs['legacy-strict']` | eslintrc |
+| Preset | Format | Rules |
+|---|---|---|
+| `configs.recommended` | flat | the five untyped |
+| `configs.strict` | flat | the five untyped, harder |
+| `configs['recommended-type-checked']` | flat | all seven |
+| `configs['strict-type-checked']` | flat | all seven, harder |
+| `configs['disable-type-checked']` | flat | turns the two type-aware rules off |
+| `configs['legacy-recommended']` | eslintrc | the five untyped |
+| `configs['legacy-strict']` | eslintrc | the five untyped, harder |
+| `configs['legacy-recommended-type-checked']` | eslintrc | all seven |
+| `configs['legacy-strict-type-checked']` | eslintrc | all seven, harder |
+| `configs['legacy-disable-type-checked']` | eslintrc | turns the two type-aware rules off |
 
 Both formats configure the same rules at the same severities, and a test holds
 them to it.
@@ -88,18 +112,34 @@ spread. A warning is the honest severity for a check that can be wrong.
 context, and sets `allowWithContext: false` on `no-network-sensitive`, so the
 only way a value leaves the process is `serialize()`.
 
-## What is not here
+## Type-aware linting
 
-The design calls for two more rules, `no-stringify-sensitive` and
-`prefer-safe-log`. Both come down to deciding whether an arbitrary object
-*contains* a sensitive value, which needs type information. The suggested
-untyped substitute is to guess from variable names: flag `JSON.stringify(x)`
-when `x` is called `token`, `secret`, `password`.
+The `-type-checked` presets add `no-stringify-sensitive` and `prefer-safe-log`
+to their untyped namesakes. Both need a `ts.Program`:
 
-That heuristic reports the wrong lines and, worse, stays quiet on the right
-ones. A rule you trust that is silent on `JSON.stringify(user)` is a rule that
-made things worse. They will ship when they can run in typescript-eslint's
-type-aware mode, and their documentation will say they require it.
+```js
+import sensitive from '@platform-sec/eslint-plugin-sensitive-string';
+import tseslint from 'typescript-eslint';
+
+export default [
+  {
+    files: ['**/*.ts'],
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+    },
+  },
+  sensitive.configs['recommended-type-checked'],
+  // Files no tsconfig.json covers have no types to read.
+  { files: ['**/*.js'], ...sensitive.configs['disable-type-checked'] },
+];
+```
+
+Applied to a file with no program, both rules report that fact once, on the
+file, rather than falling silent. Silence would be the worse failure: a rule
+that reports nothing looks exactly like a rule that found nothing, and these
+two get read as "no sensitive value is being stringified or logged here".
+`disable-type-checked` is what turns them off where that is expected.
 
 ## Suggestions, not fixes
 
@@ -122,15 +162,20 @@ satisfy a signature and decide nothing, so accepting them would make passing
 `undefined` the shortest way to silence a rule while looking like compliance
 with it.
 
-Beyond that, every rule works from names, not types, so each has a shape it
-cannot see and a shape it reports too eagerly. Each rule's documentation ends with a "Known
-limits" section saying which. Two general points:
+Beyond that, every rule has a shape it cannot see and a shape it reports too
+eagerly. Each rule's documentation ends with a "Known limits" section saying
+which. Three general points:
 
-- **A logger or HTTP client under an unfamiliar name is invisible.** Both rules
-  take an option naming the ones a project uses.
+- **A logger or HTTP client under an unfamiliar name is invisible.** Every rule
+  that matches one takes an option naming the ones a project uses.
 - **A value revealed into a variable and used later is not tracked.** Reveal at
   the point of use, which is better practice anyway: it keeps the raw string's
   lifetime as short as the library can make it.
+- **The two type-aware rules match a type by its name**, so anything called
+  `SensitiveString` counts and a project's own wrapper does not until
+  `sensitiveTypes` names it. Resolving the declaration back to this library
+  would be more precise and would break under bundlers, path aliases and
+  re-exports.
 
 ## License
 

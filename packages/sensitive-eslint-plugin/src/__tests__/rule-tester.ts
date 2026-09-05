@@ -1,17 +1,66 @@
 /**
  * The `RuleTester` setup every rule suite shares.
  *
- * Two testers, because a rule in this plugin has to hold under both parsers.
- * `espree` is what ESLint uses on a `.js` file and is the baseline; the
+ * Three testers, because a rule in this plugin has to hold under more than one
+ * parser. `espree` is what ESLint uses on a `.js` file and is the baseline; the
  * TypeScript parser produces the extra nodes (`TSAsExpression`,
  * `TSNonNullExpression`) that a cast or a non-null assertion wraps a reveal in,
  * and those are the shapes a rule most easily misses. Each suite runs its core
  * cases under `espree` and its cast-and-assert cases under TypeScript.
+ *
+ * The third adds a `ts.Program`, which is the whole difference between a rule
+ * that can ask what a value's type contains and one that cannot. Only the two
+ * rules that need one use it, because building a program is the expensive part
+ * of a type-aware lint run.
  */
+import { existsSync } from 'node:fs';
+import nodePath from 'node:path';
 import { ESLint, RuleTester } from 'eslint';
 import type { Linter, Rule } from 'eslint';
 import * as typescriptParser from '@typescript-eslint/parser';
 import type { RuleModule } from '../types.js';
+
+/**
+ * The workspace root, found by walking up for the pnpm workspace manifest.
+ *
+ * Neither `import.meta.url` nor `__dirname` exists under both the Vitest
+ * transform and the NodeNext CommonJS type-check, and the suites run from the
+ * repository root and from the package directory alike, so the only reliable
+ * anchor is a file that marks the root.
+ */
+export function workspaceRoot(): string {
+  let directory = process.cwd();
+
+  for (;;) {
+    if (existsSync(nodePath.join(directory, 'pnpm-workspace.yaml'))) {
+      return directory;
+    }
+
+    const parent = nodePath.dirname(directory);
+    if (parent === directory) {
+      throw new Error(`Could not find the workspace root above ${process.cwd()}.`);
+    }
+    directory = parent;
+  }
+}
+
+/** This package's directory, wherever the suite was started from. */
+export function packageRoot(): string {
+  return nodePath.join(workspaceRoot(), 'packages', 'sensitive-eslint-plugin');
+}
+
+/**
+ * The throwaway TypeScript project the type-aware suites lint inside.
+ *
+ * A rule that reads types needs a `ts.Program`, and a program needs a
+ * `tsconfig.json` that contains the file being linted. The fixture holds
+ * nothing but that: every test case declares the types it is about, so the
+ * program has no dependencies and nothing in it can drift.
+ */
+const TYPE_AWARE_FIXTURE = () => nodePath.join(packageRoot(), 'src', '__tests__', 'fixtures');
+
+/** The name the fixture project includes, and so the name a case must lint as. */
+const TYPE_AWARE_FILENAME = 'file.ts';
 
 /** The test-case shapes `RuleTester.run` accepts, so a suite can be typed. */
 export type RuleTests = Parameters<RuleTester['run']>[2];
@@ -52,6 +101,84 @@ export function createTypeScriptTester(): RuleTester {
       sourceType: 'module',
     },
   });
+}
+
+/**
+ * A tester using `@typescript-eslint/parser` *with* type information.
+ *
+ * The difference from {@link createTypeScriptTester} is `project`, which is
+ * what builds a `ts.Program` and puts a type checker on `parserServices`. It
+ * costs a TypeScript program per suite, which is why only the two rules that
+ * cannot work without one use it.
+ */
+export function createTypeAwareTester(): RuleTester {
+  return new RuleTester({
+    languageOptions: {
+      parser: typescriptParser,
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      parserOptions: {
+        project: './tsconfig.json',
+        tsconfigRootDir: TYPE_AWARE_FIXTURE(),
+      },
+    },
+  });
+}
+
+/**
+ * Every case pinned to the one filename the fixture project contains.
+ *
+ * `RuleTester` defaults to `file.js`, which is not in the project, and
+ * `@typescript-eslint/parser` treats a file outside the project as an error
+ * rather than as an untyped file. Setting it per case rather than asking each
+ * suite to remember is the difference between a rule suite and a suite about
+ * `parserOptions`.
+ */
+function withFixtureFilename(tests: RuleTests): RuleTests {
+  const pin = (test: RuleTests['valid'][number] | RuleTests['invalid'][number]): unknown =>
+    typeof test === 'string'
+      ? { code: test, filename: TYPE_AWARE_FILENAME }
+      : { ...test, filename: TYPE_AWARE_FILENAME };
+
+  return {
+    valid: tests.valid.map(pin),
+    invalid: tests.invalid.map(pin),
+  } as RuleTests;
+}
+
+/** Run a suite under a parser that has a program, so types are available. */
+export function runTypeAwareRuleTests(name: string, rule: RuleModule, tests: RuleTests): void {
+  createTypeAwareTester().run(name, toEslintRule(rule), withFixtureFilename(tests));
+}
+
+/**
+ * The fixture file's absolute path, for a lint run driven through `ESLint`
+ * rather than through a `RuleTester`.
+ */
+export function typeAwareFilePath(): string {
+  return nodePath.join(TYPE_AWARE_FIXTURE(), TYPE_AWARE_FILENAME);
+}
+
+/**
+ * The flat-config layer that gives the fixture's files their types.
+ *
+ * Stacked under a `-type-checked` preset, this is what an `eslint.config.js`
+ * doing type-aware linting looks like: one block naming the parser and the
+ * project, and the preset on top of it.
+ */
+export function typeAwareLayer(): Record<string, unknown> {
+  return {
+    files: ['**/*.ts'],
+    languageOptions: {
+      parser: typescriptParser,
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      parserOptions: {
+        project: './tsconfig.json',
+        tsconfigRootDir: TYPE_AWARE_FIXTURE(),
+      },
+    },
+  };
 }
 
 /** Run a suite under `espree`. */

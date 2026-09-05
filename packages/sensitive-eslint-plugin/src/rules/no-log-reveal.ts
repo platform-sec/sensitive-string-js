@@ -4,52 +4,17 @@
 import {
   REVEAL_METHOD,
   asMethodCall,
-  calleeChainNames,
-  calleeOf,
   callArguments,
   findMethodCalls,
   getSourceCode,
-  identifierName,
   unwrap,
 } from '../ast.js';
 import { ruleDocs } from '../docs.js';
+import { DEFAULT_LOG_FUNCTIONS, DEFAULT_LOG_OBJECTS, isLogCall } from '../log-calls.js';
 import { nameListSchema, optionObject, readNameSet } from '../options.js';
 import type { AstNode, RuleContext, RuleListener, RuleModule } from '../types.js';
 
 const RULE_NAME = 'no-log-reveal';
-
-/**
- * Method names on a logger, plus `write`.
- *
- * `write` is here for `process.stdout.write(secret.reveal())`, which leaks
- * exactly what `console.log` leaks and is the first thing reached for when a
- * log line needs no newline. It only ever matches alongside a name from
- * {@link DEFAULT_LOG_OBJECTS}, so an unrelated `stream.write` is untouched.
- */
-const DEFAULT_LOG_FUNCTIONS: readonly string[] = [
-  'log',
-  'info',
-  'warn',
-  'error',
-  'debug',
-  'trace',
-  'fatal',
-  'verbose',
-  'silly',
-  'write',
-];
-
-/** Names a logger is reached by, anywhere along the callee chain. */
-const DEFAULT_LOG_OBJECTS: readonly string[] = [
-  'console',
-  'logger',
-  'log',
-  'winston',
-  'pino',
-  'bunyan',
-  'stdout',
-  'stderr',
-];
 
 /**
  * Methods whose result is the raw value.
@@ -62,48 +27,6 @@ const DEFAULT_LOG_OBJECTS: readonly string[] = [
  * logging them is the fix this rule points at.
  */
 const DEFAULT_REVEAL_METHODS: readonly string[] = [REVEAL_METHOD, 'serialize'];
-
-/**
- * Whether a call reaches a logger.
- *
- * Two shapes count. A method call needs its method name in `logFunctions` and
- * some name along its callee chain in `logObjects`, which covers `console.log`,
- * `this.logger.info`, `req.log.warn` and `logger.child({ id }).info` alike. A
- * bare call counts when the function's own name is in `logObjects`, which is
- * how `log(...)` from a destructured import is caught.
- *
- * Matching anywhere in the chain rather than at its head is a deliberate trade:
- * it takes an object named one of eight logger names carrying a method named
- * one of ten logger methods to produce a false positive, and it is the only way
- * to see a logger that arrives as a property.
- */
-function isLogCall(
-  node: AstNode,
-  logFunctions: ReadonlySet<string>,
-  logObjects: ReadonlySet<string>
-): boolean {
-  const callee = calleeOf(node);
-  if (callee === undefined) {
-    return false;
-  }
-
-  const bareName = identifierName(callee);
-  if (bareName !== undefined) {
-    return logObjects.has(bareName);
-  }
-
-  if (callee.type !== 'MemberExpression') {
-    return false;
-  }
-
-  const names = calleeChainNames(callee);
-  const method = names[0];
-  if (method === undefined || !logFunctions.has(method)) {
-    return false;
-  }
-
-  return names.slice(1).some((name) => logObjects.has(name));
-}
 
 export const noLogReveal: RuleModule = {
   meta: {

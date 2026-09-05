@@ -11,6 +11,8 @@ import { describe, it, expect } from 'vitest';
 import { Linter } from 'eslint';
 import type { ESLint } from 'eslint';
 import { PLUGIN_NAMESPACE, configs, rules } from '../index.js';
+import { lintFlat, typeAwareFilePath, typeAwareLayer } from './rule-tester.js';
+import type { FlatLintMessage } from './rule-tester.js';
 import type { RuleModule } from '../types.js';
 
 const CANARY = 'LEAKED_SECRET_abc123xyz';
@@ -186,5 +188,135 @@ describe('canary', () => {
         'no-network-sensitive',
       ])
     );
+  });
+});
+
+describe('type-aware rules', () => {
+  /**
+   * The library's shapes, declared per case.
+   *
+   * Both rules match a type by its name, so a local declaration exercises what
+   * a real import would. It is also the plain statement of the limitation:
+   * anything called `SensitiveString` is treated as one, and a wrapper called
+   * anything else is invisible until `sensitiveTypes` names it.
+   */
+  const DECLARATIONS = [
+    'declare class SensitiveString { readonly klass: string; reveal(): string }',
+    'interface SerializedSensitiveString { __sensitive: true; klass: string; value: string }',
+    '',
+  ].join('\n');
+
+  /** Every finding for a source linted under the strict type-checked preset. */
+  async function lintTyped(source: string): Promise<readonly FlatLintMessage[]> {
+    return lintFlat(
+      DECLARATIONS + source,
+      [typeAwareLayer(), configs['strict-type-checked']],
+      typeAwareFilePath()
+    );
+  }
+
+  /** Every rule id reported, with the plugin prefix stripped. */
+  async function typedRuleIds(source: string): Promise<string[]> {
+    return (await lintTyped(source)).map((message) =>
+      (message.ruleId ?? '(fatal)').replace(`${PLUGIN_NAMESPACE}/`, '')
+    );
+  }
+
+  describe('no silent bypass', () => {
+    /**
+     * Structures written the way they would be written by someone who found
+     * the shape the rule reported and reached for the nearest variation.
+     */
+    const BYPASS_ATTEMPTS: ReadonlyArray<readonly [string, string, string]> = [
+      [
+        'spread copy',
+        'declare const p: { token: SensitiveString };\nJSON.stringify({ ...p });',
+        'no-stringify-sensitive',
+      ],
+      [
+        'assignment through a local',
+        'declare const p: { token: SensitiveString };\nconst copy = p;\nJSON.stringify(copy);',
+        'no-stringify-sensitive',
+      ],
+      [
+        'cast that keeps the field',
+        'declare const p: unknown;\nJSON.stringify(p as { token: SensitiveString });',
+        'no-stringify-sensitive',
+      ],
+      [
+        'mapped type',
+        'declare const p: Partial<{ token: SensitiveString }>;\nJSON.stringify(p);',
+        'no-stringify-sensitive',
+      ],
+      [
+        'readonly wrapper',
+        'declare const p: Readonly<{ token: SensitiveString }>;\nJSON.stringify(p);',
+        'no-stringify-sensitive',
+      ],
+      [
+        'getter rather than a field',
+        'declare const p: { get token(): SensitiveString };\nconsole.log(p);',
+        'prefer-safe-log',
+      ],
+      [
+        'function returning the payload',
+        'declare function build(): { token: SensitiveString };\nconsole.log(build());',
+        'prefer-safe-log',
+      ],
+      [
+        'wire format one level down',
+        'declare const p: { body: { auth: SerializedSensitiveString } };\nconsole.log(p);',
+        'prefer-safe-log',
+      ],
+      [
+        'wire format in an array',
+        'declare const p: SerializedSensitiveString[];\nJSON.stringify(p);',
+        'no-stringify-sensitive',
+      ],
+    ];
+
+    it.each(BYPASS_ATTEMPTS)('%s is still reported by %s', async (_label, code, expectedRule) => {
+      expect(await typedRuleIds(code)).toContain(expectedRule);
+    });
+  });
+
+  describe('canary', () => {
+    it('never puts a value into a finding', async () => {
+      // Both messages name a *type*, never the expression they flagged. A rule
+      // that quoted the source would move whatever literal it found into every
+      // editor, CI log and SARIF upload that reads the finding.
+      const source = [
+        `declare const p: { token: SensitiveString; note: '${CANARY}' };`,
+        'console.log(p);',
+        'JSON.stringify(p);',
+        '',
+      ].join('\n');
+
+      const messages = await lintTyped(source);
+
+      expect(messages.length).toBeGreaterThan(0);
+      for (const message of messages) {
+        expect(message.message).not.toContain(CANARY);
+      }
+    });
+  });
+
+  describe('what the rules deliberately allow', () => {
+    it('leaves the value itself alone, which is how it is meant to be logged', async () => {
+      // `SensitiveString` redacts through toString(), toJSON() and
+      // util.inspect. Reporting `console.log(token)` would contradict the
+      // library's own documentation and bury the finding that matters.
+      const source = 'declare const t: SensitiveString;\nconsole.log(t);\nconsole.log([t]);';
+
+      expect(await typedRuleIds(source)).not.toContain('prefer-safe-log');
+    });
+
+    it('still reports stringifying the value itself, which substitutes silently', async () => {
+      // The opposite call: JSON.stringify writes the redaction where the value
+      // was expected, and the failure surfaces at the far end rather than here.
+      const source = 'declare const t: SensitiveString;\nJSON.stringify(t);';
+
+      expect(await typedRuleIds(source)).toContain('no-stringify-sensitive');
+    });
   });
 });

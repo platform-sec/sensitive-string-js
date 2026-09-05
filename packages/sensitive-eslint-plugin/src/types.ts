@@ -65,6 +65,12 @@ export interface SourceCode {
   getCommentsInside(node: AstNode): readonly unknown[];
   /** ESLint 9. On ESLint 8 the equivalent lives on the context. */
   getAncestors?(node: AstNode): readonly AstNode[];
+  /**
+   * Whatever the parser handed back alongside the tree, typed as `unknown`
+   * because every parser puts something different there and most put nothing.
+   * `./type-info.js` narrows the one shape this plugin can use.
+   */
+  readonly parserServices?: unknown;
 }
 
 /**
@@ -81,6 +87,8 @@ export interface RuleContext {
   getSourceCode?(): SourceCode;
   /** ESLint 8. Returns the ancestors of the node currently being visited. */
   getAncestors?(): readonly AstNode[];
+  /** ESLint 8. On ESLint 9 the same object hangs off `SourceCode`. */
+  readonly parserServices?: unknown;
   report(descriptor: ReportDescriptor): void;
 }
 
@@ -100,6 +108,16 @@ export interface RuleMetaDocs {
   readonly description: string;
   readonly recommended: boolean;
   readonly url?: string;
+  /**
+   * Whether the rule needs a TypeScript program to say anything.
+   *
+   * The name is typescript-eslint's, and so is the meaning: a rule marked here
+   * belongs only in a preset a consumer opted into by configuring type-aware
+   * linting. `./configs.js` splits the presets on this flag, and a test holds
+   * the split to it, so a new type-aware rule cannot quietly land in a preset
+   * that runs over plain JavaScript.
+   */
+  readonly requiresTypeChecking?: boolean;
 }
 
 /** A rule's metadata, as ESLint reads it. */

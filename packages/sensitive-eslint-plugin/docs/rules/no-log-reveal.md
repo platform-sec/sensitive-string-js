@@ -92,5 +92,13 @@ Wrapping a reveal in `safeLog` is reported for exactly that reason.
   function bodies because `console.log(list.map((s) => s.reveal()))` is a real
   leak written the ordinary way, and that is worth a false positive on an
   unused closure.
-- A value revealed into a variable first, then logged, is not reported. That
-  needs type information; see `prefer-safe-log`, which is not yet implemented.
+- A value revealed into a variable first, then logged, is not reported. Its
+  type is `string` by then, so type information does not help either: reveal at
+  the point of use, which keeps the raw string's lifetime as short as the
+  library can make it.
+
+## Related
+
+- [`prefer-safe-log`](prefer-safe-log.md), which asks the type-aware version of
+  the question: not "is a reveal being logged" but "does this structure carry a
+  sensitive value at all".

@@ -5,7 +5,10 @@
  *
  * A type keeps a secret wrapped. It cannot stop `console.log(secret.reveal())`,
  * because the reveal produces an ordinary string and logging a string is
- * ordinary code. These five rules read the shape of the call instead.
+ * ordinary code. Seven rules read the call instead.
+ *
+ * Five of them read syntax alone, so they run under any parser and cost
+ * nothing beyond the parse:
  *
  * - `no-log-reveal` stops a revealed value reaching a logger.
  * - `no-credential-equality` stops `===` on a revealed value, which leaks its
@@ -14,12 +17,16 @@
  * - `explicit-class` asks for the sensitivity class at construction.
  * - `require-reveal-context` asks a reveal to say who is reading and why.
  *
- * All five work from the syntax alone, so they run under any parser and cost
- * nothing beyond the parse. The two rules the design also calls for,
- * `no-stringify-sensitive` and `prefer-safe-log`, need type information to say
- * whether a value is sensitive at all; guessing from a variable's name would
- * report the wrong lines and, worse, stay quiet on the right ones. They are not
- * shipped here.
+ * Two answer a question no syntax can, "does this value carry a sensitive one
+ * inside it", and so need typescript-eslint's type-aware mode:
+ *
+ * - `no-stringify-sensitive` stops `JSON.stringify` silently substituting a
+ *   redaction, and stops it writing a `serialize()` result in the clear.
+ * - `prefer-safe-log` moves the redaction of a logged structure out of
+ *   whichever serializer the transport installed and into the call site.
+ *
+ * The type-aware pair lives only in the `*-type-checked` presets, so a
+ * consumer who has not configured a program never meets them.
  *
  * @example Flat config
  * ```js
@@ -42,6 +49,8 @@ import { explicitClass } from './rules/explicit-class.js';
 import { noCredentialEquality } from './rules/no-credential-equality.js';
 import { noLogReveal } from './rules/no-log-reveal.js';
 import { noNetworkSensitive } from './rules/no-network-sensitive.js';
+import { noStringifySensitive } from './rules/no-stringify-sensitive.js';
+import { preferSafeLog } from './rules/prefer-safe-log.js';
 import { requireRevealContext } from './rules/require-reveal-context.js';
 import type { Plugin, RuleModule } from './types.js';
 
@@ -51,6 +60,8 @@ export const rules: Readonly<Record<string, RuleModule>> = {
   'no-credential-equality': noCredentialEquality,
   'no-log-reveal': noLogReveal,
   'no-network-sensitive': noNetworkSensitive,
+  'no-stringify-sensitive': noStringifySensitive,
+  'prefer-safe-log': preferSafeLog,
   'require-reveal-context': requireRevealContext,
 };
 
@@ -64,8 +75,8 @@ export const meta = {
 } as const;
 
 /**
- * The presets: `recommended` and `strict` for flat config,
- * `legacy-recommended` and `legacy-strict` for eslintrc.
+ * The presets: `recommended`, `strict`, their `-type-checked` forms and
+ * `disable-type-checked`, each in a flat and a `legacy-` eslintrc shape.
  *
  * Filled in after the plugin exists, because a flat preset holds the plugin
  * object it configures and the plugin holds its presets. The two names are one
@@ -82,6 +93,8 @@ export {
   noCredentialEquality,
   noLogReveal,
   noNetworkSensitive,
+  noStringifySensitive,
+  preferSafeLog,
   requireRevealContext,
 };
 export { PLUGIN_NAMESPACE } from './configs.js';

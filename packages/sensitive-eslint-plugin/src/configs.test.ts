@@ -17,16 +17,46 @@ function severityIn(config: unknown, ruleName: string): string | undefined {
 const FLAT_TO_LEGACY: Readonly<Record<string, string>> = {
   recommended: 'legacy-recommended',
   strict: 'legacy-strict',
+  'recommended-type-checked': 'legacy-recommended-type-checked',
+  'strict-type-checked': 'legacy-strict-type-checked',
+  'disable-type-checked': 'legacy-disable-type-checked',
 };
+
+/** The rules that cannot say anything without a TypeScript program. */
+const TYPE_AWARE_RULE_NAMES = Object.entries(rules)
+  .filter(([, rule]) => rule.meta.docs.requiresTypeChecking === true)
+  .map(([name]) => name)
+  .sort();
+
+/** Everything else, which runs on syntax alone. */
+const UNTYPED_RULE_NAMES = Object.keys(rules)
+  .filter((name) => !TYPE_AWARE_RULE_NAMES.includes(name))
+  .sort();
 
 describe('configs', () => {
   it('ships a flat and an eslintrc form of each preset', () => {
-    expect(Object.keys(configs).sort()).toEqual([
-      'legacy-recommended',
-      'legacy-strict',
-      'recommended',
-      'strict',
-    ]);
+    expect(Object.keys(configs).sort()).toEqual(
+      [
+        'disable-type-checked',
+        'legacy-disable-type-checked',
+        'legacy-recommended',
+        'legacy-recommended-type-checked',
+        'legacy-strict',
+        'legacy-strict-type-checked',
+        'recommended',
+        'strict',
+        'strict-type-checked',
+        'recommended-type-checked',
+      ].sort()
+    );
+  });
+
+  it('marks exactly the two rules that need a program', () => {
+    // The flag is what `configs.ts` splits the presets on, so it is also what
+    // decides whether a new rule lands in a preset that runs over plain
+    // JavaScript. Naming the pair here means adding a third cannot happen by
+    // accident.
+    expect(TYPE_AWARE_RULE_NAMES).toEqual(['no-stringify-sensitive', 'prefer-safe-log']);
   });
 
   it.each(Object.keys(configs))('%s names only rules the plugin defines', (name) => {
@@ -53,9 +83,25 @@ describe('configs', () => {
     }
   );
 
-  it('covers every rule in both presets, so no rule ships unreachable', () => {
-    for (const name of Object.keys(configs)) {
+  it.each(['recommended', 'strict'])('%s holds only rules that work without a program', (name) => {
+    // A type-aware rule in an untyped preset reports a misconfiguration on
+    // every plain JavaScript file in the project, which is the noise that
+    // gets a plugin removed rather than configured.
+    expect(ruleNamesIn(configs[name]).sort()).toEqual(UNTYPED_RULE_NAMES);
+  });
+
+  it.each(['recommended-type-checked', 'strict-type-checked'])(
+    '%s covers every rule, so none ships unreachable',
+    (name) => {
       expect(ruleNamesIn(configs[name]).sort()).toEqual(Object.keys(rules).sort());
+    }
+  );
+
+  it('disable-type-checked turns off exactly the rules that need a program', () => {
+    expect(ruleNamesIn(configs['disable-type-checked']).sort()).toEqual(TYPE_AWARE_RULE_NAMES);
+
+    for (const ruleName of TYPE_AWARE_RULE_NAMES) {
+      expect(severityIn(configs['disable-type-checked'], ruleName)).toBe('off');
     }
   });
 
@@ -76,9 +122,26 @@ describe('configs', () => {
     });
   });
 
+  describe('recommended-type-checked', () => {
+    it('adds the two type-aware rules to what recommended already sets', () => {
+      // An error for the rule whose findings are both definite, a warning for
+      // the one whose subject is mostly defence in depth.
+      expect(severityIn(configs['recommended-type-checked'], 'no-stringify-sensitive')).toBe(
+        'error'
+      );
+      expect(severityIn(configs['recommended-type-checked'], 'prefer-safe-log')).toBe('warn');
+
+      for (const ruleName of UNTYPED_RULE_NAMES) {
+        expect(severityIn(configs['recommended-type-checked'], ruleName)).toBe(
+          severityIn(configs['recommended'], ruleName)
+        );
+      }
+    });
+  });
+
   describe('strict', () => {
-    it('errors on everything', () => {
-      for (const ruleName of Object.keys(rules)) {
+    it('errors on every rule it sets', () => {
+      for (const ruleName of UNTYPED_RULE_NAMES) {
         expect(severityIn(configs['strict'], ruleName)).toBe('error');
       }
     });
@@ -97,8 +160,16 @@ describe('configs', () => {
     });
   });
 
+  describe('strict-type-checked', () => {
+    it('errors on everything, the two type-aware rules included', () => {
+      for (const ruleName of Object.keys(rules)) {
+        expect(severityIn(configs['strict-type-checked'], ruleName)).toBe('error');
+      }
+    });
+  });
+
   describe('flat form', () => {
-    it.each(['recommended', 'strict'])('%s carries the plugin object itself', (name) => {
+    it.each(Object.keys(FLAT_TO_LEGACY))('%s carries the plugin object itself', (name) => {
       const config = configs[name] as { plugins: Record<string, unknown>; name: string };
 
       // A flat config names a plugin by holding it. Holding anything but this
@@ -109,7 +180,7 @@ describe('configs', () => {
   });
 
   describe('eslintrc form', () => {
-    it.each(['legacy-recommended', 'legacy-strict'])('%s names the plugin by string', (name) => {
+    it.each(Object.values(FLAT_TO_LEGACY))('%s names the plugin by string', (name) => {
       // An eslintrc names a plugin by a specifier ESLint resolves itself, and
       // must not hold the object.
       expect(configs[name]).toMatchObject({ plugins: [PLUGIN_NAMESPACE] });

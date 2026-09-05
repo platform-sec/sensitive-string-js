@@ -1298,7 +1298,8 @@ rewritten.
 
 From `@platform-sec/eslint-plugin-sensitive-string`, a dev dependency. A type keeps a secret
 wrapped; it cannot stop `console.log(secret.reveal())`, because the reveal produces an ordinary
-string and logging a string is ordinary code. Five rules read the shape of the call instead.
+string and logging a string is ordinary code. Seven rules read the call instead: five from its
+shape alone, two from the types of its arguments.
 
 ```js
 // eslint.config.js
@@ -1318,6 +1319,25 @@ export default [sensitive.configs.recommended];
 The three rules that catch a value escaping are errors. The two that ask for more auditability are
 warnings, because each has a shape it provably cannot see without type information: a context
 installed in a caller, a class supplied through a spread.
+
+Two more rules answer a question no syntax answers, "does this value carry a sensitive one inside
+it", so they need a TypeScript program and live only in the `-type-checked` presets:
+
+| Rule | `recommended-type-checked` | Catches |
+|---|---|---|
+| `no-stringify-sensitive` | error | `JSON.stringify(payload)` where `payload` holds a `SensitiveString`, whose value it silently replaces with the redaction, or a `serialize()` result, which it writes in the clear |
+| `prefer-safe-log` | warn | `console.log(user)` where `user` holds one, so what is written is whichever serializer the transport reached for |
+
+```js
+export default [
+  { files: ['**/*.ts'], languageOptions: { parser: tseslint.parser, parserOptions: { projectService: true } } },
+  sensitive.configs['recommended-type-checked'],
+  { files: ['**/*.js'], ...sensitive.configs['disable-type-checked'] },
+];
+```
+
+Applied to a file with no program, both report that fact once rather than falling silent, because a
+rule that reports nothing looks exactly like a rule that found nothing.
 
 No rule is auto-fixable. `no-credential-equality` and `explicit-class` offer editor suggestions
 instead, because every rewrite they would make changes behaviour: `equals()` can throw where

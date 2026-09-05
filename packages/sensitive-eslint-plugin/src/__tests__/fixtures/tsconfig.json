@@ -1,0 +1,25 @@
+{
+  // The program the type-aware rule suites lint against.
+  //
+  // Standalone rather than extending the workspace base config: the base sets
+  // `types: ["node"]` and a NodeNext module resolution that would make this
+  // program depend on the repository's `node_modules` layout, and the only
+  // thing these suites need from a program is a type checker. Each test case
+  // declares whatever types it is about, so the program has no dependencies at
+  // all.
+  //
+  // `file.ts` is the name `RuleTester` lints under, and it has to be a member
+  // of the program: `@typescript-eslint/parser` replaces the file's contents
+  // with the test case's source and errors outright on a file the project does
+  // not include.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "types": [],
+    "noEmit": true
+  },
+  "include": ["file.ts"]
+}

@@ -125,8 +125,13 @@ This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under 
   recording server itself, because a harness that silently drops a header would make every canary
   assertion in six packages pass for the wrong reason.
 - `packages/sensitive-eslint-plugin/src/` contains the ESLint rules, their presets, and the
-  parser-agnostic AST helpers they share. It has no runtime dependencies, not even on the core
-  package: the rules read syntax, never types. Each rule's user-facing documentation is in
+  parser-agnostic AST helpers they share. It has no dependencies, not even on the core package, and
+  not on `typescript`: five rules read syntax only, and the two that need types reach the checker
+  structurally through `parserServices`, which whoever configured type-aware linting already built.
+  Those two carry `meta.docs.requiresTypeChecking`, which is what `configs.ts` splits the presets on
+  and what keeps them out of a preset that runs over plain JavaScript. Their suites lint inside
+  `src/__tests__/fixtures/`, a throwaway project whose `file.ts` exists only so the parser has a
+  program member to replace. Each rule's user-facing documentation is in
   `packages/sensitive-eslint-plugin/docs/rules/`.
 - Tests are colocated as `*.test.ts`; larger adversarial suites live in `src/__tests__/`.
 - `examples/` contains checked TypeScript usage examples. Shared compiler and test settings are in `tsconfig.base.json` and `vitest.config.ts`; CI and supply-chain automation live in `.github/`.

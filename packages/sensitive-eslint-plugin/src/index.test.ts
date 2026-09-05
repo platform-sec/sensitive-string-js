@@ -9,12 +9,17 @@
  * cannot consume. Those are the failures a consumer meets first, so they are
  * checked here by running ESLint itself, in both config formats.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import nodePath from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { Linter } from 'eslint';
 import plugin, { PLUGIN_NAMESPACE, configs, rules } from './index.js';
-import { lintFlat } from './__tests__/rule-tester.js';
+import {
+  lintFlat,
+  packageRoot,
+  typeAwareFilePath,
+  typeAwareLayer,
+} from './__tests__/rule-tester.js';
 
 const CANARY = 'LEAKED_SECRET_abc123xyz';
 
@@ -27,25 +32,8 @@ const CANARY = 'LEAKED_SECRET_abc123xyz';
  * from the repository root and from the package directory alike.
  */
 function readPluginManifest(): { readonly name: string; readonly version: string } {
-  let directory = process.cwd();
-
-  for (;;) {
-    if (existsSync(nodePath.join(directory, 'pnpm-workspace.yaml'))) {
-      const manifest = nodePath.join(
-        directory,
-        'packages',
-        'sensitive-eslint-plugin',
-        'package.json'
-      );
-      return JSON.parse(readFileSync(manifest, 'utf8')) as { name: string; version: string };
-    }
-
-    const parent = nodePath.dirname(directory);
-    if (parent === directory) {
-      throw new Error(`Could not find the workspace root above ${process.cwd()}.`);
-    }
-    directory = parent;
-  }
+  const manifest = nodePath.join(packageRoot(), 'package.json');
+  return JSON.parse(readFileSync(manifest, 'utf8')) as { name: string; version: string };
 }
 
 /** Code every preset must flag, carrying the raw value a miss would leak. */
@@ -135,6 +123,29 @@ describe('plugin', () => {
       expect(reported).toContain(`${PLUGIN_NAMESPACE}/no-log-reveal`);
       expect(reported).not.toContain('(fatal)');
     });
+
+    it.each(['legacy-recommended-type-checked', 'legacy-strict-type-checked'])(
+      '%s loads, and its type-aware rules say what they are missing',
+      (name) => {
+        // ESLint 8 does type-aware linting too, through `parserOptions.project`.
+        // This run has no program, so what it proves is that the eslintrc form
+        // of the preset loads and that both rules report the configuration
+        // rather than throwing or falling silent. `parserServices` lives on the
+        // context rather than on `SourceCode` under this linter, which is the
+        // path a flat-config run never takes.
+        const reported = lintLegacy(LEAKY_SOURCE, configs[name] as Record<string, unknown>);
+
+        expect(reported).not.toContain('(fatal)');
+        expect(reported).toContain(`${PLUGIN_NAMESPACE}/no-stringify-sensitive`);
+        expect(reported).toContain(`${PLUGIN_NAMESPACE}/prefer-safe-log`);
+      }
+    );
+
+    it.each(['legacy-disable-type-checked'])('%s sets both to off', (name) => {
+      const reported = lintLegacy(LEAKY_SOURCE, configs[name] as Record<string, unknown>);
+
+      expect(reported).toEqual([]);
+    });
   });
 
   describe('TST-ESL-INT-001 and INT-002: what each preset catches', () => {
@@ -168,6 +179,67 @@ describe('plugin', () => {
       expect((await lintFlat(send, configs['strict'])).map((message) => message.ruleId)).toContain(
         `${PLUGIN_NAMESPACE}/no-network-sensitive`
       );
+    });
+  });
+
+  describe('TST-ESL-INT-007: the type-checked presets', () => {
+    /** A payload whose type holds a wrapper, and a log line that hands it over. */
+    const TYPED_SOURCE = [
+      'declare class SensitiveString { readonly klass: string }',
+      'declare const payload: { token: SensitiveString };',
+      'console.log(payload);',
+      'JSON.stringify(payload);',
+      '',
+    ].join('\n');
+
+    async function findings(config: unknown): Promise<string[]> {
+      const messages = await lintFlat(
+        TYPED_SOURCE,
+        [typeAwareLayer(), config],
+        typeAwareFilePath()
+      );
+      return messages.map(describeFinding).sort();
+    }
+
+    it('recommended-type-checked reports both type-aware rules at their own severities', async () => {
+      expect(await findings(configs['recommended-type-checked'])).toEqual([
+        'error no-stringify-sensitive',
+        'warn prefer-safe-log',
+      ]);
+    });
+
+    it('strict-type-checked raises both to errors', async () => {
+      expect(await findings(configs['strict-type-checked'])).toEqual([
+        'error no-stringify-sensitive',
+        'error prefer-safe-log',
+      ]);
+    });
+
+    it('recommended reports neither, because neither rule is in it', async () => {
+      expect(await findings(configs['recommended'])).toEqual([]);
+    });
+
+    it('disable-type-checked silences them for a file with no program', async () => {
+      // Layered over the type-checked preset, which is how a mixed project
+      // keeps the two rules off the files a `tsconfig.json` does not cover.
+      const layered = [configs['recommended-type-checked'], configs['disable-type-checked']];
+      const messages = await lintFlat('console.log(payload);', layered, 'sample.js');
+
+      expect(messages).toEqual([]);
+    });
+
+    it('says so, rather than falling silent, when the types are missing', async () => {
+      // The failure this guards against is a clean run being read as a clean
+      // file. Applied without a program, the rules report the configuration.
+      const messages = await lintFlat('console.log(payload);', configs['recommended-type-checked']);
+
+      expect(messages.map(describeFinding).sort()).toEqual([
+        'error no-stringify-sensitive',
+        'warn prefer-safe-log',
+      ]);
+      for (const message of messages) {
+        expect(message.message).toContain('type information');
+      }
     });
   });
 
