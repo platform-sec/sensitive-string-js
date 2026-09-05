@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { compileClassification, classifyField } from './classification.js';
-import type { ClassificationSpec } from './classification.js';
+import type { ClassificationSpec, FieldClass } from './classification.js';
 
 const CANARY = 'LEAKED_SECRET_abc123xyz';
 
@@ -195,5 +195,35 @@ describe('classifyField', () => {
         'password',
       ])
     ).toBe('credential');
+  });
+});
+
+describe('compiled form reuse', () => {
+  it('hands back the same compiled form for the same spec object', () => {
+    const spec: ClassificationSpec = { fields: { token: 'credential' }, fallback: 'plain' };
+
+    expect(compileClassification(spec)).toBe(compileClassification(spec));
+  });
+
+  it('compiles equal specs separately, since the reuse goes by identity', () => {
+    const a: ClassificationSpec = { fields: { token: 'credential' }, fallback: 'plain' };
+    const b: ClassificationSpec = { fields: { token: 'sensitive' }, fallback: 'plain' };
+
+    expect(compileClassification(a)).not.toBe(compileClassification(b));
+    expect(compileClassification(a).classify('token')).toBe('credential');
+    expect(compileClassification(b).classify('token')).toBe('sensitive');
+  });
+
+  it('keeps the form a spec compiled to when it was first seen', () => {
+    // Reuse is what makes `classifyField` affordable over a payload of keys. A
+    // spec is readonly in its type, so this records the cost of mutating one
+    // anyway rather than a behaviour to depend on.
+    const spec: { fields: Record<string, FieldClass> } = { fields: { token: 'credential' } };
+
+    expect(classifyField('token', spec)).toBe('credential');
+
+    spec.fields['token'] = 'sensitive';
+
+    expect(classifyField('token', spec)).toBe('credential');
   });
 });

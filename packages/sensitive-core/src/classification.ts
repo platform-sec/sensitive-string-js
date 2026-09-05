@@ -95,7 +95,30 @@ function stateless(pattern: RegExp): RegExp {
  *
  * @throws Error if a class is not a `FieldClass`, or a rule has no `RegExp`.
  */
+/**
+ * Compiled forms, memoized per spec object.
+ *
+ * `classifyField` compiles the spec it is handed on every call, which made it
+ * an order of magnitude slower than a hoisted compiled classification over a
+ * payload of keys. A spec is `readonly` throughout its type, so reusing the
+ * compiled form for the same object is sound; a caller that mutates one after
+ * classifying with it gets the earlier compile.
+ */
+const compiledSpecs = new WeakMap<ClassificationSpec, CompiledClassification>();
+
 export function compileClassification(spec: ClassificationSpec): CompiledClassification {
+  const memoized = compiledSpecs.get(spec);
+
+  if (memoized !== undefined) {
+    return memoized;
+  }
+
+  const compiled = compileSpec(spec);
+  compiledSpecs.set(spec, compiled);
+  return compiled;
+}
+
+function compileSpec(spec: ClassificationSpec): CompiledClassification {
   const fields = new Map<string, FieldClass>();
 
   for (const [key, klass] of Object.entries(spec.fields ?? {})) {
