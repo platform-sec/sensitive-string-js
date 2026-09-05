@@ -1558,19 +1558,38 @@ For high-throughput scenarios, this overhead may matter.
 
 ---
 
+## Versioning and Releases
+
+The workspace packages version independently. A provider- or framework-specific change therefore
+does not force unrelated packages to release, while internal dependents are bumped when a changed
+range requires it. User-visible pull requests record their intended package and SemVer impact with:
+
+```bash
+pnpm changeset
+```
+
+The Version Packages pull request commits package manifests, package changelogs, internal ranges,
+and the lockfile together. Publishing consumes only those committed versions and publishes the same
+tarballs that the release workflow checked and signed. Contributors and maintainers should follow
+the complete procedure in [RELEASING.md](RELEASING.md).
+
+---
+
 ## Security
 
 ### Supply Chain Protection
 
 This project implements comprehensive supply chain security measures:
 
-- **Protected Branches**: Main branch requires signed commits, PR reviews, and status checks
+- **Release Controls**: Publication is restricted to `main` and scoped to the `npm-publish`
+  environment, which should require maintainer approval
 - **Hardened Runners**: GitHub Actions run on hardened, ephemeral environments
 - **Dependency Review**: Automated scanning for vulnerable and malicious dependencies
 - **CodeQL Analysis**: Automated scanning for code vulnerabilities
 - **SBOM Generation**: Software Bill of Materials for transparency
 - **SLSA Provenance**: Build attestations at SLSA Level 3
-- **Cosign Signatures**: All release artifacts signed and verifiable via Sigstore
+- **Cosign Signatures**: Exact package tarballs selected for publication are signed and verifiable
+  via Sigstore
 - **License Compliance**: Enforced permissive licensing (MIT, Apache-2.0, BSD, ISC)
 
 See [Supply Chain Security Documentation](.github/SUPPLY_CHAIN_SECURITY.md) for details.

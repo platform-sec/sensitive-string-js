@@ -843,7 +843,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   core wire format does. It previously rebuilt the value and would have dropped the deadline,
   turning an expiring token into one that never expires.
 
-## [0.1.0] - 2024-XX-XX
+## [0.1.0] - Initial development baseline (not published)
 
 ### Added
 

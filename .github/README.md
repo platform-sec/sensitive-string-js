@@ -99,6 +99,23 @@ act -j test --matrix node-version:22
 
 ### For Maintainers
 
+**Preparing and checking a release:**
+
+```bash
+# Inspect pending release intent
+pnpm release:status
+
+# Reproduce the Version Packages update on a clean branch (writes release files)
+pnpm release:version
+
+# Validate committed manifests, ranges, changelogs, and lockfile
+pnpm release:check
+```
+
+Merge the Version Packages pull request, then dispatch `release.yml` with `dry_run` enabled before a
+real publication. The `npm-publish` environment should require maintainer approval and expose the
+`NPM_TOKEN` secret only to the publish job. See [RELEASING.md](../RELEASING.md).
+
 **Responding to security alerts:**
 
 ```bash

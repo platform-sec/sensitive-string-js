@@ -102,13 +102,19 @@ describe('Feature', () => {
    - Include adversarial tests for security features
 
 4. **Documentation**
-   - Update README if adding new APIs
+   - Update the relevant package README when adding or changing an API
    - Add JSDoc comments for public APIs
-   - Update CHANGELOG.md
+   - Run `pnpm changeset` for every user-visible package change and commit the generated file
+   - Do not manually edit generated package changelogs during normal release preparation
 
 5. **Review**
    - Security-impacting changes require review from a maintainer
    - Address all review comments before merge
+
+Packages version independently. In the Changesets prompt, select the packages whose own public
+behavior changed; dependency-range propagation is handled during versioning. Documentation-only,
+test-only, and CI-only changes do not need a changeset. See [RELEASING.md](RELEASING.md) for the
+complete versioning and publication process.
 
 ## Security Considerations
 

@@ -79,6 +79,10 @@ Every package has a committed `0.1.0` bootstrap entry because none has been publ
 release plan therefore contains all 28 packages at that baseline. That one-time common starting
 point does not put later releases into lockstep.
 
+If the first public versions should be higher than `0.1.0`, add and merge the changesets that express
+those bumps before dispatching a non-dry release. The publishing workflow deliberately does not
+infer release maturity or choose a version on the maintainer's behalf.
+
 ## Publishing
 
 Merge the Version Packages pull request, then manually dispatch the Release workflow. Start with

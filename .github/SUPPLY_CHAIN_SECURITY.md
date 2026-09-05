@@ -6,20 +6,20 @@ This document describes the supply chain security measures implemented in this p
 
 As a security-critical library handling sensitive data, this project implements defense-in-depth supply chain security:
 
-1. **Dependency Review** - Automated scanning of new dependencies in pull requests
+1. **Dependency and License Review** - Automated review of pull-request dependency changes
 2. **Vulnerability Scanning** - Continuous monitoring for known CVEs
 3. **Static Analysis** - CodeQL security scanning for code vulnerabilities
-4. **SBOM Generation** - Software Bill of Materials for transparency
-5. **Lockfile Enforcement** - Reproducible builds with frozen dependencies
-6. **License Compliance** - Automated checking of dependency licenses
-7. **Cosign Signing** - Cryptographic artifact signing via Sigstore keyless signing
-8. **SLSA Provenance** - SLSA Level 3 build provenance attestations
+4. **Cosign Signing** - Keyless signatures over exact publication tarballs
+5. **SLSA Provenance** - SLSA Level 3 provenance for independently rebuilt artifacts
+6. **Release Integrity** - Committed versions, validated ranges, and byte-preserving publication
+7. **SBOM Generation** - Software Bills of Materials for transparency
+8. **Lockfile Enforcement** - Reproducible installs with frozen dependencies
 
 ## Security Workflows
 
 ### 1. Dependency Review (Pull Requests)
 
-**Workflow**: [`.github/workflows/dependency-review.yml`](.github/workflows/dependency-review.yml)
+**Workflow**: [`workflows/dependency-review.yml`](workflows/dependency-review.yml)
 **Trigger**: Every pull request to `main`
 **Purpose**: Block malicious or vulnerable dependencies before they enter the codebase
 
@@ -46,7 +46,7 @@ pnpm remove <package-name>
 
 ### 2. Security Audit (CI Pipeline)
 
-**Workflow**: [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (security-audit job)
+**Workflow**: [`workflows/ci.yml`](workflows/ci.yml) (security-audit job)
 **Trigger**: Every push and pull request
 **Purpose**: Detect vulnerabilities in existing dependencies
 
@@ -79,7 +79,7 @@ pnpm audit --fix
 
 ### 3. CodeQL Security Scanning
 
-**Workflow**: [`.github/workflows/codeql.yml`](.github/workflows/codeql.yml)
+**Workflow**: [`workflows/codeql.yml`](workflows/codeql.yml)
 **Trigger**: Push to main, pull requests, weekly schedule (Mondays 00:00 UTC)
 **Purpose**: Static analysis to detect security vulnerabilities in source code
 
@@ -105,8 +105,9 @@ pnpm audit --fix
 
 ### 4. Cosign Artifact Signing
 
-**Workflow**: [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (sign job)
-**Trigger**: Push to `main` branch (after build/test/lint pass)
+**Workflows**: [`workflows/release.yml`](workflows/release.yml) (release artifacts) and
+[`workflows/ci.yml`](workflows/ci.yml) (main-branch snapshots)
+**Trigger**: Manual release dispatch, or a push to `main` for the CI snapshot
 **Purpose**: Cryptographically sign npm package tarballs using Sigstore keyless signing
 
 **What it does**:
@@ -120,20 +121,26 @@ pnpm audit --fix
 - `*.sig` - Detached cosign signatures
 - `*.pem` - Signing certificates
 
+The release workflow signs the tarballs produced from its validated publish plan, downloads that
+same signed bundle in the publish job, verifies it again, and passes those tarball paths directly to
+npm. The CI sign job is an additional snapshot of all packages; it is not a release source of truth.
+
 **Verifying signatures locally**:
 ```bash
 # Install cosign
 brew install cosign  # macOS
 # or: go install github.com/sigstore/cosign/v2/cmd/cosign@latest
 
-# Download package and signature
-gh run download --name npm-packages-signed-<sha>
+# Download an exact release bundle from a dry or real release run
+gh run download <run-id> --name signed-release-bundle-<commit-sha>
+cd signed-release-bundle/packages
 
 # Verify signature
 cosign verify-blob \
   --signature package.tgz.sig \
   --certificate package.tgz.pem \
-  --certificate-identity-regexp "https://github.com/OWNER/REPO/*" \
+  --certificate-identity-regexp \
+    '^https://github\.com/OWNER/REPO/\.github/workflows/release\.yml@refs/(heads|tags)/.+$' \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   package.tgz
 ```
@@ -146,9 +153,9 @@ cosign verify-blob \
 
 ### 5. SLSA Provenance (Level 3)
 
-**Workflow**: [`.github/workflows/slsa-provenance.yml`](.github/workflows/slsa-provenance.yml)
-**Trigger**: Push to `main`, tags, releases
-**Purpose**: Generate SLSA Level 3 provenance attestations for build artifacts
+**Workflow**: [`workflows/slsa-provenance.yml`](workflows/slsa-provenance.yml)
+**Trigger**: Push to `main`, legacy `v*` tags, releases, or manual dispatch
+**Purpose**: Generate SLSA Level 3 provenance attestations for independently rebuilt artifacts
 
 **SLSA Level 3 guarantees**:
 - ✅ **Source integrity**: Build triggered from verified source
@@ -159,6 +166,10 @@ cosign verify-blob \
 **What it generates**:
 - `multiple.intoto.jsonl` - SLSA provenance in in-toto format
 - Contains: builder identity, source commit, build parameters, artifact hashes
+
+This workflow rebuilds packages from the same source ref. Its provenance covers that rebuild, not
+the byte-for-byte tarballs selected and published by `release.yml`; Cosign signatures and
+`SHA256SUMS` are the authority for those exact release bytes.
 
 **Verifying provenance locally**:
 ```bash
@@ -201,9 +212,27 @@ slsa-verifier verify-artifact \
 - Users cannot modify the build or provenance after initiation
 - Provides highest assurance for GitHub Actions-based builds
 
+### 6. Release Integrity and Independent Versioning
+
+**Workflows**: [`workflows/version-packages.yml`](workflows/version-packages.yml) and
+[`workflows/release.yml`](workflows/release.yml)
+
+Release intent is committed as Changesets. The Version Packages pull request consumes those files
+and commits package manifests, package changelogs, internal dependency and peer ranges, and the
+lockfile together. Packages version independently; a dependent receives a release only when its
+declared range must change.
+
+The release workflow does not calculate versions. It checks npm for committed versions that have not
+been published, validates their manifests and changelogs, packs them in dependency order, and
+publishes the exact signed tarballs. Each package gets a standard `name@version` git tag. One batch
+GitHub release named `release-<run-id>` carries the tarballs, signatures, certificates, and checksum
+file and triggers the release-level SBOM and SLSA workflows once.
+
+See [`../RELEASING.md`](../RELEASING.md) for contributor, review, dry-run, and publication steps.
+
 ### 7. SBOM Generation
 
-**Workflow**: [`.github/workflows/sbom.yml`](.github/workflows/sbom.yml)
+**Workflow**: [`workflows/sbom.yml`](workflows/sbom.yml)
 **Trigger**: Push to main, releases, manual dispatch
 **Purpose**: Generate Software Bill of Materials for transparency and compliance
 
@@ -229,8 +258,8 @@ slsa-verifier verify-artifact \
 # Download from latest workflow run
 gh run download --name sbom-<commit-sha>
 
-# SBOMs are also attached to releases
-gh release download v1.0.0 --pattern 'sbom-*'
+# SBOMs are also attached to the publication batch release
+gh release download release-<run-id> --pattern 'sbom-*'
 ```
 
 **Using SBOMs**:
@@ -397,15 +426,24 @@ gh api /repos/:owner/:repo/dependabot/alerts
 ### Required Secrets
 
 - `CODECOV_TOKEN` - For coverage reporting (optional)
-- No other secrets required for security workflows
+- `NPM_TOKEN` - For the publish job in `release.yml`; store it in the protected `npm-publish`
+  environment
+
+Cosign, SLSA, and GitHub attestations use short-lived GitHub OIDC identities rather than committed
+signing keys.
 
 ### Required Permissions
 
 Workflows use least-privilege permissions:
 - `contents: read` - Clone repository
 - `security-events: write` - Upload CodeQL results
-- `pull-requests: write` - Comment on PRs
-- `id-token: write` - SBOM attestation
+- `pull-requests: write` - Maintain the Version Packages pull request
+- `contents: write` - Update that pull-request branch, push package tags, and create releases
+- `id-token: write` - Sign artifacts, create npm provenance, and produce attestations
+- `attestations: write` - Publish GitHub-native build and SBOM attestations
+
+Write permissions are scoped to the jobs that need them. Repository settings must also allow GitHub
+Actions to create pull requests for the Version Packages workflow.
 
 ### Act (Local CI Testing)
 
@@ -417,8 +455,16 @@ act pull_request -j dependency-review
 # Test security audit
 act push -j security-audit
 
-# Note: CodeQL and SBOM workflows require GitHub infrastructure
+# Validate the local parts of versioning and release automation
+pnpm release:check
+actionlint .github/workflows/version-packages.yml .github/workflows/release.yml
+zizmor .github/workflows/version-packages.yml .github/workflows/release.yml
 ```
+
+Artifact transfer, GitHub API writes, OIDC signing and attestations, npm registry publication, and
+the Version Packages pull request require hosted services that `act` does not reproduce. Treat those
+steps as locally untestable, not as package failures. Use a GitHub release dry run for the complete
+pre-publication path. See [TESTING_CI.md](TESTING_CI.md) for the exact local boundaries.
 
 ## Incident Response
 
@@ -441,42 +487,55 @@ If a supply chain attack is detected:
 
 ## Verifying Releases
 
-When downloading releases, you can verify their authenticity using the attached signatures and provenance.
+Each publication batch has a synthetic `release-<run-id>` GitHub release. The independently
+versioned package tags are `@platform-sec/<package>@<version>`; use the batch tag when downloading
+assets.
 
 ### Verify with Cosign
 
 ```bash
-# Download release assets
-gh release download v1.0.0 --pattern '*.tgz' --pattern '*.sig' --pattern '*.pem'
+# Download the exact signed publication artifacts
+gh release download release-<run-id> \
+  --pattern '*.tgz' \
+  --pattern '*.sig' \
+  --pattern '*.pem'
 
 # Verify each package
 for pkg in *.tgz; do
   cosign verify-blob \
     --signature "${pkg}.sig" \
     --certificate "${pkg}.pem" \
-    --certificate-identity-regexp "https://github.com/OWNER/REPO/*" \
+    --certificate-identity-regexp \
+      '^https://github\.com/OWNER/REPO/\.github/workflows/release\.yml@refs/(heads|tags)/.+$' \
     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
     "$pkg"
 done
 ```
 
-### Verify SLSA Provenance
+### Verify SLSA Provenance for the Rebuild
+
+The SLSA workflow produces and verifies its own rebuild from the batch release's source ref. Download
+both artifacts from that workflow run so the provenance subjects and tarballs are from the same
+build. This complements, but does not replace, Cosign verification of the published bytes.
 
 ```bash
-# Download release assets including provenance
-gh release download v1.0.0 --pattern '*.tgz' --pattern '*.intoto.jsonl'
+# Download matching artifacts from the SLSA workflow run
+gh run download <slsa-run-id> --name npm-packages-slsa --dir slsa-packages
+gh run download <slsa-run-id> --name multiple.intoto.jsonl --dir slsa-provenance
 
-# Verify each package against provenance
-for pkg in *.tgz; do
+# Verify each rebuilt package against provenance
+for pkg in slsa-packages/*.tgz; do
   slsa-verifier verify-artifact \
-    --provenance-path multiple.intoto.jsonl \
+    --provenance-path slsa-provenance/multiple.intoto.jsonl \
     --source-uri github.com/OWNER/REPO \
-    --source-tag v1.0.0 \
+    --source-tag release-<run-id> \
     "$pkg"
 done
 ```
 
 ### Verify GitHub Attestations
+
+GitHub-native attestations are generated for the SLSA workflow's release-event rebuild.
 
 ```bash
 # Verify using GitHub's attestation verification
@@ -486,11 +545,11 @@ gh attestation verify package.tgz --repo OWNER/REPO
 ### Verify Checksums
 
 ```bash
-# Download checksums
-gh release download v1.0.0 --pattern 'SHA256SUMS.txt'
+# Download exact release tarballs and their checksum manifest
+gh release download release-<run-id> --pattern '*.tgz' --pattern 'SHA256SUMS'
 
 # Verify
-sha256sum -c SHA256SUMS.txt
+sha256sum -c SHA256SUMS
 ```
 
 ## Questions?
