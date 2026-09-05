@@ -3,55 +3,22 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      packages:
-        description: 'Packages to release'
-        required: true
-        type: choice
-        options:
-          - 'all'
-          - 'sensitive-aws-secrets'
-          - 'sensitive-azure-keyvault'
-          - 'sensitive-core'
-          - 'sensitive-decorators'
-          - 'sensitive-doppler'
-          - 'sensitive-env'
-          - 'sensitive-envalid'
-          - 'sensitive-eslint-plugin'
-          - 'sensitive-express'
-          - 'sensitive-fastify'
-          - 'sensitive-gcp-secrets'
-          - 'sensitive-infisical'
-          - 'sensitive-k8s'
-          - 'sensitive-nestjs'
-          - 'sensitive-oci-vault'
-          - 'sensitive-scrub'
-          - 'sensitive-secrets'
-          - 'sensitive-sentry'
-          - 'sensitive-sops'
-          - 'sensitive-testing'
-          - 'sensitive-vault'
-          - 'sensitive-zod'
-      version_bump:
-        description: 'Version bump type'
-        required: true
-        type: choice
-        options:
-          - 'patch'
-          - 'minor'
-          - 'major'
       dry_run:
-        description: 'Dry run (skip actual publish)'
-        required: false
+        description: 'Build, sign, and verify without publishing'
+        required: true
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  # Verify: lint and test before release
   verify:
-    name: Verify
+    name: Verify source
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -76,10 +43,19 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'pnpm'
+          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Check release consistency
+        run: pnpm release:check -- --require-no-changesets
+
+      - name: Require main for publication
+        if: ${{ inputs.dry_run == false && github.ref != 'refs/heads/main' }}
+        run: |
+          echo 'A real release must be dispatched from main.' >&2
+          exit 1
 
       - name: Build packages
         run: pnpm build
@@ -90,315 +66,27 @@ jobs:
       - name: Check formatting
         run: pnpm format:check
 
+      - name: Type-check packages and examples
+        run: pnpm typecheck
+
+      - name: Type-check NestJS package
+        run: pnpm --filter @platform-sec/sensitive-string-nestjs exec tsc --noEmit
+
       - name: Run tests
         run: pnpm test
 
-      - name: Run security audit
-        run: pnpm audit --audit-level=high || echo "Audit warnings found"
+      - name: Check packed entry points
+        run: pnpm check:packaging
 
-  # Prepare release: bump versions and create tarballs
+      - name: Run security audit
+        run: pnpm audit --audit-level=high
+
   prepare:
-    name: Prepare Release
+    name: Plan and pack committed versions
     runs-on: ubuntu-latest
     needs: verify
     permissions:
       contents: read
-    outputs:
-      # One JSON array of {dir, name, version} rather than an output per
-      # package, because every consumer below loops over it. Adding a package
-      # is then a directory under `packages/` and a line in the choice list
-      # above, rather than an edit in eight places. Those eight places are why
-      # `decorators`, `eslint-plugin`, `nestjs`, and `testing` were
-      # unreleasable for as long as they were.
-      released: ${{ steps.versions.outputs.released }}
-      release_tag: ${{ steps.versions.outputs.release_tag }}
-      hashes: ${{ steps.hash.outputs.hashes }}
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
-        with:
-          disable-sudo: true
-          egress-policy: audit
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
-        with:
-          version: 9.0.0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'pnpm'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Bump versions
-        id: versions
-        env:
-          # Through the environment rather than interpolated into the script.
-          # Both are `choice` inputs today, so neither can carry a shell
-          # metacharacter, but a run block that expands `${{ }}` is the shape
-          # that stops being safe the moment an input becomes free text.
-          BUMP_TYPE: ${{ inputs.version_bump }}
-          SELECTED: ${{ inputs.packages }}
-        run: |
-          set -euo pipefail
-
-          bump_version() {
-            local current=$1
-            local IFS='.'
-            read -ra parts <<< "$current"
-            local major=${parts[0]}
-            local minor=${parts[1]}
-            local patch=${parts[2]}
-
-            case "$BUMP_TYPE" in
-              major) major=$((major + 1)); minor=0; patch=0 ;;
-              minor) minor=$((minor + 1)); patch=0 ;;
-              patch) patch=$((patch + 1)) ;;
-            esac
-
-            echo "${major}.${minor}.${patch}"
-          }
-
-          RELEASED='[]'
-
-          # Sorted, so the release tag and every summary below are
-          # deterministic rather than dependent on directory order.
-          for dir in $(find packages -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort); do
-            if [[ "$SELECTED" != "all" && "$SELECTED" != "$dir" ]]; then
-              continue
-            fi
-
-            manifest="packages/$dir/package.json"
-
-            # `all` must not try to publish a package that opted out.
-            if [[ "$(jq -r '.private // false' "$manifest")" == "true" ]]; then
-              echo "Skipping $dir, which is marked private"
-              continue
-            fi
-
-            name=$(jq -r '.name' "$manifest")
-            version=$(bump_version "$(jq -r '.version' "$manifest")")
-
-            jq --arg v "$version" '.version = $v' "$manifest" > tmp.json
-            mv tmp.json "$manifest"
-
-            RELEASED=$(jq -c \
-              --arg dir "$dir" --arg name "$name" --arg version "$version" \
-              '. + [{dir: $dir, name: $name, version: $version}]' <<< "$RELEASED")
-
-            echo "Updated $name to $version"
-          done
-
-          if [[ "$(jq -r 'length' <<< "$RELEASED")" == "0" ]]; then
-            echo "No publishable package matched '$SELECTED'" >&2
-            exit 1
-          fi
-
-          echo "released=$RELEASED" >> "$GITHUB_OUTPUT"
-          echo "release_tag=v$(jq -r '.[0].version' <<< "$RELEASED")" >> "$GITHUB_OUTPUT"
-
-      - name: Build packages
-        run: pnpm build
-
-      - name: Run tests
-        run: pnpm test
-
-      - name: Pack npm tarballs
-        env:
-          RELEASED: ${{ steps.versions.outputs.released }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist-tarballs
-
-          for dir in $(jq -r '.[].dir' <<< "$RELEASED"); do
-            (cd "packages/$dir" && pnpm pack --pack-destination ../../dist-tarballs)
-          done
-
-          ls -la dist-tarballs/
-
-      - name: Generate hashes for SLSA
-        id: hash
-        run: |
-          cd dist-tarballs
-          # `--` so a tarball whose name began with a dash could not be read
-          # as an option. The SLSA subject names stay exactly as they are,
-          # which `./*.tgz` would have changed.
-          echo "hashes=$(sha256sum -- *.tgz | base64 -w0)" >> "$GITHUB_OUTPUT"
-
-      - name: Upload release artifacts
-        uses: actions/upload-artifact@v4
-        # Skip in act (local runner) - artifact upload requires GitHub infrastructure
-        if: ${{ !env.ACT }}
-        with:
-          name: release-packages-${{ github.sha }}
-          path: |
-            dist-tarballs/*.tgz
-            packages/*/package.json
-          retention-days: 7
-          if-no-files-found: error
-
-  # Sign packages with cosign
-  sign:
-    name: Sign Packages
-    runs-on: ubuntu-latest
-    needs: prepare
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
-        with:
-          disable-sudo: true
-          egress-policy: audit
-
-      - name: Download release artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: release-packages-${{ github.sha }}
-          path: artifacts
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
-
-      - name: Sign packages with cosign (keyless)
-        run: |
-          cd artifacts/dist-tarballs
-          for tarball in *.tgz; do
-            echo "Signing $tarball..."
-            cosign sign-blob \
-              --yes \
-              --output-signature "${tarball}.sig" \
-              --output-certificate "${tarball}.pem" \
-              "$tarball"
-          done
-          ls -la
-
-      - name: Verify signatures
-        run: |
-          cd artifacts/dist-tarballs
-          for tarball in *.tgz; do
-            echo "Verifying $tarball..."
-            cosign verify-blob \
-              --signature "${tarball}.sig" \
-              --certificate "${tarball}.pem" \
-              --certificate-identity-regexp "https://github.com/${{ github.repository }}/*" \
-              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-              "$tarball"
-            echo "✓ $tarball signature verified"
-          done
-
-      - name: Upload signed artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: signed-packages-${{ github.sha }}
-          path: |
-            artifacts/dist-tarballs/*.tgz
-            artifacts/dist-tarballs/*.sig
-            artifacts/dist-tarballs/*.pem
-          retention-days: 90
-          if-no-files-found: error
-
-  # Publish to npm
-  publish:
-    name: Publish to npm
-    runs-on: ubuntu-latest
-    needs: [prepare, sign]
-    if: ${{ inputs.dry_run == false }}
-    permissions:
-      contents: read
-      id-token: write
-    environment: npm-publish
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
-        with:
-          disable-sudo: true
-          egress-policy: audit
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
-        with:
-          version: 9.0.0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'pnpm'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Download release artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: release-packages-${{ github.sha }}
-          path: artifacts
-
-      - name: Restore package.json versions
-        env:
-          RELEASED: ${{ needs.prepare.outputs.released }}
-        run: |
-          set -euo pipefail
-
-          for dir in $(jq -r '.[].dir' <<< "$RELEASED"); do
-            cp "artifacts/packages/$dir/package.json" "packages/$dir/package.json"
-          done
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build packages
-        run: pnpm build
-
-      - name: Publish packages
-        env:
-          RELEASED: ${{ needs.prepare.outputs.released }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          for dir in $(jq -r '.[].dir' <<< "$RELEASED"); do
-            (cd "packages/$dir" && pnpm publish --access public --no-git-checks --provenance)
-          done
-
-      - name: Generate publish summary
-        env:
-          RELEASED: ${{ needs.prepare.outputs.released }}
-        run: |
-          set -euo pipefail
-
-          {
-            echo "## 📦 Published Packages"
-            echo ""
-            jq -r '.[] | "- **\(.name)** v\(.version)"' <<< "$RELEASED"
-            echo ""
-            echo "**npm provenance:** Enabled"
-            echo "**Sigstore signing:** Verified"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  # Create GitHub release with tags
-  create-release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
-    needs: [prepare, sign, publish]
-    if: ${{ inputs.dry_run == false }}
-    permissions:
-      contents: write
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -412,87 +100,353 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Download signed artifacts
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Create publish plan
+        run: |
+          pnpm changeset publish-plan --output publish-plan.json
+          pnpm release:check -- \
+            --plan publish-plan.json \
+            --require-releases \
+            --require-no-changesets
+
+      - name: Pack exact release artifacts
+        run: |
+          pnpm release:pack -- \
+            --plan publish-plan.json \
+            --out-dir release-bundle
+          pnpm release:check -- \
+            --plan release-bundle/publish-plan.json \
+            --require-releases \
+            --require-tarballs
+
+      - name: Record artifact checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-bundle/packages
+          shopt -s nullglob
+          tarballs=(*.tgz)
+          if (( ${#tarballs[@]} > 0 )); then
+            sha256sum -- "${tarballs[@]}" > SHA256SUMS
+          else
+            : > SHA256SUMS
+          fi
+
+      - name: Summarize plan
+        run: |
+          {
+            echo '## Release plan'
+            echo
+            jq -r \
+              '.plan | flatten | .[] | "- **\(.name)** \(.version) (kind \(.kind), tag \(.tag))"' \
+              release-bundle/publish-plan.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle-${{ github.sha }}
+          path: release-bundle
+          retention-days: 7
+          if-no-files-found: error
+
+  sign:
+    name: Sign exact tarballs
+    runs-on: ubuntu-latest
+    needs: prepare
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
+      - name: Download release bundle
         uses: actions/download-artifact@v4
         with:
-          name: signed-packages-${{ github.sha }}
-          path: signed-packages
+          name: release-bundle-${{ github.sha }}
+          path: release-bundle
 
-      - name: Create tags and release
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+
+      - name: Sign packages with keyless Cosign
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tarballs=(release-bundle/packages/*.tgz)
+          for tarball in "${tarballs[@]}"; do
+            cosign sign-blob \
+              --yes \
+              --output-signature "${tarball}.sig" \
+              --output-certificate "${tarball}.pem" \
+              "$tarball"
+          done
+
+      - name: Verify signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tarballs=(release-bundle/packages/*.tgz)
+          for tarball in "${tarballs[@]}"; do
+            cosign verify-blob \
+              --signature "${tarball}.sig" \
+              --certificate "${tarball}.pem" \
+              --certificate-identity-regexp \
+                '^https://github\.com/${{ github.repository }}/\.github/workflows/release\.yml@refs/(heads|tags)/.+$' \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "$tarball"
+          done
+
+      - name: Upload signed release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-release-bundle-${{ github.sha }}
+          path: release-bundle
+          retention-days: 90
+          if-no-files-found: error
+
+  publish:
+    name: Publish signed tarballs
+    runs-on: ubuntu-latest
+    needs: [prepare, sign]
+    if: ${{ github.ref == 'refs/heads/main' && inputs.dry_run == false }}
+    environment: npm-publish
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download signed release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: signed-release-bundle-${{ github.sha }}
+          path: signed-release-bundle
+
+      - name: Check signed bundle
+        run: |
+          pnpm release:check -- \
+            --plan signed-release-bundle/publish-plan.json \
+            --require-releases \
+            --require-tarballs
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+
+      - name: Verify downloaded signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tarballs=(signed-release-bundle/packages/*.tgz)
+          for tarball in "${tarballs[@]}"; do
+            cosign verify-blob \
+              --signature "${tarball}.sig" \
+              --certificate "${tarball}.pem" \
+              --certificate-identity-regexp \
+                '^https://github\.com/${{ github.repository }}/\.github/workflows/release\.yml@refs/(heads|tags)/.+$' \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "$tarball"
+          done
+
+      - name: Publish and push package tags
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASED: ${{ needs.prepare.outputs.released }}
-          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local credential.https://github.com.helper \
+            '!gh auth git-credential'
+          trap 'git config --local --unset-all credential.https://github.com.helper || true' EXIT
+
+          pnpm changeset publish --from-pack-dir signed-release-bundle
+
+          while IFS= read -r tag; do
+            git rev-parse --verify "refs/tags/$tag" >/dev/null
+            git push origin "refs/tags/$tag"
+          done < <(
+            jq -r '.plan | flatten | .[] | "\(.name)@\(.version)"' \
+              signed-release-bundle/publish-plan.json
+          )
+
+      - name: Summarize publication
+        run: |
+          {
+            echo '## Published packages'
+            echo
+            jq -r \
+              '.plan | flatten | .[] | "- **\(.name)** \(.version)"' \
+              signed-release-bundle/publish-plan.json
+            echo
+            echo '- npm provenance: enabled'
+            echo '- Cosign signatures: verified before publication'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  create-release:
+    name: Create batch release
+    runs-on: ubuntu-latest
+    needs: publish
+    permissions:
+      contents: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download signed release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: signed-release-bundle-${{ github.sha }}
+          path: signed-release-bundle
+
+      - name: Create or repair GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Checkout credentials are deliberately not persisted. Git delegates
-          # authentication to gh, which reads GH_TOKEN from this step's environment.
-          git config --local credential.https://github.com.helper '!gh auth git-credential'
-          trap 'git config --local --unset-all credential.https://github.com.helper || true' EXIT
-
-          # One tag per released package, named for the package rather than
-          # the directory: `eslint-plugin-sensitive-string` does not follow
-          # from `sensitive-eslint-plugin`, so the name travels in the output.
-          while IFS= read -r tag; do
-            git tag -a "$tag" -m "Release $tag"
-            git push origin "$tag"
-          done < <(jq -r '.[] | "\(.name)@\(.version)"' <<< "$RELEASED")
-
+          release_tag="release-${GITHUB_RUN_ID}"
           {
-            echo "## Release Notes"
-            echo ""
-            echo "### Packages Released"
-            echo ""
-            jq -r '.[] | "- **\(.name)** v\(.version)"' <<< "$RELEASED"
-            echo ""
-            echo "### Security"
-            echo ""
-            echo "- Packages signed with Sigstore cosign (keyless)"
-            echo "- npm provenance enabled"
-            echo ""
-            echo "### Verification"
-            echo ""
-            echo '```bash'
-            echo "# Verify signature with cosign"
-            echo "cosign verify-blob --signature <package>.sig --certificate <package>.pem <package>.tgz"
-            echo '```'
-          } > release_notes.md
+            echo '# Package releases'
+            echo
+            echo "This batch publishes independently versioned packages from commit $GITHUB_SHA."
+          } > release-notes.md
 
-          gh release create "$RELEASE_TAG" \
-            --title "Release $RELEASE_TAG" \
-            --notes-file release_notes.md \
-            signed-packages/*.tgz \
-            signed-packages/*.sig \
-            signed-packages/*.pem
+          # jq and awk use their own $name and $0 variables in literal programs.
+          # shellcheck disable=SC2016
+          while IFS=$'\t' read -r name version; do
+            manifest=$(
+              find packages -mindepth 2 -maxdepth 2 -name package.json -print0 |
+                xargs -0 jq -r --arg name "$name" \
+                  'select(.name == $name) | input_filename'
+            )
+            changelog="${manifest%/package.json}/CHANGELOG.md"
 
-  # Dry run summary
+            {
+              echo
+              echo "## $name@$version"
+              echo
+            } >> release-notes.md
+            awk -v heading="## $version" '
+              $0 == heading { printing = 1; next }
+              printing && /^## / && $0 != heading { exit }
+              printing { print }
+            ' "$changelog" >> release-notes.md
+          done < <(
+            jq -r '
+              .plan
+              | flatten
+              | .[]
+              | [.name, .version]
+              | @tsv
+            ' signed-release-bundle/publish-plan.json
+          )
+
+          shopt -s nullglob
+          assets=(
+            signed-release-bundle/packages/*.tgz
+            signed-release-bundle/packages/*.tgz.sig
+            signed-release-bundle/packages/*.tgz.pem
+            signed-release-bundle/packages/SHA256SUMS
+          )
+
+          if gh release view "$release_tag" >/dev/null 2>&1; then
+            gh release edit "$release_tag" \
+              --title "$release_tag" \
+              --notes-file release-notes.md
+            gh release upload "$release_tag" "${assets[@]}" --clobber
+          else
+            gh release create "$release_tag" \
+              --target "$GITHUB_SHA" \
+              --title "$release_tag" \
+              --notes-file release-notes.md \
+              "${assets[@]}"
+          fi
+
   dry-run-summary:
-    name: Dry Run Summary
+    name: Dry-run summary
     runs-on: ubuntu-latest
     needs: [prepare, sign]
     if: ${{ inputs.dry_run == true }}
+    permissions:
+      contents: read
     steps:
-      - name: Generate dry run summary
-        env:
-          RELEASED: ${{ needs.prepare.outputs.released }}
-        run: |
-          set -euo pipefail
+      - name: Download signed release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: signed-release-bundle-${{ github.sha }}
+          path: signed-release-bundle
 
+      - name: Summarize dry run
+        run: |
           {
-            echo "## 🧪 Dry Run Summary"
-            echo ""
-            echo "This was a dry run. No packages were published."
-            echo ""
-            echo "### Packages that would be released:"
-            echo ""
-            jq -r '.[] | "- **\(.name)** v\(.version)"' <<< "$RELEASED"
-            echo ""
-            echo "### Artifacts"
-            echo ""
-            echo "Signed packages are available as workflow artifacts."
-            echo ""
-            echo "To publish for real, re-run this workflow with **dry_run** unchecked."
+            echo '## Dry run complete'
+            echo
+            echo 'No package or tag was published.'
+            echo
+            jq -r \
+              '.plan | flatten | .[] | "- **\(.name)** \(.version) (kind \(.kind))"' \
+              signed-release-bundle/publish-plan.json
+            echo
+            echo 'The exact signed bundle is available as a workflow artifact.'
           } >> "$GITHUB_STEP_SUMMARY"

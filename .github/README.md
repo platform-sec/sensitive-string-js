@@ -7,26 +7,46 @@ This directory contains GitHub Actions workflows and security documentation for 
 ### Continuous Integration
 
 **[`workflows/ci.yml`](workflows/ci.yml)**
+
 - Runs on every push and pull request
 - Jobs: lint, build, test (Node 22 & 24), coverage, security-audit
 - Ensures code quality and security baseline
 - [Local testing guide](TESTING_CI.md)
 
+### Package Versioning and Release
+
+**[`workflows/version-packages.yml`](workflows/version-packages.yml)**
+
+- Maintains a Version Packages pull request from committed changesets
+- Commits package manifests, package changelogs, internal ranges, and the lockfile together
+- Uses independent package versions; dependent releases are added only when their ranges require it
+
+**[`workflows/release.yml`](workflows/release.yml)**
+
+- Manually dispatched after a Version Packages pull request is merged
+- Defaults to a dry run
+- Builds, signs, and verifies exact tarballs before publishing those same bytes
+- Creates package-specific tags and one GitHub release per publication batch
+- [Maintainer release guide](../RELEASING.md)
+
 ### Supply Chain Security
 
 **[`workflows/dependency-review.yml`](workflows/dependency-review.yml)**
+
 - Runs on pull requests only
 - Blocks vulnerable and malicious dependencies
 - Enforces license compliance (MIT, Apache-2.0, BSD, ISC)
 - Checks OpenSSF Scorecard ratings
 
 **[`workflows/codeql.yml`](workflows/codeql.yml)**
+
 - Runs on push, PRs, and weekly schedule (Mondays)
 - Static security analysis for vulnerabilities
 - Detects: SQL injection, XSS, command injection, timing attacks, etc.
 - Uses extended security query suite
 
 **[`workflows/sbom.yml`](workflows/sbom.yml)**
+
 - Runs on main branch pushes and releases
 - Generates Software Bill of Materials (CycloneDX, SPDX)
 - Creates dependency tree and checksums
@@ -45,16 +65,25 @@ This directory contains GitHub Actions workflows and security documentation for 
   - Troubleshooting guide
   - Known limitations
 
+- **[RELEASING.md](../RELEASING.md)** - Independent versioning and publishing
+  - Contributor changesets
+  - Version Packages pull request review
+  - Dry-run and real release process
+
 ## Quick Reference
 
 ### For Contributors
 
 **Before submitting a PR:**
+
 ```bash
 # Run local checks
 pnpm lint
 pnpm test
 pnpm build
+
+# Add release intent for a user-visible package change
+pnpm changeset
 
 # Test CI locally (optional)
 act -j lint
@@ -63,6 +92,7 @@ act -j test --matrix node-version:22
 ```
 
 **Adding dependencies:**
+
 1. Add with pnpm: `pnpm add <package>`
 2. PR will automatically check for vulnerabilities and license compatibility
 3. Review dependency-review bot comments
@@ -70,6 +100,7 @@ act -j test --matrix node-version:22
 ### For Maintainers
 
 **Responding to security alerts:**
+
 ```bash
 # Check current vulnerabilities
 pnpm audit
@@ -81,6 +112,7 @@ pnpm update <package>@latest
 ```
 
 **Generating SBOMs manually:**
+
 ```bash
 # Trigger SBOM workflow
 gh workflow run sbom.yml
@@ -90,6 +122,7 @@ gh run download --name sbom-<commit-sha>
 ```
 
 **Reviewing CodeQL findings:**
+
 1. Go to **Security** → **Code scanning alerts**
 2. Triage each alert
 3. Fix or dismiss with justification
@@ -97,9 +130,11 @@ gh run download --name sbom-<commit-sha>
 ## Workflow Permissions
 
 All workflows use least-privilege permissions:
+
 - Read-only by default
-- Write access only where required (security events, artifacts)
-- No deployment or package publishing permissions
+- The version workflow can write its release-preparation branch and pull request
+- A non-dry release can publish only after approval in the `npm-publish` environment
+- The publish job can write package tags; the release job can write GitHub releases
 
 ## Security
 

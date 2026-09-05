@@ -686,13 +686,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the value. Every derived value goes through the same check, so a `map()` callback that returns a
   non-string is refused as well. `fromOptional()` still maps `null`, `undefined`, and the empty
   string to `null`.
-- The release workflow now reads the packages to release from `packages/` rather than from a
-  hardcoded pair of steps per package. It offers all six in its dropdown, skips a package marked
-  `private`, and carries `{dir, name, version}` through one output that every later step loops
-  over. `decorators`, `eslint-plugin`, `nestjs`, and `testing` could not be released before this,
-  and `all` released only `core` and `zod` while reporting success. Tags take the package's npm
-  name, so `@platform-sec/eslint-plugin-sensitive-string` no longer has to match its directory.
-  Workflow inputs reach the scripts through the environment rather than `${{ }}` interpolation.
+- Packages now version independently through committed Changesets. A Version Packages pull request
+  updates manifests, package changelogs, internal dependency and peer ranges, and the lockfile as
+  one reviewed change; a release never calculates or writes a version. The release workflow asks
+  npm which committed versions are unpublished, validates that plan, builds and packs it in
+  dependency order, and publishes the exact tarballs it signed rather than rebuilding after
+  signing. It creates one package-name tag per version and one GitHub release per publication batch,
+  so the SBOM and SLSA release workflows run once rather than once per package. An out-of-range
+  internal peer adds a dependent patch release, while a leaf-package change leaves unrelated
+  packages alone.
 
 ### Fixed
 

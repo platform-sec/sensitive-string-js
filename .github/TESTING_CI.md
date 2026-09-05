@@ -5,6 +5,7 @@ This project uses GitHub Actions for continuous integration. You can test the CI
 ## Prerequisites
 
 Install `act`:
+
 ```bash
 # macOS
 brew install act
@@ -19,11 +20,13 @@ choco install act-cli
 ## Running CI Locally
 
 ### List available jobs
+
 ```bash
 act -l
 ```
 
 ### Run specific jobs
+
 ```bash
 # Run lint checks
 act -j lint
@@ -50,6 +53,7 @@ act -j http-client-compat
 ```
 
 ### Run all jobs
+
 ```bash
 act push --container-options '--volume /tmp/k3s:/tmp/k3s'
 ```
@@ -57,18 +61,25 @@ act push --container-options '--volume /tmp/k3s:/tmp/k3s'
 ## Known Limitations with Act
 
 ### 1. Artifact Upload/Download
-The artifact upload and download actions will fail in `act` because they require GitHub's runtime API. This is expected and the workflow is configured with `continue-on-error: true` for these steps.
+
+The artifact upload and download actions will fail in `act` because they require GitHub's runtime
+API. CI artifact steps that are optional may tolerate this. Release artifacts are deliberately
+required, so run the complete release dry run on GitHub rather than treating an `act` artifact
+failure as a package failure.
 
 **What fails:**
+
 - `actions/upload-artifact@v4` - Build artifacts
 - `codecov/codecov-action@v4` - Coverage reports
 
 **Impact:** None for local testing. The actual build and test steps complete successfully.
 
 ### 2. Cache Actions
+
 Cache save/restore operations may show warnings about connection failures. This doesn't affect the CI functionality.
 
 **What you'll see:**
+
 ```
 Failed to restore: getCacheEntry failed: connect EHOSTUNREACH
 Failed to save: reserveCache failed: connect EHOSTUNREACH
@@ -89,6 +100,25 @@ kubeconfig is therefore written to the Docker host's `/tmp/k3s`, which is not th
 Without that option, only the Kubernetes matrix entry fails because it cannot see the kubeconfig.
 This is a nested-Docker limitation of the local `act` harness, not a failure in
 `@platform-sec/sensitive-string-k8s`; the GitHub-hosted job does not need the option.
+
+### 4. Version and Release Workflows
+
+The Version Packages workflow writes a branch and pull request through the GitHub API. The Release
+workflow reads npm registry state, uploads and downloads artifacts, obtains a Sigstore OIDC identity,
+publishes packages, pushes tags, and creates GitHub releases. Those operations require GitHub or npm
+infrastructure that `act` does not reproduce.
+
+Validate their local portions with:
+
+```bash
+pnpm release:check
+actionlint .github/workflows/version-packages.yml .github/workflows/release.yml
+zizmor .github/workflows/version-packages.yml .github/workflows/release.yml
+```
+
+The Release workflow's `verify` job can also be exercised through `act`, but a complete release dry
+run must be dispatched on GitHub. A dry run still builds, packs, signs, and verifies the exact
+artifacts; it skips npm publication, tags, and GitHub releases.
 
 ## CI Workflow Jobs
 
@@ -112,7 +142,7 @@ image moving upstream reports rather than blocks:
    against k3s, the real `sops` binary and a LocalStack emulator. A fixture is
    only as good as the recording behind it.
 9. **HTTP client compatibility** - the six HTTP client suites against the
-   *latest* axios, got, ky and undici rather than the lockfile pins. Those
+   _latest_ axios, got, ky and undici rather than the lockfile pins. Those
    suites assert the bare client's behaviour before the wrapper's, so they are
    regression tests against the clients as much as against this repository: a
    client release that changes a measured row (which property a rejection keeps
@@ -133,11 +163,13 @@ See [SUPPLY_CHAIN_SECURITY.md](./SUPPLY_CHAIN_SECURITY.md) for detailed document
 ## Expected Results
 
 When all checks pass, you should see:
+
 ```
 🏁  Job succeeded
 ```
 
 If any checks fail, you'll see:
+
 ```
 🏁  Job failed
 Error: Job 'JobName' failed
@@ -158,13 +190,17 @@ act push --container-options '--volume /tmp/k3s:/tmp/k3s'
 ## Troubleshooting
 
 ### "Error: image not found"
+
 Configure act to use the medium-size Docker image:
+
 ```bash
 echo "-P ubuntu-latest=catthehacker/ubuntu:act-latest" > ~/.config/act/actrc
 ```
 
 ### "Job failed"
+
 Read the error output carefully - it will show which step failed and why. Common issues:
+
 - Linting errors (fix with `pnpm lint:fix` and `pnpm format`)
 - Test failures (fix failing tests)
 - Build errors (TypeScript compilation issues)

@@ -29,6 +29,11 @@
     "format": "prettier --write \"packages/*/src/**/*.ts\" \"examples/**/*.ts\"",
     "format:check": "prettier --check \"packages/*/src/**/*.ts\" \"examples/**/*.ts\"",
     "check:packaging": "node scripts/check-packaging.mjs",
+    "changeset": "changeset",
+    "release:status": "changeset status --verbose",
+    "release:version": "changeset version && pnpm install --lockfile-only && pnpm release:check",
+    "release:check": "node scripts/check-release-consistency.mjs",
+    "release:pack": "node scripts/pack-release-plan.mjs",
     "clean": "rm -rf packages/*/dist packages/*/.turbo node_modules/.cache && find packages/*/src -name '*.js' -delete 2>/dev/null; find packages/*/src -name '*.d.ts' -delete 2>/dev/null; find packages/*/src -name '*.js.map' -delete 2>/dev/null; true",
     "codeql:download": "codeql pack download codeql/javascript-queries",
     "codeql:create": "codeql database create codeql-db --language=javascript --source-root=. --overwrite",
@@ -39,6 +44,7 @@
     "codeql:clean": "rm -rf codeql-db codeql-results.sarif"
   },
   "devDependencies": {
+    "@changesets/cli": "3.0.2",
     "@eslint/js": "^9.39.5",
     "@swc/core": "^1.16.1",
     "@types/node": "^22.20.1",
@@ -48,6 +54,7 @@
     "globals": "^17.12.0",
     "prettier": "^3.9.6",
     "safe-regex2": "5.1.1",
+    "semver": "7.7.4",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.69.0",
     "unplugin-swc": "^1.5.11",
