@@ -49,6 +49,22 @@ range updates. Commit the generated `.changeset/*.md` file with the implementati
 Changes that cannot affect a published package, such as CI-only or documentation-only edits, do not
 need a changeset.
 
+### Granularity
+
+A changeset describes an intent, not a commit. When work in progress grows a follow-up fix, amend
+the changeset that already covers it rather than adding a second file. Only work that has already
+been released needs a changeset of its own.
+
+The history behind 0.1.0 shows why. `sensitive-core` took 28 behaviour-changing commits before its
+first release, which one changeset per commit would have turned into 28 core versions. Grouped by
+intent they are four: the API settling, the string surface and its lifecycle, the substrate the
+integration packages call, and the adversarial hardening pass.
+
+This matters most for `sensitive-core`, which 26 of the other 27 packages declare as a peer
+dependency. While core is below 1.0, every `minor` release falls outside a dependent's `^0.x.y`
+range, so Changesets republishes the whole dependent set. Four core releases cost four of those
+sweeps; 28 would cost 28.
+
 ## Version Packages pull request
 
 After changesets reach `main`, the Version Packages workflow maintains one pull request by running:
