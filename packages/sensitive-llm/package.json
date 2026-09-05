@@ -1,0 +1,48 @@
+{
+  "name": "@platform-sec/sensitive-string-llm",
+  "version": "0.1.0",
+  "description": "Prompt scrubbing, an audited external-sink gate, and keyed entity handles for sending data to a language model",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run --root ../.. packages/sensitive-llm/",
+    "test:watch": "vitest --root ../.. packages/sensitive-llm/"
+  },
+  "keywords": [
+    "security",
+    "sensitive-data",
+    "redaction",
+    "llm",
+    "prompt",
+    "pii",
+    "pseudonymization",
+    "typescript"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "peerDependencies": {
+    "@platform-sec/sensitive-string-core": "^0.5.0",
+    "@platform-sec/sensitive-string-scrub": "^0.1.0"
+  },
+  "devDependencies": {
+    "@platform-sec/sensitive-string-core": "workspace:*",
+    "@platform-sec/sensitive-string-scrub": "workspace:*",
+    "@platform-sec/sensitive-string-testing": "workspace:*",
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

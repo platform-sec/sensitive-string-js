@@ -124,6 +124,20 @@ This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under 
   into regression tests against the clients. `packages/sensitive-http/src/testing.test.ts` tests the
   recording server itself, because a harness that silently drops a header would make every canary
   assertion in six packages pass for the wrong reason.
+- `packages/sensitive-llm/src/` contains the LLM row: `sendToExternal`, which is the first and only
+  reader of `advisory.allowSendToExternal` and the one export in the package that returns a raw
+  string; `createPromptScrubber` over `sensitive-scrub`'s walk plus one extra pass for prose
+  positions; and keyed entity handles with their per-request reverse map. It takes core and
+  `sensitive-scrub` as peers and has no third-party runtime dependency and no provider SDK, not even
+  a dev one. Two things about it are easy to get wrong on a later edit. It **throws** on an internal
+  failure rather than using `guardedScrub`, because a stub prompt is a paid request answering a
+  question nobody asked and a caller cannot tell it from a real one. And `src/shapes.ts` is the one
+  file whose contents are claims about somebody else's schema: every shape carries `verified: false`
+  because none was measured against an installed SDK, and a shape that ever becomes `true` records
+  the SDK version in its `schema` field. `src/__tests__/llm-security.test.ts` drives every export off
+  the module's own export list, so a new export cannot arrive without canary coverage, and it asserts
+  a canary is **present** after scrubbing a prose position, which is the documented gap rather than a
+  bug.
 - `packages/sensitive-eslint-plugin/src/` contains the ESLint rules, their presets, and the
   parser-agnostic AST helpers they share. It has no dependencies, not even on the core package, and
   not on `typescript`: five rules read syntax only, and the two that need types reach the checker
