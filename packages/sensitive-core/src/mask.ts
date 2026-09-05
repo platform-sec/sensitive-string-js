@@ -12,6 +12,17 @@ const DEFAULT_MIN_MASKED: Record<SensitivityClass, number> = {
   credential: 8,
 };
 
+/**
+ * The floor on hidden characters for a class.
+ *
+ * Exported for development mode, whose partial rendering is a disclosure of the
+ * same kind as a mask and is held to the same bound, so the two cannot disagree
+ * about how much of a value may be shown.
+ */
+export function minMaskedFloor(klass: SensitivityClass): number {
+  return DEFAULT_MIN_MASKED[klass];
+}
+
 /** Recognized strategy names, in documentation order. */
 const STRATEGY_NAMES: readonly MaskStrategy[] = ['email', 'phone', 'card', 'ssn', 'uuid', 'custom'];
 

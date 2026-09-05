@@ -61,6 +61,15 @@ export { ExpiredSensitiveValueError, RenewalNotAllowedError } from './ttl.js';
 export { RevealDuringRedactionError } from './redaction-scope.js';
 export type { RenewalRefusal } from './ttl.js';
 
+// Development mode
+export { setDevMode, getDevModeConfig, withDevMode } from './dev-mode.js';
+export type {
+  DevModeConfig,
+  DevInfo,
+  RepeatedRevealOptions,
+  RevealLogOptions,
+} from './dev-mode.js';
+
 // Anchored patterns for common sensitive-value formats
 export { patterns } from './patterns.js';
 

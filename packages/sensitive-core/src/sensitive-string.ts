@@ -13,6 +13,7 @@ import { getPolicy, defaultCombineClasses, hasPolicy } from './policy.js';
 import { getCurrentRevealContext } from './context.js';
 import { isInsideRedaction, RevealDuringRedactionError } from './redaction-scope.js';
 import { applyMask, maskAuditDetails, planMask } from './mask.js';
+import { devMode, readDevInfo, recordCreation, recordReveal, type DevInfo } from './dev-mode.js';
 import {
   ExpiredSensitiveValueError,
   expiredDeadline,
@@ -283,6 +284,13 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     this.klass = klass;
     this.label = label;
 
+    // Before the derived early return, so a substring of a value is tracked in
+    // its own right. The guard is one property read when development mode is
+    // off, which is what production pays for the feature.
+    if (devMode.config.enabled) {
+      recordCreation(this);
+    }
+
     if ((options as unknown) === DERIVED_CONSTRUCTION) {
       // #derived assigns the sources' state objects immediately after this
       // returns. Planning state here would be discarded, and a policy that
@@ -401,6 +409,12 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
 
     if (access === 'expose') {
       effectiveCtx?.auditReveal?.(this, details);
+
+      // After the audit hook, which is free to throw and stop the reveal: what
+      // development mode counts is what actually reached the caller.
+      if (devMode.config.enabled) {
+        recordReveal(this, this.klass, this.label, this.#value, effectiveCtx, details);
+      }
     }
 
     return this.#value;
@@ -515,6 +529,21 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    */
   reveal(ctx?: RevealContext): string {
     return this.#readRawValue('expose', ctx);
+  }
+
+  /**
+   * What development mode recorded about this value, or `undefined`.
+   *
+   * `undefined` unless development mode is on and was on when this value was
+   * constructed, so a production build reads `undefined` here rather than
+   * failing on a missing property. The record holds no part of the raw value:
+   * when the value was made, where it was made, how often it has been exposed
+   * and from where.
+   *
+   * @see setDevMode
+   */
+  get __devInfo(): DevInfo | undefined {
+    return readDevInfo(this);
   }
 
   /**

@@ -58,6 +58,8 @@ const raw = apiKey.reveal({ name: 'api-call', reason: 'authenticating' });
 - **Expiration**: `ttl` and `expiresAt` stop a value from being used past its deadline, and
   derived values expire with the value they came from
 - **Path-Based Wrapping**: Wrap sensitive fields in complex objects by path
+- **Development Mode**: `setDevMode()` records where a value came from, how often it has been
+  exposed and from where, off by default and behind one guard when it is
 - **Zero External Dependencies**: Only uses Node.js built-ins
 
 ## Handling Webhooks and API Payloads
@@ -141,11 +143,13 @@ appear in inspection and audit metadata without exposing the protected value.
 
 ## Process-global state
 
-The policy registry and reveal-context storage are shared across duplicate
-installed copies of core through `Symbol.for()`. Policy registration is mutable
-process-global configuration: it protects against accidental misuse and
-misconfiguration, but code already executing in the process can replace a
-policy and must be trusted.
+The policy registry, the reveal-context storage and the development mode
+configuration are shared across duplicate installed copies of core through
+`Symbol.for()`. Policy registration is mutable process-global configuration: it
+protects against accidental misuse and misconfiguration, but code already
+executing in the process can replace a policy and must be trusted. The same is
+true of `setDevMode()`, which is why enabling it under `NODE_ENV=production`
+prints a warning.
 
 ## API
 

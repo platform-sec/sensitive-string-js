@@ -713,6 +713,128 @@ Expiration is a usability control on the values this process holds, not a crypto
 stops code from using a stale secret; it does not erase the secret from memory, and it does not
 constrain a holder of the raw string that was already revealed.
 
+### Development Mode
+
+```typescript
+interface DevModeConfig {
+  enabled: boolean;
+  captureStackTraces?: boolean;    // stack of each exposure
+  captureCreationStack?: boolean;  // stack of each construction
+  warnOnRepeatedReveal?: { threshold: number; window: number } | false;
+  warnOnMissingContext?: boolean;
+  logReveals?: {
+    enabled: boolean;
+    logger?: (message: string) => void;  // default: console.warn
+    showPartialValue?: boolean;          // development only
+    partialLength?: number;              // default 4, capped at 8
+  } | false;
+}
+```
+
+A reveal that fails, or one that should never have happened, says very little on its own. The stack
+names the caller of `reveal()` and nothing else: not where the value came from, not how many times
+it has already been read, not which of the four `SensitiveString`s in scope this one is.
+Development mode records that next to the value.
+
+```typescript
+if (process.env['NODE_ENV'] === 'development') {
+  setDevMode({
+    enabled: true,
+    captureStackTraces: true,
+    captureCreationStack: true,
+    warnOnMissingContext: true,
+    logReveals: { enabled: true, showPartialValue: true },
+  });
+}
+```
+
+```
+[SensitiveString] Reveal of 'api_key' (sk_t...) without context
+    at processPayment (src/payment.ts:45:12)
+    at handleRequest (src/handler.ts:23:8)
+Created at:
+    at loadConfig (src/config.ts:12:15)
+```
+
+Everything is off until `setDevMode({ enabled: true })` is called. A process that never calls it
+pays one property read per construction and one per exposure, which is the guard that keeps the
+rest of it out of the way.
+
+What counts as an exposure is exactly what an audit hook sees: the reads where the raw value
+reaches the caller. `reveal()`, `mask()`, `serialize()`, `map()`, and the string, regex, and
+template operations all count; `equals()` does not, because a comparison reads the value without
+disclosing it, and neither does redaction. A read the gate refused is not counted either, so a
+reveal that threw is absent rather than recorded as a reveal that happened.
+
+`warnOnMissingContext` reports the reveals that nothing explains, and does so even when
+`logReveals` is off, which is usually the first thing worth seeing. `logReveals.enabled` reports
+every exposure, with or without a context.
+
+`showPartialValue` prints the first few characters of the value. It is a real disclosure, off by
+default, and bounded twice: by `partialLength`, which is capped at 8, and by the same floor on
+hidden characters that `mask()` enforces for the class, which is 4 for `sensitive` and 8 for
+`credential`. A value too short to keep that floor shows nothing at all rather than most of itself.
+Note that this shows a prefix of a `credential`, which `mask()` refuses outright: the flag exists
+to tell two values apart in a debugger, it trades away a little of what the rest of this library
+protects, and it belongs nowhere but a development machine.
+
+`warnOnRepeatedReveal` catches the loop that reveals the same value on every iteration:
+
+```
+[SensitiveString] Warning: 'session_token' revealed 10 times in 5000ms
+    Consider caching the revealed value or reviewing the code path.
+    Most recent reveal at:
+    at renderLoop (src/ui.ts:123:18)
+```
+
+Reveals are counted per value in fixed windows rather than a sliding one, and the warning fires as
+the threshold is crossed and then stays quiet for the rest of the window. A loop revealing a
+thousand times a second produces one line per window instead of a thousand, and a burst that
+straddles a boundary is reported by the window it finishes in.
+
+The recorded history is also readable:
+
+```typescript
+const debug = secret.__devInfo;
+debug?.createdAt;         // Date
+debug?.creationStack;     // string | undefined
+debug?.revealCount;       // exact, and never forgotten
+debug?.revealTimestamps;  // the most recent 64, oldest first
+debug?.lastRevealStack;   // string | undefined
+```
+
+`__devInfo` is `undefined` when development mode is off, rather than a missing property, so the
+same debugging code compiles and runs in production. It holds no part of the raw value, and it is
+not an own property of the instance: `toString()`, `toJSON()`, `util.inspect()`, `serialize()` and
+the redaction walkers are unchanged by it. Records live in a `WeakMap` keyed by the instance, so a
+value's history is collected with the value.
+
+A record is only kept for a value constructed while development mode was on. Turning it on
+afterwards does not recover a history that was never taken, so enable it at startup, before the
+values you intend to inspect exist.
+
+Enabling it while `NODE_ENV` is `production` prints a warning, because the combination is a
+security risk rather than a configuration mistake:
+
+```
+[SensitiveString] Dev mode enabled in production! This is a security risk: it records stacks and,
+with showPartialValue, writes part of every revealed value to a log.
+```
+
+Development mode never changes what a program does. A logger that throws is swallowed rather than
+turning a successful reveal into a failed one, which in development would look exactly like a bug
+in the caller.
+
+For tests, `withDevMode()` installs a configuration and restores the previous one afterwards. It is
+synchronous: the configuration is process-global, so it cannot follow one asynchronous task without
+following every other task interleaved with it.
+
+```typescript
+withDevMode({ enabled: true, logReveals: { enabled: true, logger } }, () => {
+  secret.reveal();
+});
+```
+
 ### Zod Schemas
 
 ```typescript
