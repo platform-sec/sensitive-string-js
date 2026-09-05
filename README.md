@@ -1031,9 +1031,9 @@ so a multipart `Buffer` is never flattened by the clone. Fastify 5 only. See
 the three schema positions the keyword must stay out of, and the custom validator compiler
 limitation.
 
-### Error Tracking (Sentry)
+### Error Tracking (Sentry, Bugsnag, Rollbar)
 
-From `@platform-sec/sensitive-string-sentry`, over the shared
+From `@platform-sec/sensitive-string-sentry`, `-bugsnag` and `-rollbar`, over the shared
 `@platform-sec/sensitive-string-scrub`. An error tracker is the one dependency whose entire purpose
 is to collect application state and send it elsewhere. Every other integration leaks when the
 application makes a mistake; this one leaks when the application does nothing at all.
@@ -1083,6 +1083,37 @@ fails `pnpm typecheck` rather than opening quietly. See
 `recommendedDataCollection` object, and the gap around processors registered after `init`, and
 [packages/sensitive-scrub/README.md](packages/sensitive-scrub/README.md) for the denylist and the
 inverted marker rule.
+
+The other two vendors share that denylist and differ in what they need on top of it, which is the
+argument for a shared layer rather than three of them.
+
+```typescript
+Bugsnag.start(withSensitiveScrubbing({ apiKey: process.env.BUGSNAG_KEY! }, policy));
+const rollbar = new Rollbar(withSensitiveScrubbing({ accessToken }, policy));
+```
+
+Bugsnag needs the most. Its `redactedKeys` default is the single key `password`, and measured, it
+applies only under `metaData`, breadcrumb metadata, `request` and `response`, so `context`, `user`,
+`featureFlags` and the exception itself are the callbacks' work alone. The package composes all three
+callbacks *and* feeds the resolved denylist into `redactedKeys`, because neither half covers what the
+other does.
+
+Rollbar needs the least, and its README says so. It ships 25 `scrubFields`, 10 `scrubHeaders` and a
+query-parameter pass over URLs, all applied before the one seam a user can install. What the package
+adds is the names those lists omit, the wire format no key list describes, the paths Rollbar
+documents but does not apply, and two things specific to this vendor. It is the only SDK measured
+that does not honour `toJSON()`: a wrapped value arrives at every seam as `{ klass, label }`, so the
+value is safe and the **label is not**, and putting the marker back is what keeps labels off by
+default here. And a `transform` that throws makes Rollbar disable it for the life of the process and
+send the original item, so a caller's own transform is called inside the guard rather than beside it.
+
+Both suites assert on the bytes that actually left the process, against the real SDK driven to a
+server on loopback, with a companion case requiring each position to leak once the scrubbing is
+removed. That is not a flourish: on both vendors a scrubbing pass runs inside the SDK's own encoder,
+so an assertion on the payload object cannot see half of what protects it. The Sentry suite asserts
+on the envelope the transport receives, and has one case that goes all the way to the bytes. See
+[packages/sensitive-bugsnag/README.md](packages/sensitive-bugsnag/README.md) and
+[packages/sensitive-rollbar/README.md](packages/sensitive-rollbar/README.md).
 
 ### HTTP Clients
 

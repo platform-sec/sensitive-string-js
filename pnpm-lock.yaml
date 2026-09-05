@@ -126,6 +126,30 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.20.1)(yaml@2.9.0))
 
+  packages/sensitive-bugsnag:
+    devDependencies:
+      '@bugsnag/js':
+        specifier: ^8.10.0
+        version: 8.10.0
+      '@platform-sec/sensitive-string-core':
+        specifier: workspace:*
+        version: link:../sensitive-core
+      '@platform-sec/sensitive-string-scrub':
+        specifier: workspace:*
+        version: link:../sensitive-scrub
+      '@platform-sec/sensitive-string-testing':
+        specifier: workspace:*
+        version: link:../sensitive-testing
+      '@types/node':
+        specifier: ^22.20.1
+        version: 22.20.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.20.1)(yaml@2.9.0))
+
   packages/sensitive-core:
     devDependencies:
       '@types/node':
@@ -544,6 +568,30 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.20.1)(yaml@2.9.0))
 
+  packages/sensitive-rollbar:
+    devDependencies:
+      '@platform-sec/sensitive-string-core':
+        specifier: workspace:*
+        version: link:../sensitive-core
+      '@platform-sec/sensitive-string-scrub':
+        specifier: workspace:*
+        version: link:../sensitive-scrub
+      '@platform-sec/sensitive-string-testing':
+        specifier: workspace:*
+        version: link:../sensitive-testing
+      '@types/node':
+        specifier: ^22.20.1
+        version: 22.20.1
+      rollbar:
+        specifier: ^3.1.0
+        version: 3.1.0
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.20.1)(yaml@2.9.0))
+
   packages/sensitive-scrub:
     devDependencies:
       '@platform-sec/sensitive-string-core':
@@ -845,6 +893,24 @@ packages:
 
   '@borewit/text-codec@0.2.2':
     resolution: {integrity: sha512-DDaRehssg1aNrH4+2hnj1B7vnUGEjU6OIlyRdkMd0aUdIUvKXrJfXsy8LVtXAy7DRvYVluWbMspsRhz2lcW0mQ==}
+
+  '@bugsnag/browser@8.10.0':
+    resolution: {integrity: sha512-RucooYQMoLSD+aU3YOh3d22/rgqIt0pDr6bgSokvandS0mt1IOK318QwEsBq6aZ68j7vhhMt84Z3Tdum64QsOA==}
+
+  '@bugsnag/core@8.9.0':
+    resolution: {integrity: sha512-SrXO0isIZfrCem06/WDvC5MSd1Tj6Yjm4Wqdlv6jyjTvsow+cppvt7rS9Bps3qOeXfYCqWHN4ev02OdwnfZ1PQ==}
+
+  '@bugsnag/cuid@3.2.2':
+    resolution: {integrity: sha512-7onuYLTMqMmHE9BBPG0YER4nFsU1rB+me1/YIeMusqcLbVbKKuG9u9+BDVDpje5e0llkkrVNOKYwmzM9DRIo7A==}
+
+  '@bugsnag/js@8.10.0':
+    resolution: {integrity: sha512-D8IYjkGltLw5m1ujM33AAARFYIS4S2KgUdk6QrKR+r/NGfygHOyyMPXNfxvmiap5d4EusPxPOWCKT+1TN9ToKA==}
+
+  '@bugsnag/node@8.10.0':
+    resolution: {integrity: sha512-xLDSk3EBUDIAwYyECxzdEpsgZv6Mwn/WAV57vQBiKsTgia7cnjE83VeR9O6uu4oAUhye160LAVzRCvmJNac+nw==}
+
+  '@bugsnag/safe-json-stringify@6.1.0':
+    resolution: {integrity: sha512-ImA35rnM7bGr+J30R979FQ95BhRB4UO1KfJA0J2sVqc8nwnrS9hhE5mkTmQWMs8Vh1Da+hkLKs5jJB4JjNZp4A==}
 
   '@changesets/apply-release-plan@8.1.0':
     resolution: {integrity: sha512-M93HOGyX3ssg6He3b5NotaHtQVu6uajHS6UIQ28xKt2RzskCy73ayX4I914qBKjTJmrE4YFlELQjfcqxbmGLJw==}
@@ -2102,6 +2168,10 @@ packages:
     resolution: {integrity: sha512-8SFQbg/0hQ9xy3UNTB0YEnsNBbWfhf7RtnzpL7TkBiTBRfrQ9Fxcnz7VJsleJpyp6rVLvXiuORqjlHi5q+PYuA==}
     engines: {node: '>=10.16.0'}
 
+  byline@5.0.0:
+    resolution: {integrity: sha512-s6webAy+R4SR8XVuJWt2V2rGvhnrhxN+9S15GNuTK3wKPOXFF6RNc+8ug2XhH+2s4f+uudG4kUVYmYOQWL2g0Q==}
+    engines: {node: '>=0.10.0'}
+
   byte-counter@0.1.0:
     resolution: {integrity: sha512-jheRLVMeUKrDBjVw2O5+k4EvR4t9wtxHL+bo/LxfkxsVeuGMy3a5SEGgXdAFA4FSzTrU8rQXQIrsZ3oBq5a0pQ==}
     engines: {node: '>=20'}
@@ -2346,6 +2416,9 @@ packages:
 
   error-stack-parser-es@1.0.5:
     resolution: {integrity: sha512-5qucVt2XcuGMcEGgWI7i+yZpmpByQ8J1lHhcL7PwqCwu9FPP3VUXzT4ltHe5i2z9dePwEHcDVOAfSnHsOlCXRA==}
+
+  error-stack-parser@2.1.4:
+    resolution: {integrity: sha512-Sk5V6wVazPhq5MhpO+AUxJn5x7XSXGl1R93Vn7i+zS15KDVxQijejNCrz8340/2bgLBjR9GtEG8ZVKONDjcqGQ==}
 
   es-define-property@1.0.1:
     resolution: {integrity: sha512-e3nRfgfUZ4rNGL232gUgX06QNyyez04KdjFrF+LTRoOXmrOgFKDg4BCdsjW8EnT69eqdYGmRpJwiPVYNrCaW3g==}
@@ -2801,6 +2874,9 @@ packages:
   is-stream@4.0.1:
     resolution: {integrity: sha512-Dnz92NInDqYckGEUJv689RbRiTSEHCQ7wOVeALbkOz999YpqT46yMRIGtSNl2iCL1waAZSx40+h59NV/EwzV/A==}
     engines: {node: '>=18'}
+
+  iserror@0.0.2:
+    resolution: {integrity: sha512-oKGGrFVaWwETimP3SiWwjDeY27ovZoyZPHtxblC4hCq9fXxed/jasx+ATWFFjCVSRZng8VTMsN1nDnGo6zMBSw==}
 
   isexe@2.0.0:
     resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
@@ -3494,11 +3570,17 @@ packages:
     engines: {node: '>=0.10.0'}
     hasBin: true
 
+  stack-generator@2.0.10:
+    resolution: {integrity: sha512-mwnua/hkqM6pF4k8SnmZ2zfETsRUpWXREfA/goT8SLCV4iOFa4bzOX2nDipWAZFPTjLvQB82f5yaodMVhK0yJQ==}
+
   stack-trace@0.0.10:
     resolution: {integrity: sha512-KGzahc7puUKkzyMt+IqAep+TVNbKP+k2Lmwhub39m1AsTSkaDutx56aDCo+HLDzf/D26BIHTJWNiTG1KAJiQCg==}
 
   stackback@0.0.2:
     resolution: {integrity: sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==}
+
+  stackframe@1.3.4:
+    resolution: {integrity: sha512-oeVtt7eWQS+Na6F//S4kJ2K2VbRlS9D43mAlMyVpVWovy9o+jfgH8O9agzANzaiLjclA0oYzUXEM4PurhSUChw==}
 
   statuses@2.0.2:
     resolution: {integrity: sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw==}
@@ -4177,6 +4259,36 @@ snapshots:
   '@bcoe/v8-coverage@1.0.2': {}
 
   '@borewit/text-codec@0.2.2': {}
+
+  '@bugsnag/browser@8.10.0':
+    dependencies:
+      '@bugsnag/core': 8.9.0
+
+  '@bugsnag/core@8.9.0':
+    dependencies:
+      '@bugsnag/cuid': 3.2.2
+      '@bugsnag/safe-json-stringify': 6.1.0
+      error-stack-parser: 2.1.4
+      iserror: 0.0.2
+      stack-generator: 2.0.10
+
+  '@bugsnag/cuid@3.2.2': {}
+
+  '@bugsnag/js@8.10.0':
+    dependencies:
+      '@bugsnag/browser': 8.10.0
+      '@bugsnag/node': 8.10.0
+
+  '@bugsnag/node@8.10.0':
+    dependencies:
+      '@bugsnag/core': 8.9.0
+      byline: 5.0.0
+      error-stack-parser: 2.1.4
+      iserror: 0.0.2
+      pump: 3.0.4
+      stack-generator: 2.0.10
+
+  '@bugsnag/safe-json-stringify@6.1.0': {}
 
   '@changesets/apply-release-plan@8.1.0':
     dependencies:
@@ -5420,6 +5532,8 @@ snapshots:
     dependencies:
       streamsearch: 1.1.0
 
+  byline@5.0.0: {}
+
   byte-counter@0.1.0: {}
 
   bytes@3.1.2: {}
@@ -5631,6 +5745,10 @@ snapshots:
       tslib: 2.8.1
 
   error-stack-parser-es@1.0.5: {}
+
+  error-stack-parser@2.1.4:
+    dependencies:
+      stackframe: 1.3.4
 
   es-define-property@1.0.1: {}
 
@@ -6232,6 +6350,8 @@ snapshots:
   is-stream@2.0.1: {}
 
   is-stream@4.0.1: {}
+
+  iserror@0.0.2: {}
 
   isexe@2.0.0: {}
 
@@ -6975,9 +7095,15 @@ snapshots:
       safer-buffer: 2.1.2
       tweetnacl: 0.14.5
 
+  stack-generator@2.0.10:
+    dependencies:
+      stackframe: 1.3.4
+
   stack-trace@0.0.10: {}
 
   stackback@0.0.2: {}
+
+  stackframe@1.3.4: {}
 
   statuses@2.0.2: {}
 

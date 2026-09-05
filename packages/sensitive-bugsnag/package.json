@@ -1,0 +1,48 @@
+{
+  "name": "@platform-sec/sensitive-string-bugsnag",
+  "version": "0.1.0",
+  "description": "Bugsnag integration for SensitiveString - composes every callback and unions the redactedKeys list",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run --root ../.. packages/sensitive-bugsnag/",
+    "test:watch": "vitest --root ../.. packages/sensitive-bugsnag/"
+  },
+  "keywords": [
+    "bugsnag",
+    "security",
+    "sensitive-data",
+    "redaction",
+    "error-tracking",
+    "typescript"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "peerDependencies": {
+    "@bugsnag/js": "^8.0.0",
+    "@platform-sec/sensitive-string-core": "^0.5.0",
+    "@platform-sec/sensitive-string-scrub": "^0.1.0"
+  },
+  "devDependencies": {
+    "@bugsnag/js": "^8.10.0",
+    "@platform-sec/sensitive-string-core": "workspace:*",
+    "@platform-sec/sensitive-string-scrub": "workspace:*",
+    "@platform-sec/sensitive-string-testing": "workspace:*",
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}
