@@ -23,7 +23,15 @@ import {
   createSensitiveSerializer,
 } from '../redact.js';
 import { redactCopy } from '../redact-copy.js';
-import { consume, consumeFlag, nestedPayload, plainPayload, recordList, requestPayload } from './fixtures.js';
+import {
+  benchFloor,
+  consume,
+  consumeFlag,
+  nestedPayload,
+  plainPayload,
+  recordList,
+  requestPayload,
+} from './fixtures.js';
 
 const payload = requestPayload();
 const plain = plainPayload();
@@ -160,3 +168,5 @@ describe('detection against redaction', () => {
     consume(containsSensitive(payload) ? redactInStructure(payload) : payload);
   });
 });
+
+benchFloor();

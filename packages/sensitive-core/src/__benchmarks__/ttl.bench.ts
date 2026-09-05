@@ -11,7 +11,7 @@
 import { bench, describe } from 'vitest';
 
 import { SensitiveString } from '../sensitive-string.js';
-import { consume, consumeFlag, TOKEN } from './fixtures.js';
+import { benchFloor, consume, consumeFlag, TOKEN } from './fixtures.js';
 
 const plain = new SensitiveString(TOKEN, 'sensitive', 'access_token');
 const expiring = new SensitiveString(TOKEN, 'sensitive', 'access_token', { ttl: 3_600_000 });
@@ -116,3 +116,5 @@ describe('renew', () => {
     consume(value.renewalCount);
   });
 });
+
+benchFloor();

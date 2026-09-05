@@ -21,7 +21,7 @@ import {
 } from '../wrap.js';
 import { classifyField, compileClassification } from '../classification.js';
 import type { ClassificationSpec } from '../classification.js';
-import { consume, PAYLOAD_FIELDS, plainPayload, requestPayload } from './fixtures.js';
+import { benchFloor, consume, PAYLOAD_FIELDS, plainPayload, requestPayload } from './fixtures.js';
 
 const plain = plainPayload();
 const wrapped = requestPayload();
@@ -52,6 +52,18 @@ const SPEC: ClassificationSpec = {
 
 const compiled = compileClassification(SPEC);
 
+/**
+ * Four paths that match nothing, so the pair against `PAYLOAD_FIELDS` differs
+ * only in whether the paths hit. One path against four measured the path
+ * count rather than the wrapping.
+ */
+const MISSING_FIELDS = {
+  'absent.one': 'sensitive',
+  'absent.two': 'sensitive',
+  'absent.three': 'credential',
+  'absent.four': 'credential',
+} as const;
+
 /** Keys spanning every level of the precedence order: field, rule, fallback. */
 const KEYS = ['auth.token', 'apiSecret', 'user.email', 'seq', 'unmatchedKeyName'] as const;
 
@@ -64,8 +76,8 @@ describe('wrapSensitiveByPath', () => {
     consume(wrapSensitiveByPath(plain, PAYLOAD_FIELDS));
   });
 
-  bench('request payload, no matching paths', () => {
-    consume(wrapSensitiveByPath(plain, { 'nothing.here': 'sensitive' }));
+  bench('request payload, four paths that match nothing', () => {
+    consume(wrapSensitiveByPath(plain, MISSING_FIELDS));
   });
 
   bench('wide payload, four paths', () => {
@@ -140,3 +152,5 @@ describe('classification, a whole payload of keys', () => {
     }
   });
 });
+
+benchFloor();

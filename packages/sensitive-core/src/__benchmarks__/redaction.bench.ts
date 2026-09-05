@@ -16,7 +16,7 @@ import { inspect } from 'node:util';
 import { bench, describe } from 'vitest';
 
 import { SensitiveString } from '../sensitive-string.js';
-import { consume, LENGTHS, TOKEN, valueOfLength } from './fixtures.js';
+import { benchFloor, consume, LENGTHS, TOKEN, valueOfLength } from './fixtures.js';
 
 const credential = new SensitiveString(TOKEN, 'credential', 'access_token');
 const sensitive = new SensitiveString('ada@example.com', 'sensitive', 'email');
@@ -125,3 +125,5 @@ describe('redaction against the raw equivalents', () => {
     consume(JSON.stringify(sensitive));
   });
 });
+
+benchFloor();

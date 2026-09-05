@@ -14,7 +14,7 @@
 import { bench, describe } from 'vitest';
 
 import { SensitiveString } from '../sensitive-string.js';
-import { consume, consumeFlag, LENGTHS, valueOfLength } from './fixtures.js';
+import { benchFloor, consume, consumeFlag, LENGTHS, valueOfLength } from './fixtures.js';
 
 const VALUE = 'ada.lovelace@example.com/session/8f2c4a1b9d3e';
 const value = new SensitiveString(VALUE, 'sensitive', 'session_url');
@@ -136,12 +136,19 @@ describe('substring by value length', () => {
   }
 });
 
+// The needle is absent, so every call scans the whole value. Searching for
+// `CANARY` scanned six characters at every length, because that is where the
+// fixture puts it, and the sweep measured nothing.
+const ABSENT = '~~ABSENT~~';
+
 describe('includes by value length', () => {
   for (const length of LENGTHS) {
     const instance = new SensitiveString(valueOfLength(length), 'sensitive');
 
     bench(`${length} chars`, () => {
-      consumeFlag(instance.includes('CANARY'));
+      consumeFlag(instance.includes(ABSENT));
     });
   }
 });
+
+benchFloor();

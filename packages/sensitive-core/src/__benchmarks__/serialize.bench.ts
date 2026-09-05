@@ -16,7 +16,7 @@ import { bench, describe } from 'vitest';
 import { SensitiveString } from '../sensitive-string.js';
 import { carriesSerializedMarker, redactSerialized, serializedClass } from '../serialized.js';
 import { redactInStructure } from '../redact.js';
-import { consume, consumeFlag, LENGTHS, TOKEN, valueOfLength } from './fixtures.js';
+import { benchFloor, consume, consumeFlag, LENGTHS, TOKEN, valueOfLength } from './fixtures.js';
 
 const credential = new SensitiveString(TOKEN, 'credential', 'access_token');
 const expiring = new SensitiveString(TOKEN, 'credential', 'access_token', { ttl: 3_600_000 });
@@ -99,3 +99,5 @@ describe('recognizing a serialized value', () => {
     consume(redactInStructure(wirePayload));
   });
 });
+
+benchFloor();

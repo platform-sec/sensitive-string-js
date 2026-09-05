@@ -16,18 +16,25 @@
 import { bench, describe } from 'vitest';
 
 import { SensitiveString } from '../sensitive-string.js';
-import { consume, consumeFlag, LENGTHS, valueOfLength } from './fixtures.js';
+import {
+  benchFloor,
+  consume,
+  consumeFlag,
+  distinctCopy,
+  LENGTHS,
+  valueOfLength,
+} from './fixtures.js';
 
 const VALUE = valueOfLength(64);
 const OTHER = `${valueOfLength(63)}Z`;
 
 /**
- * An equal value built separately, so the control compares two strings rather
- * than one against itself. Built here rather than in the timed function: a
- * control that allocates its own operand every iteration measures the
- * allocator and reports the library as faster than a bare `===`.
+ * An equal value with a different identity, so the control compares two
+ * strings rather than one against itself. Built here rather than in the timed
+ * function: a control that allocates its own operand every iteration measures
+ * the allocator and reports the library as faster than a bare `===`.
  */
-const SAME = `${VALUE.slice(0, 32)}${VALUE.slice(32)}`;
+const SAME = distinctCopy(VALUE);
 
 const credential = new SensitiveString(VALUE, 'credential');
 const sensitive = new SensitiveString(VALUE, 'sensitive');
@@ -74,22 +81,26 @@ describe('credential equals by mismatch position', () => {
 
 describe('credential equals by value length', () => {
   for (const length of LENGTHS) {
-    const value = valueOfLength(length);
-    const instance = new SensitiveString(value, 'credential');
+    const instance = new SensitiveString(valueOfLength(length), 'credential');
+    const operand = distinctCopy(valueOfLength(length));
 
     bench(`${length} chars`, () => {
-      consumeFlag(instance.equals(value));
+      consumeFlag(instance.equals(operand));
     });
   }
 });
 
+// Each instance is compared against an equal string it does not already
+// hold. Comparing against its own backing string made `===` a pointer
+// comparison, which is why this sweep used to report 16KB as six times faster
+// than 16 chars.
 describe('sensitive equals by value length', () => {
   for (const length of LENGTHS) {
-    const value = valueOfLength(length);
-    const instance = new SensitiveString(value, 'sensitive');
+    const instance = new SensitiveString(valueOfLength(length), 'sensitive');
+    const operand = distinctCopy(valueOfLength(length));
 
     bench(`${length} chars`, () => {
-      consumeFlag(instance.equals(value));
+      consumeFlag(instance.equals(operand));
     });
   }
 });
@@ -105,3 +116,5 @@ describe('isEmpty', () => {
     consume(empty.isEmpty());
   });
 });
+
+benchFloor();

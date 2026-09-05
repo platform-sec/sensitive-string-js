@@ -9,6 +9,8 @@
  * every iteration measures the allocator as much as the library.
  */
 
+import { bench, describe } from 'vitest';
+
 import { SensitiveString } from '../sensitive-string.js';
 
 /**
@@ -38,6 +40,38 @@ export function consumeFlag(value: boolean): void {
 }
 
 /**
+ * The floor every other benchmark is measured on top of.
+ *
+ * Tinybench times each call separately, and that bookkeeping costs on the
+ * order of a hundred nanoseconds. Any operation in the same range is therefore
+ * reported as a fraction of its real cost relative to another one, because
+ * both carry the same constant: measured at 90ns, a 160ns operation and a
+ * 1175ns one print as 7.4x apart when they are really 15.7x apart. Subtract
+ * this group's figure from each side of a pair before taking their ratio.
+ *
+ * Two members rather than one, because every other benchmark ends in
+ * `consume`, so the second is the subtrahend to use and the first says how
+ * much of it is the sink rather than the harness.
+ *
+ * Every file declares this group. The floor belongs to the run rather than to
+ * the library, and it can drift between workers.
+ */
+export function benchFloor(): void {
+  describe('harness floor', () => {
+    bench('empty function', () => {
+      // Deliberately empty: this is the harness measuring itself.
+    });
+
+    bench('consume a constant', () => {
+      consume(FLOOR_CONSTANT);
+    });
+  });
+}
+
+/** Read by the floor probe, so the sink write it measures is a real one. */
+const FLOOR_CONSTANT = 'floor';
+
+/**
  * A conspicuous prefix, so a value that escapes into output during a run is
  * recognizable as having come from here.
  */
@@ -54,6 +88,22 @@ export function valueOfLength(length: number): string {
   }
 
   return out.slice(0, length);
+}
+
+/**
+ * An equal value with a different identity.
+ *
+ * `===` on two references to one string is a pointer comparison, so an
+ * instance compared against the very string it was built from measures
+ * nothing about length: the `sensitive` sweep reported 16KB as six times
+ * faster than 16 chars, which is the pointer compare, not the library.
+ * Splitting and rejoining yields a string the engine has not internalized,
+ * which forces the content comparison the sweep exists to measure.
+ */
+export function distinctCopy(value: string): string {
+  const half = value.length >> 1;
+
+  return `${value.slice(0, half)}${value.slice(half)}`;
 }
 
 /**

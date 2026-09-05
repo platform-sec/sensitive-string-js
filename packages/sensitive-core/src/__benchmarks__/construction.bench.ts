@@ -13,7 +13,7 @@ import { bench, describe } from 'vitest';
 import { SensitiveString } from '../sensitive-string.js';
 import { getDefaultPolicy, getPolicy, hasPolicy, getRegisteredClasses } from '../policy.js';
 import { st } from '../template.js';
-import { consume, LENGTHS, TOKEN, valueOfLength } from './fixtures.js';
+import { benchFloor, consume, LENGTHS, TOKEN, valueOfLength } from './fixtures.js';
 
 /**
  * Read once, so the sweep does not measure `Date` allocation, and far enough
@@ -106,3 +106,5 @@ describe('template tag', () => {
     consume(st`Bearer ${userId}`);
   });
 });
+
+benchFloor();

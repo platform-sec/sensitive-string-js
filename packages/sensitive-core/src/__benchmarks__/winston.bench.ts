@@ -15,7 +15,7 @@ import { bench, describe } from 'vitest';
 
 import { sensitiveFormat } from '../winston.js';
 import type { WinstonInfo } from '../winston.js';
-import { consume, plainPayload, requestPayload } from './fixtures.js';
+import { benchFloor, consume, plainPayload, requestPayload } from './fixtures.js';
 
 /**
  * The late-install warning is suppressed throughout. It fires once per format
@@ -118,3 +118,5 @@ describe('class collection', () => {
     consume(dropping.transform(plainRecord()));
   });
 });
+
+benchFloor();

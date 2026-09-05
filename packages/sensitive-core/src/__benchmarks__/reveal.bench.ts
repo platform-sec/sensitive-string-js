@@ -19,7 +19,7 @@ import {
   withRevealContext,
 } from '../context.js';
 import type { RevealContext } from '../types.js';
-import { consume, TOKEN } from './fixtures.js';
+import { benchFloor, consume, TOKEN } from './fixtures.js';
 
 const credential = new SensitiveString(TOKEN, 'credential', 'access_token');
 const holder = { value: TOKEN };
@@ -137,3 +137,5 @@ describe('reveal audit count', () => {
     consume(audited);
   });
 });
+
+benchFloor();
