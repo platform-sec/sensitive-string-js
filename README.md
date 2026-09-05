@@ -333,6 +333,11 @@ class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   ttlRemaining(): number | undefined;
   isRenewable(): boolean;
   renew(additionalTtl: number, options?: RenewalOptions, ctx?: RevealContext): void;
+
+  // Reveal limits
+  readonly revealCount: number;
+  readonly revealsRemaining?: number;
+  isExhausted(): boolean;
   
   // Manipulation
   concat(other: string | SensitiveString, ctx?: RevealContext): SensitiveString;
@@ -712,6 +717,97 @@ accepted as a deadline that can never be reached, which would be no deadline at 
 Expiration is a usability control on the values this process holds, not a cryptographic one. It
 stops code from using a stale secret; it does not erase the secret from memory, and it does not
 constrain a holder of the raw string that was already revealed.
+
+### Reveal Limits and Rate Limiting
+
+```typescript
+interface SensitiveStringOptions {
+  maxReveals?: number;          // over the whole life of the value; 0 means never
+  revealWindow?: number;        // sliding window, in milliseconds
+  maxRevealsPerWindow?: number; // exposures allowed inside that window
+}
+```
+
+A bootstrap token or a reset link should be usable once. A secret read thousands of times a second
+is usually a loop doing something it should not, and nothing in the process notices.
+
+```typescript
+const bootstrap = new SensitiveString(key, 'credential', 'bootstrap', { maxReveals: 1 });
+
+bootstrap.reveal();         // works
+bootstrap.revealCount;      // 1
+bootstrap.revealsRemaining; // 0
+bootstrap.isExhausted();    // true
+bootstrap.reveal();         // throws RevealLimitExceededError
+```
+
+A window limits the rate rather than the total, and the refusal says how long to wait, so a caller
+that means to continue can back off instead of fetching a new secret:
+
+```typescript
+const apiKey = new SensitiveString(key, 'credential', 'api_key', {
+  revealWindow: 60_000,
+  maxRevealsPerWindow: 100,
+});
+
+try {
+  apiKey.reveal();
+} catch (error) {
+  if (error instanceof RevealRateLimitError) {
+    await delay(error.retryAfter);
+  }
+}
+```
+
+The two compose. `maxReveals` is the one that cannot be waited out, so it is the one reported when
+both would refuse. `revealWindow` and `maxRevealsPerWindow` must be given together, because either
+alone is no rate limit at all, and `maxReveals: 0` is how a value is made unreadable rather than
+`maxRevealsPerWindow: 0`.
+
+An exposure is what an audit hook sees: `reveal()`, `mask()`, `serialize()`, `map()`, and every
+string, regex, and template operation, one per call. `equals()` is not, and an exhausted value can
+still be compared, because a comparison reads the value without disclosing it and is the operation
+to reach for in place of a reveal. Redaction and metadata are not either: `toString()`, `toJSON()`,
+`length`, `klass`, and `label` keep working on a spent value, which still has to be safe to log.
+
+`revealCount` is kept for every value, whether or not it limits anything. A read the gate refused,
+or one an audit hook stopped by throwing, is not counted, so a broken audit sink cannot quietly
+spend a single-use token.
+
+Derived values share the counter rather than copying it, so a limit cannot be laundered by deriving
+from the value it constrains:
+
+```typescript
+const bootstrap = new SensitiveString(key, 'credential', 'bootstrap', { maxReveals: 1 });
+
+bootstrap.substring(0).reveal(); // throws: the substring spent the budget, and shares it
+```
+
+A value built from two constrained values is charged against both, reports the highest count and
+the smallest remainder, and is exhausted as soon as either of them is.
+
+Counters do not cross the wire. `serialize()` charges the sender, and the receiver starts a fresh
+count with no limits, because two processes cannot share a counter and a payload must not be able
+to describe its own budget. A limit that has to survive a service boundary belongs to the receiving
+process's construction site.
+
+```typescript
+const received = SensitiveString.deserialize(payload);
+received.revealCount; // 0
+```
+
+Nothing resets a count. There is no reset method, in test builds or otherwise: a control the
+process can switch off is not a control, and a test wanting a fresh budget constructs a fresh value.
+
+The sliding window keeps only the charges still inside it, so its memory is bounded by
+`maxRevealsPerWindow` rather than by traffic, however long the value lives: the backing array holds
+at most twice the limit, and a window that goes quiet for longer than its own length drops
+everything on the next check.
+
+Counters are per instance and per process. This finds a runaway loop, a retry storm, or a token
+being used twice inside one service. It is not a defense against credential stuffing or against an
+attacker who has the value: they hold their own copy of the string and never touch this instance
+again.
 
 ### Development Mode
 

@@ -57,6 +57,8 @@ const raw = apiKey.reveal({ name: 'api-call', reason: 'authenticating' });
   most restrictive class
 - **Expiration**: `ttl` and `expiresAt` stop a value from being used past its deadline, and
   derived values expire with the value they came from
+- **Reveal Limits**: `maxReveals` makes a token single-use, a sliding window catches a runaway
+  loop, and derived values spend the same budget
 - **Path-Based Wrapping**: Wrap sensitive fields in complex objects by path
 - **Development Mode**: `setDevMode()` records where a value came from, how often it has been
   exposed and from where, off by default and behind one guard when it is

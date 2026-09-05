@@ -23,6 +23,15 @@ import {
   RenewalNotAllowedError,
   type ExpiryState,
 } from './ttl.js';
+import {
+  chargeReveal,
+  checkRevealBudget,
+  isBudgetExhausted,
+  planRevealBudget,
+  revealsRemaining,
+  type RevealBudget,
+  type RevealConstrained,
+} from './reveal-budget.js';
 
 /**
  * Node.js custom inspect symbol for util.inspect() and console.log().
@@ -137,6 +146,49 @@ type RawValueAccess = 'safe' | 'compare' | 'expose';
 interface SensitiveStringState {
   readonly options: SensitiveStringOptions;
   readonly expiry: ExpiryState;
+  /**
+   * Exposures charged against this value. Monotonic, counted whether or not
+   * the value limits them, so `revealCount` answers for every value.
+   */
+  reveals: number;
+  /** The limits on those exposures, or undefined when there are none. */
+  readonly budget: RevealBudget | undefined;
+}
+
+/** A state that carries reveal limits. */
+type ConstrainedState = SensitiveStringState & RevealConstrained;
+
+function isConstrained(state: SensitiveStringState): state is ConstrainedState {
+  return state.budget !== undefined;
+}
+
+/**
+ * The shared empty array every unconstrained value points at, so a value that
+ * configures no limits allocates nothing for the ones it does not have.
+ */
+const NO_BUDGETS: readonly ConstrainedState[] = Object.freeze([]);
+
+/** The same, for a derivative between construction and adopting its sources. */
+const NO_STATES: readonly SensitiveStringState[] = Object.freeze([]);
+
+/**
+ * The subset of these states that limits reveals.
+ *
+ * A filtered view of `#states` rather than a second source of truth: the state
+ * objects are the same ones, so the two cannot disagree about a count. It
+ * exists so the gate can dismiss the overwhelmingly common unconstrained case
+ * with a length check instead of a walk.
+ */
+function constrainedStates(states: readonly SensitiveStringState[]): readonly ConstrainedState[] {
+  let constrained: ConstrainedState[] | undefined;
+
+  for (const state of states) {
+    if (isConstrained(state)) {
+      (constrained ??= []).push(state);
+    }
+  }
+
+  return constrained ?? NO_BUDGETS;
 }
 
 /**
@@ -237,7 +289,14 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * sources are retained for concat so future constraints and counters remain
    * shared without dropping either parent.
    */
-  #states: readonly SensitiveStringState[];
+  #states: readonly SensitiveStringState[] = NO_STATES;
+
+  /**
+   * The states above that limit reveals, assigned only through `#adopt` so it
+   * cannot drift from `#states`. Empty for a value with no limits, which is
+   * how the gate skips the whole feature in one comparison.
+   */
+  #constrained: readonly ConstrainedState[] = NO_BUDGETS;
 
   /**
    * This instance's own state, or undefined when it was derived from other
@@ -265,9 +324,9 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param klass - The sensitivity classification ('credential' or 'sensitive')
    * @param label - Optional label for audit/compliance (e.g., 'api_key', 'email')
    * @param options - Shared options for access constraints and feature behavior
-   * @throws Error If both `ttl` and `expiresAt` are given, or the class policy requires an expiration and neither is.
+   * @throws Error If both `ttl` and `expiresAt` are given, if only one half of the rate limit is given, or if the class policy requires an expiration and neither is.
    * @throws TypeError If `value` is not a string, or an option has the wrong type.
-   * @throws RangeError If `ttl` is negative or `expiresAt` is an invalid Date.
+   * @throws RangeError If `ttl` is negative, `expiresAt` is an invalid Date, or a reveal limit is out of range.
    */
   constructor(value: string, klass: C, label?: string, options?: SensitiveStringOptions) {
     // Anything but a string would still redact, and then fail far from here:
@@ -295,7 +354,6 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       // #derived assigns the sources' state objects immediately after this
       // returns. Planning state here would be discarded, and a policy that
       // requires an expiration would reject a derivative that has one.
-      this.#states = [];
       this.#own = undefined;
       return;
     }
@@ -303,10 +361,24 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     const state: SensitiveStringState = {
       options: options ?? {},
       expiry: planExpiry(options, klass, getPolicy(klass)),
+      reveals: 0,
+      budget: planRevealBudget(options),
     };
 
-    this.#states = [state];
     this.#own = state;
+    this.#adopt([state]);
+  }
+
+  /**
+   * Take on a set of shared states.
+   *
+   * The only assignment to `#states`, so the constrained view is never left
+   * behind by a derivation that forgot it. A derivation that dropped the view
+   * would hand back an unlimited copy of a value that was meant to be spent.
+   */
+  #adopt(states: readonly SensitiveStringState[], constrained?: readonly ConstrainedState[]): void {
+    this.#states = states;
+    this.#constrained = constrained ?? constrainedStates(states);
   }
 
   /**
@@ -402,6 +474,15 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       throw new ExpiredSensitiveValueError(new Date(expired), new Date(), this.label);
     }
 
+    // The same rule one step later, and the same reason the budget is decided
+    // here but charged below: a refusal is not a reveal, and neither is a read
+    // an audit hook stopped. A comparison is not charged and so is not refused
+    // by a spent budget either; it reads the value without disclosing it, and
+    // it is the operation the library wants used in place of a reveal.
+    if (access === 'expose' && this.#constrained.length !== 0) {
+      checkRevealBudget(this.#constrained, this.label);
+    }
+
     const effectiveCtx = ctx ?? getCurrentRevealContext();
     // `access` is narrowed to 'compare' | 'expose' by the early return above, so
     // a policy is never asked to authorize a read that only feeds redaction.
@@ -411,7 +492,9 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       effectiveCtx?.auditReveal?.(this, details);
 
       // After the audit hook, which is free to throw and stop the reveal: what
-      // development mode counts is what actually reached the caller.
+      // is counted, charged, and recorded is what actually reached the caller.
+      chargeReveal(this.#states);
+
       if (devMode.config.enabled) {
         recordReveal(this, this.klass, this.label, this.#value, effectiveCtx, details);
       }
@@ -437,14 +520,16 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     );
     const only = sources.length === 1 ? sources[0] : undefined;
 
-    // One source is the common case, and its state array is already exactly
+    // One source is the common case, and its state arrays are already exactly
     // what the derivative needs. `#states` is assigned once and never mutated,
     // and the state objects are shared between derivatives by design.
     if (only !== undefined) {
-      derived.#states = only.#states;
+      derived.#adopt(only.#states, only.#constrained);
       return derived;
     }
 
+    // A Set, so a value derived from two values that already share a state
+    // charges that state once per read rather than twice.
     const states = new Set<SensitiveStringState>();
 
     for (const source of sources) {
@@ -453,7 +538,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       }
     }
 
-    derived.#states = Array.from(states);
+    derived.#adopt(Array.from(states));
     return derived;
   }
 
@@ -516,7 +601,8 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   [NODE_INSPECT_SYMBOL](): string {
     const klassLabel = this.label ? `${this.klass}:${this.label}` : this.klass;
     const expired = this.#expiredDeadline(false) !== undefined ? ' EXPIRED' : '';
-    return `SensitiveString<${klassLabel}> { ${this.toString()}${expired} }`;
+    const exhausted = isBudgetExhausted(this.#constrained) ? ' EXHAUSTED' : '';
+    return `SensitiveString<${klassLabel}> { ${this.toString()}${expired}${exhausted} }`;
   }
 
   /**
@@ -526,6 +612,9 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    *
    * @param ctx - Optional explicit reveal context.
    * @throws If policy checking fails.
+   * @throws ExpiredSensitiveValueError If the value has expired.
+   * @throws RevealLimitExceededError If `maxReveals` has been reached.
+   * @throws RevealRateLimitError If `maxRevealsPerWindow` has been reached within the window.
    */
   reveal(ctx?: RevealContext): string {
     return this.#readRawValue('expose', ctx);
@@ -705,6 +794,52 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     expiry.renewalCount++;
     // The new deadline is a new expiration, so its own notification is due.
     expiry.notified = false;
+  }
+
+  /**
+   * How many times this value has been exposed.
+   *
+   * Counted for every value, whether or not it limits reveals. An exposure is
+   * what an audit hook sees: `reveal()`, `mask()`, `serialize()`, `map()`, and
+   * the string, regex, and template operations, one per call. `equals()` is
+   * not, because a comparison reads the value without disclosing it, and
+   * neither is redaction. A read the gate refused, or one an audit hook stopped
+   * by throwing, is not counted: a denied reveal is not a reveal.
+   *
+   * A derived value reports the highest count among the values it was built
+   * from, which is the one nearest a limit.
+   */
+  get revealCount(): number {
+    let highest = 0;
+
+    for (const state of this.#states) {
+      if (state.reveals > highest) {
+        highest = state.reveals;
+      }
+    }
+
+    return highest;
+  }
+
+  /**
+   * Exposures still allowed before `maxReveals` is reached, or `undefined` when
+   * this value sets no lifetime limit.
+   *
+   * A derived value reports the smallest remaining budget among the values it
+   * was built from, which is the one that will refuse first.
+   */
+  get revealsRemaining(): number | undefined {
+    return revealsRemaining(this.#constrained);
+  }
+
+  /**
+   * Whether the lifetime limit has been reached, so no further exposure is
+   * possible. Permanent: nothing resets a reveal count.
+   *
+   * A rate limit does not make a value exhausted, because waiting clears it.
+   */
+  isExhausted(): boolean {
+    return isBudgetExhausted(this.#constrained);
   }
 
   /**

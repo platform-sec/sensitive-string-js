@@ -61,6 +61,9 @@ export { ExpiredSensitiveValueError, RenewalNotAllowedError } from './ttl.js';
 export { RevealDuringRedactionError } from './redaction-scope.js';
 export type { RenewalRefusal } from './ttl.js';
 
+// Reveal limits and rate limiting
+export { RevealLimitExceededError, RevealRateLimitError } from './reveal-budget.js';
+
 // Development mode
 export { setDevMode, getDevModeConfig, withDevMode } from './dev-mode.js';
 export type {

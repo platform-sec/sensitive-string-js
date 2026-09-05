@@ -60,6 +60,26 @@ export interface SensitiveStringOptions {
    * derived from it. Errors thrown by it are swallowed.
    */
   onExpire?: () => void;
+
+  /**
+   * Total number of times this value may be exposed, over its whole life.
+   *
+   * `0` means it may never be exposed, which is the most conservative budget a
+   * caller can ask for. The count is shared with everything derived from the
+   * value, and nothing resets it.
+   */
+  maxReveals?: number;
+
+  /**
+   * Length of the sliding rate-limit window, in milliseconds.
+   *
+   * Must be given together with `maxRevealsPerWindow`: either alone is no rate
+   * limit at all.
+   */
+  revealWindow?: number;
+
+  /** Exposures allowed within `revealWindow`. Must be at least 1. */
+  maxRevealsPerWindow?: number;
 }
 
 /**
@@ -221,6 +241,12 @@ export interface RevealContext {
    * The return value is ignored. A sink that must stop the reveal throws
    * synchronously; a Promise it returns is not awaited, so a rejection after an
    * `await` cannot stop anything and surfaces as an unhandled rejection.
+   *
+   * ⚠️ The hook runs inside the raw-value gate, which is not reentrant. Reading
+   * `value` from here, through `reveal()`, `mask()` or any operation that
+   * derives from it, re-enters the gate and recurses until the stack is
+   * exhausted; against a reveal budget it also charges the inner read before
+   * the outer one has been charged. Read `klass` and `label`, and nothing else.
    */
   auditReveal?(value: ISensitiveString, details: RevealDetails): void;
 }
