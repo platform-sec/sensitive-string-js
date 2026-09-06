@@ -16,6 +16,7 @@ import {
 } from '../ast.js';
 import { ruleDocs } from '../docs.js';
 import { nameListSchema, optionObject, readBoolean, readNameSet } from '../options.js';
+import { DEFAULT_SENSITIVE_TYPES, getTypeServices, isSensitiveWrapper } from '../type-info.js';
 import type { AstNode, RuleContext, RuleListener, RuleModule } from '../types.js';
 
 const RULE_NAME = 'require-reveal-context';
@@ -27,6 +28,36 @@ const RULE_NAME = 'require-reveal-context';
  * from `AsyncLocalStorage`, and the audit record is written either way.
  */
 const DEFAULT_CONTEXT_FUNCTIONS: readonly string[] = ['withRevealContext', 'withAuditedReveals'];
+
+/**
+ * The reads that take a `RevealContext`, and where it sits among the arguments.
+ *
+ * `hash()` and `hmac()` are here because the library audits them exactly as it
+ * audits a reveal: they read the raw value, charge the reveal budget, and write
+ * an audit record. A record saying a digest of a credential was taken, with
+ * nothing about who took it or why, is the gap this rule exists to close.
+ *
+ * `mask()` and `serialize()` take a context too and are the obvious next
+ * candidates. They are not here yet.
+ */
+const CONTEXT_ARGUMENT: ReadonlyMap<string, number> = new Map([
+  [REVEAL_METHOD, 0],
+  ['hash', 2],
+  ['hmac', 3],
+]);
+
+/**
+ * The methods this rule will not match on the name alone.
+ *
+ * `reveal` is rare enough in ordinary code that matching it by name is the
+ * documented tradeoff of an untyped rule, and `magician.reveal()` being
+ * reported is the accepted cost. `hash` is not in that category: `bcrypt`,
+ * `argon2` and `node:crypto` all have one, this repository calls two of them,
+ * and a rule that reported every `.hash()` in a codebase would be turned off
+ * within the hour. So these are checked only where the receiver's type can be
+ * read, and are silently skipped in a file that has no type information.
+ */
+const TYPED_ONLY: ReadonlySet<string> = new Set(['hash', 'hmac']);
 
 /**
  * Whether the reveal sits inside a call that installs a context.
@@ -74,14 +105,14 @@ export const requireRevealContext: RuleModule = {
     type: 'suggestion',
     docs: ruleDocs(
       RULE_NAME,
-      'Require an audit context on reveal(), from an argument or an enclosing withRevealContext()',
+      'Require an audit context on reveal(), and on hash() and hmac() where types are available, from an argument or an enclosing withRevealContext()',
       false
     ),
     messages: {
       missingContext:
-        'reveal() has no audit context. Pass { name: "..." } or run the call inside {{contextFunction}}() so the access is attributable.',
+        '{{method}}() has no audit context. Pass { name: "..." } or run the call inside {{contextFunction}}() so the access is attributable.',
       missingReason:
-        'reveal() context has no "reason". Add one so the audit record says why the value was read, not just who read it.',
+        '{{method}}() context has no "reason". Add one so the audit record says why the value was read, not just who read it.',
     },
     schema: [
       {
@@ -89,6 +120,7 @@ export const requireRevealContext: RuleModule = {
         properties: {
           requireReason: { type: 'boolean' },
           contextFunctions: nameListSchema(),
+          sensitiveTypes: nameListSchema(),
         },
         additionalProperties: false,
       },
@@ -99,12 +131,26 @@ export const requireRevealContext: RuleModule = {
     const option = optionObject(context.options, 0);
     const requireReason = readBoolean(option, 'requireReason', false);
     const contextFunctions = readNameSet(option, 'contextFunctions', DEFAULT_CONTEXT_FUNCTIONS);
+    const sensitiveTypes = readNameSet(option, 'sensitiveTypes', DEFAULT_SENSITIVE_TYPES);
     const [suggestedFunction] = contextFunctions;
+    const services = getTypeServices(context);
 
     return {
       CallExpression(node: AstNode): void {
         const call = asMethodCall(node);
-        if (call === undefined || call.method !== REVEAL_METHOD) {
+        if (call === undefined) {
+          return;
+        }
+
+        const index = CONTEXT_ARGUMENT.get(call.method);
+        if (index === undefined) {
+          return;
+        }
+
+        if (
+          TYPED_ONLY.has(call.method) &&
+          (services === undefined || !isSensitiveWrapper(call.receiver, services, sensitiveTypes))
+        ) {
           return;
         }
 
@@ -112,19 +158,30 @@ export const requireRevealContext: RuleModule = {
           return;
         }
 
-        const [first] = callArguments(node);
-        if (first === undefined || isExplicitUndefined(first)) {
+        const args = callArguments(node);
+
+        // A spread ahead of the context moves everything after it, so which
+        // argument is the context stops being a question syntax can answer.
+        if (args.slice(0, index + 1).some((argument) => isSpread(argument))) {
+          return;
+        }
+
+        const given = args[index];
+        if (given === undefined || isExplicitUndefined(given)) {
           context.report({
             node,
             messageId: 'missingContext',
-            data: { contextFunction: suggestedFunction ?? 'withRevealContext' },
+            data: {
+              method: call.method,
+              contextFunction: suggestedFunction ?? 'withRevealContext',
+            },
           });
           return;
         }
 
-        const givenContext = unwrap(first);
+        const givenContext = unwrap(given);
         if (requireReason && givenContext.type === 'ObjectExpression' && !hasReason(givenContext)) {
-          context.report({ node, messageId: 'missingReason' });
+          context.report({ node, messageId: 'missingReason', data: { method: call.method } });
         }
       },
     };

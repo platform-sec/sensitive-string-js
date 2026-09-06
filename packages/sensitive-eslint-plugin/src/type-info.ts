@@ -300,6 +300,79 @@ function childrenOf(
 }
 
 /**
+ * How many types one receiver check may examine.
+ *
+ * Far below {@link TYPE_BUDGET}, because this walk is a different shape: it
+ * follows unions and base classes only, never properties, so the count is the
+ * depth of an inheritance chain and the width of a union rather than the size
+ * of a payload. A receiver that reaches this figure is not a wrapper.
+ */
+const RECEIVER_BUDGET = 64;
+
+/**
+ * Whether an expression *is* a sensitive wrapper, rather than carrying one.
+ *
+ * The question `findSensitiveType` answers is "does this structure hold a
+ * value", which is what a serializer walks. This one asks whether the
+ * expression in hand is the wrapper itself, which is what a method call needs:
+ * `bcrypt.hash(...)` and `token.hash(...)` are the same syntax, and only the
+ * receiver's type separates them.
+ *
+ * Properties are therefore not followed. A `{ token: SensitiveString }` holds
+ * one and has no `hash` method of its own, so following its properties would
+ * report `user.hash()` on a `user` that has an unrelated one. Unions,
+ * intersections and base classes are followed: `SensitiveString | undefined`
+ * is what an optional chain produces, and `class ApiKey extends
+ * SensitiveString` is still a wrapper.
+ */
+export function isSensitiveWrapper(
+  node: AstNode,
+  services: TypeServices,
+  names: ReadonlySet<string>
+): boolean {
+  const location = services.tsNodeOf(node);
+  if (location === undefined) {
+    return false;
+  }
+
+  const root = services.checker.getTypeAtLocation(location);
+  if (!isRecord(root)) {
+    return false;
+  }
+
+  const pending: TypeLike[] = [root];
+  const seen = new Set<TypeLike>();
+  let budget = RECEIVER_BUDGET;
+
+  while (pending.length > 0 && budget > 0) {
+    const type = pending.pop() as TypeLike;
+    if (seen.has(type)) {
+      continue;
+    }
+    seen.add(type);
+    budget -= 1;
+
+    if (namesOf(type).some((name) => names.has(name))) {
+      return true;
+    }
+
+    for (const member of type.types ?? []) {
+      if (isRecord(member)) {
+        pending.push(member);
+      }
+    }
+
+    for (const base of type.getBaseTypes?.() ?? []) {
+      if (isRecord(base)) {
+        pending.push(base);
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
  * The sensitive type an expression's type carries, or `undefined`.
  *
  * The search stops as soon as it finds one reached through a property, which

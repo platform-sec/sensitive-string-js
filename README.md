@@ -1660,6 +1660,11 @@ The three rules that catch a value escaping are errors. The two that ask for mor
 warnings, because each has a shape it provably cannot see without type information: a context
 installed in a caller, a class supplied through a spread.
 
+`require-reveal-context` also covers `hash()` and `hmac()`, which the library audits exactly as it
+audits a reveal, but only in a file that has a TypeScript program: `bcrypt`, `argon2` and
+`node:crypto` all have a `hash` method, so the receiver's type is the only thing that separates
+`token.hash('sha256')` from `bcrypt.hash(password, 12)`.
+
 Two more rules answer a question no syntax answers, "does this value carry a sensitive one inside
 it", so they need a TypeScript program and live only in the `-type-checked` presets:
 

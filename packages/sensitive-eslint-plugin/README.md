@@ -76,7 +76,7 @@ Syntax only, in `recommended`:
 | [no-credential-equality](docs/rules/no-credential-equality.md) | error | `x.reveal() === y`, `switch (x.reveal())` |
 | [no-network-sensitive](docs/rules/no-network-sensitive.md) | error | `fetch(url, { body: x.reveal() })` |
 | [explicit-class](docs/rules/explicit-class.md) | warn | `new SensitiveString(v)` with no class |
-| [require-reveal-context](docs/rules/require-reveal-context.md) | warn | `x.reveal()` with no context and no enclosing `withRevealContext` |
+| [require-reveal-context](docs/rules/require-reveal-context.md) | warn | `x.reveal()` with no context and no enclosing `withRevealContext`, and the same for `hash()` and `hmac()` where types are available |
 
 Type-aware, in `recommended-type-checked` only:
 
@@ -140,6 +140,14 @@ file, rather than falling silent. Silence would be the worse failure: a rule
 that reports nothing looks exactly like a rule that found nothing, and these
 two get read as "no sensitive value is being stringified or logged here".
 `disable-type-checked` is what turns them off where that is expected.
+
+`require-reveal-context` is a third case: it works without a program and uses
+one when it is there. `reveal()` is matched by name in every configuration;
+`hash()` and `hmac()` are checked only where the receiver's type can be read,
+because `bcrypt`, `argon2` and `node:crypto` all have a `hash` method and a
+rule that reported every `.hash()` call would be turned off within the hour. It
+stays enabled under `disable-type-checked`, where it does the half of its job
+that needs no types.
 
 ## Suggestions, not fixes
 
