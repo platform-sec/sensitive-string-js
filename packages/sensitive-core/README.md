@@ -59,6 +59,10 @@ const raw = apiKey.reveal({ name: 'api-call', reason: 'authenticating' });
   derived values expire with the value they came from
 - **Reveal Limits**: `maxReveals` makes a token single-use, a sliding window catches a runaway
   loop, and derived values spend the same budget
+- **One-Way Hashing**: `hash()` and `hmac()` derive a lookup or correlation token through the same
+  gate as a reveal, and return it as a protected `credential` carrying the source's constraints.
+  Password storage lives in `@platform-sec/sensitive-string-kdf`, since a fast digest is the wrong
+  tool for it
 - **Path-Based Wrapping**: Wrap sensitive fields in complex objects by path
 - **Development Mode**: `setDevMode()` records where a value came from, how often it has been
   exposed and from where, off by default and behind one guard when it is

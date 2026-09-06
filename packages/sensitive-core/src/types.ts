@@ -179,6 +179,52 @@ export interface MaskOptions {
 }
 
 /**
+ * Digest algorithms `hash()` and `hmac()` accept.
+ *
+ * An allowlist, rather than whatever the Node build happens to support. MD5
+ * and SHA-1 are absent because both are broken: a digest under either is a
+ * recoverable copy of the value rather than a one-way derivative of it.
+ */
+export type HashAlgorithm = 'sha256' | 'sha384' | 'sha512' | 'sha3-256' | 'sha3-512';
+
+/** How a digest is rendered. */
+export type HashEncoding = 'hex' | 'base64' | 'base64url';
+
+/**
+ * Options for `SensitiveString.hash()`.
+ */
+export interface HashOptions {
+  /**
+   * Salt mixed in ahead of the value, so the same value under two salts gives
+   * two digests and a precomputed table built for one does not answer for the
+   * other.
+   *
+   * A string is read as UTF-8. It is prepended with no separator, which is what
+   * makes the digest reproducible by anything else computing
+   * `sha256(salt || value)`; the cost is that a variable-length salt is
+   * ambiguous, since `('ab', 'c')` and `('a', 'bc')` hash alike. Use a
+   * fixed-length salt, which is what a per-user salt from `randomBytes` is.
+   *
+   * A salt is not a key. It stops precomputation, and it does nothing at all
+   * against an attacker who has the salt and guesses the value, which is every
+   * attacker holding a digest and the record it came from. For a value an
+   * attacker can enumerate, use `hmac()`.
+   */
+  salt?: string | Uint8Array;
+
+  /** Digest rendering. Defaults to `'hex'`. */
+  encoding?: HashEncoding;
+}
+
+/**
+ * Options for `SensitiveString.hmac()`.
+ */
+export interface HmacOptions {
+  /** Digest rendering. Defaults to `'hex'`. */
+  encoding?: HashEncoding;
+}
+
+/**
  * Audit record for a full reveal.
  */
 export interface RevealAuditDetails {
@@ -199,6 +245,36 @@ export interface MaskAuditDetails {
   readonly showLast: number;
   readonly minMasked: number;
   readonly maskChar: string;
+}
+
+/**
+ * Audit record for a digest taken through `hash()`.
+ *
+ * The salt is deliberately absent. It is not the value and it is not secret,
+ * but an audit sink is the one place a digest, the record it belongs to, and
+ * the salt that produced it would all sit together, and a salt is only useful
+ * to an attacker who has the other two.
+ */
+export interface HashAuditDetails {
+  readonly operation: 'hash';
+  readonly algorithm: HashAlgorithm;
+  readonly encoding: HashEncoding;
+  /** Whether a salt was mixed in. */
+  readonly salted: boolean;
+}
+
+/**
+ * Audit record for a digest taken through `hmac()`.
+ *
+ * A protected key produces a second record of its own, under this same
+ * operation, because using a value as an HMAC key reads it.
+ */
+export interface HmacAuditDetails {
+  readonly operation: 'hmac';
+  readonly algorithm: HashAlgorithm;
+  readonly encoding: HashEncoding;
+  /** Whether the key was itself a protected value. */
+  readonly protectedKey: boolean;
 }
 
 /**
@@ -238,16 +314,24 @@ export interface RevokeAuditDetails {
  * a partial one, and either from a lifetime extension or a revocation.
  */
 export type RevealDetails =
-  RevealAuditDetails | MaskAuditDetails | RenewAuditDetails | RevokeAuditDetails;
+  | RevealAuditDetails
+  | MaskAuditDetails
+  | HashAuditDetails
+  | HmacAuditDetails
+  | RenewAuditDetails
+  | RevokeAuditDetails;
 
 /**
  * What a policy is being asked to authorize.
  *
  * - `compare`: `equals()`, which reads the value but never hands it to the
  *   caller and produces no audit record.
- * - `expose`: the raw value reaches the caller, whether in full through
- *   `reveal()` and `serialize()` or in part through `mask()` and the string
- *   and regex operations.
+ * - `expose`: the value is read for the caller's benefit, whether in full
+ *   through `reveal()` and `serialize()`, in part through `mask()` and the
+ *   string and regex operations, or as a durable one-way derivative through
+ *   `hash()` and `hmac()`. The last of those hands the caller nothing raw and
+ *   is still an exposure: a digest of a value an attacker can enumerate is
+ *   that value behind a lookup table.
  * - `renew`: not a read at all. The value's deadline is being extended.
  *
  * A read that only feeds redaction or documented metadata (`toString()`,
@@ -257,11 +341,21 @@ export type RevealAccess = 'compare' | 'expose' | 'renew';
 
 /**
  * Advisory metadata for sensitivity policies.
- * NOT enforced by this library in MVP - use for documentation,
- * external policy engines, and future enforcement.
+ *
+ * Mostly not enforced: use it for documentation and for an external policy
+ * engine. Two fields are read by code in this monorepo and each says so on
+ * itself, with opposite defaults, because they answer opposite questions.
  */
 export interface SensitivityAdvisory {
-  /** Whether hashing is allowed for this data type */
+  /**
+   * Whether a one-way digest of this class may be taken.
+   *
+   * Enforced by `hash()` and `hmac()`. `undefined` allows, unlike
+   * `allowSendToExternal` below: hashing is the operation this library wants
+   * used in place of holding a value, so the flag exists to forbid it for a
+   * class where even a digest is too much, not to require permission for the
+   * safe path.
+   */
   allowHash?: boolean;
   /** Whether plaintext persistence is allowed */
   allowPersistPlain?: boolean;
@@ -417,7 +511,7 @@ export interface SensitivityPolicy {
    */
   combineClasses?(a: SensitivityClass, b: SensitivityClass): SensitivityClass;
 
-  /** Advisory metadata - not enforced in MVP */
+  /** Advisory metadata. Mostly not enforced; see `SensitivityAdvisory` for the two that are */
   advisory?: SensitivityAdvisory;
 }
 

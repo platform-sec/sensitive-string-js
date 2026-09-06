@@ -399,6 +399,20 @@ describe('development mode', () => {
       expect(lines[0]).toContain("Mask of 'email'");
     });
 
+    it('names a digest as a digest, not as a reveal', () => {
+      const { lines, config } = logging();
+
+      withDevMode(config, () => {
+        const token = new SensitiveString('value', 'credential', 'api_key');
+
+        token.hash('sha256');
+        token.hmac('sha256', 'k'.repeat(32));
+      });
+
+      expect(lines[0]).toContain("Hash of 'api_key'");
+      expect(lines[1]).toContain("HMAC of 'api_key'");
+    });
+
     it('reports the context that explains the reveal', () => {
       const { lines, config } = logging();
 

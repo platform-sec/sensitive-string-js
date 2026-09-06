@@ -322,6 +322,19 @@ class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   // Raw access
   reveal(ctx?: RevealContext): string;
   mask(options?: MaskOptions, ctx?: RevealContext): string;
+
+  // One-way transformations, audited like a reveal
+  hash(
+    algorithm: HashAlgorithm,
+    options?: HashOptions,
+    ctx?: RevealContext
+  ): SensitiveString<'credential'>;
+  hmac(
+    algorithm: HashAlgorithm,
+    key: string | Uint8Array | SensitiveString,
+    options?: HmacOptions,
+    ctx?: RevealContext
+  ): SensitiveString<'credential'>;
   
   // Comparison, constant-time when either operand's class requires it
   equals(other: string | SensitiveString, ctx?: RevealContext): boolean;
@@ -540,6 +553,106 @@ pan.mask({ strategy: 'card', customStrategy: (value) => value });
 // Error: customStrategy requires strategy: 'custom'
 ```
 
+### One-Way Hashing
+
+```typescript
+type HashAlgorithm = 'sha256' | 'sha384' | 'sha512' | 'sha3-256' | 'sha3-512';
+
+interface HashOptions {
+  salt?: string | Uint8Array;
+  encoding?: 'hex' | 'base64' | 'base64url';  // default 'hex'
+}
+
+hash(
+  algorithm: HashAlgorithm,
+  options?: HashOptions,
+  ctx?: RevealContext
+): SensitiveString<'credential'>;
+
+hmac(
+  algorithm: HashAlgorithm,
+  key: string | Uint8Array | SensitiveString,
+  options?: HmacOptions,
+  ctx?: RevealContext
+): SensitiveString<'credential'>;
+```
+
+A lookup key, a deduplication key, or a correlation token: something derived from a value that can
+be stored or compared without storing the value. Without it the caller reveals and hands the raw
+value to a hashing library, which is a reveal the audit log records as one and a plain string
+afterwards.
+
+```typescript
+const token = new SensitiveString(raw, 'credential', 'session_token');
+
+const lookupKey = token.hash('sha256');
+// SensitiveString<credential:session_token:hash> { [REDACTED:credential] }
+
+await db.sessions.findUnique({ where: { tokenHash: lookupKey.reveal() } });
+```
+
+Taking a digest is an exposure. It runs the class policy, fires `auditReveal` with
+`operation: 'hash'`, counts against a reveal budget, and refuses on an expired or revoked value.
+A policy that sets `advisory.allowHash: false` forbids it outright; the flag has been declared
+since the beginning and this is what reads it. Unset allows, unlike `allowSendToExternal`, because
+hashing is the operation the library wants used in place of holding a value.
+
+The result is always `credential`, whatever the source was, and it carries the deadline, the reveal
+budget and the revocation of the value it came from. Taking the digest and then reading it are two
+exposures of the same budget, so a value with `maxReveals: 1` can be hashed or stored, not both.
+
+A digest of a value an attacker can enumerate is that value behind a lookup table: there are ten
+billion Social Security numbers and a laptop hashes all of them in under a minute. Inheriting the
+constraints is what stops `ssn.hash('sha256')` from being a way to spend one reveal and keep a
+recoverable copy forever.
+
+For a value that is guessable, salt is not enough, because the salt sits in the same row as the
+digest. Key it:
+
+```typescript
+const email = new SensitiveString('jane@example.com', 'sensitive', 'email');
+const pseudonym = email.hmac('sha256', process.env.CORRELATION_KEY!);
+```
+
+The key must be at least 16 bytes, the same floor `deriveKeyedToken` applies. A `SensitiveString`
+key is read through its own gate, so its policy, audit hook, budget and revocation all apply, and
+the result carries the constraints of the value and the key both.
+
+MD5 and SHA-1 are refused with a reason rather than omitted from a list. A salt is prepended, never
+appended, and an empty one is refused rather than read as no salt at all.
+
+#### Password Storage
+
+⚠️ `hash('sha256')` is not password hashing. It is fast, and speed is the one property a stored
+password must not have: a wordlist runs through SHA-256 at billions of guesses a second on rented
+hardware. Password hashing lives in a separate package, because Argon2 and bcrypt are native
+modules and `core` has no runtime dependencies.
+
+```typescript
+import { hashForStorage, verifyHash } from '@platform-sec/sensitive-string-kdf';
+
+const password = new SensitiveString(body.password, 'credential', 'password');
+const stored = await hashForStorage(password, { algorithm: 'argon2id' });
+// SensitiveString<credential:password:stored>
+
+await verifyHash(stored, body.password); // true
+```
+
+`argon2id`, `argon2i`, `argon2d`, `bcrypt` and `scrypt`, with the parameters and the salt inside the
+stored string, so verification reads them from the hash rather than from anything configured today.
+`scrypt` needs only `node:crypto`, which makes it the answer for an application that cannot install
+a native module. Every parameter has a floor as well as a default, and a value below it is refused
+rather than quietly raised.
+
+Unlike a digest from `hash()`, a stored hash is a fresh `credential` that does not inherit the
+password's deadline or reveal budget. It has to outlive the password and be read on every login,
+and a salted, memory-hard hash is not a reversible copy of the value. That is the whole difference
+between the two functions.
+
+bcrypt hashes at most 72 bytes and silently ignores the rest, so two passwords sharing a 72-byte
+prefix verify against each other's hash. This package refuses the longer password instead, on both
+the hashing and the verifying side.
+
 ### Template Literals
 
 ```typescript
@@ -647,7 +760,8 @@ otp.reveal();       // throws ExpiredSensitiveValueError
 ```
 
 The check lives in the single gate every path to the raw value goes through, so `equals()`,
-`mask()`, `serialize()`, and every string, regex, and template operation refuse an expired value
+`mask()`, `hash()`, `hmac()`, `serialize()`, and every string, regex, and template operation refuse
+an expired value
 alongside `reveal()`. Redaction and documented metadata do not: `toString()`, `toJSON()`,
 `length`, `klass`, and `label` keep working, because a value that can no longer be used still has
 to be safe to log.
@@ -770,11 +884,13 @@ both would refuse. `revealWindow` and `maxRevealsPerWindow` must be given togeth
 alone is no rate limit at all, and `maxReveals: 0` is how a value is made unreadable rather than
 `maxRevealsPerWindow: 0`.
 
-An exposure is what an audit hook sees: `reveal()`, `mask()`, `serialize()`, `map()`, and every
-string, regex, and template operation, one per call. `equals()` is not, and an exhausted value can
-still be compared, because a comparison reads the value without disclosing it and is the operation
-to reach for in place of a reveal. Redaction and metadata are not either: `toString()`, `toJSON()`,
-`length`, `klass`, and `label` keep working on a spent value, which still has to be safe to log.
+An exposure is what an audit hook sees: `reveal()`, `mask()`, `hash()`, `hmac()`, `serialize()`,
+`map()`, and every string, regex, and template operation, one per call. An `hmac()` with a
+protected key counts once against the value and once against the key. `equals()` is not, and an
+exhausted value can still be compared, because a comparison reads the value without disclosing it
+and is the operation to reach for in place of a reveal. Redaction and metadata are not either:
+`toString()`, `toJSON()`, `length`, `klass`, and `label` keep working on a spent value, which still
+has to be safe to log.
 
 `revealCount` is kept for every value, whether or not it limits anything. A read the gate refused,
 or one an audit hook stopped by throwing, is not counted, so a broken audit sink cannot quietly
@@ -875,8 +991,9 @@ also the rule for when pruning is safe. Drop an entry only once nothing that cou
 reachable, after the rotation has drained and the requests that held those values have finished,
 because a value that never looked between the revocation and the prune will not know.
 
-The check lives in the same gate expiry and reveal limits do, so `mask()`, `serialize()`, `map()`,
-and every string, regex, and template operation refuse alongside `reveal()`. So does `equals()`: a
+The check lives in the same gate expiry and reveal limits do, so `mask()`, `hash()`, `hmac()`,
+`serialize()`, `map()`, and every string, regex, and template operation refuse alongside
+`reveal()`. So does `equals()`: a
 comparison reads the value, and a rotated credential must not still be able to answer whether a
 guess matches it. So does `renew()`, which reads nothing but must not keep working on a value
 somebody deliberately took away. Redaction and metadata do not: `toString()`, `toJSON()`, `length`,
@@ -977,11 +1094,11 @@ Everything is off until `setDevMode({ enabled: true })` is called. A process tha
 pays one property read per construction and one per exposure, which is the guard that keeps the
 rest of it out of the way.
 
-What counts as an exposure is exactly what an audit hook sees: the reads where the raw value
-reaches the caller. `reveal()`, `mask()`, `serialize()`, `map()`, and the string, regex, and
-template operations all count; `equals()` does not, because a comparison reads the value without
-disclosing it, and neither does redaction. A read the gate refused is not counted either, so a
-reveal that threw is absent rather than recorded as a reveal that happened.
+What counts as an exposure is exactly what an audit hook sees: the reads taken for the caller's
+benefit rather than for redaction. `reveal()`, `mask()`, `hash()`, `hmac()`, `serialize()`, `map()`,
+and the string, regex, and template operations all count; `equals()` does not, because a comparison
+reads the value without disclosing it, and neither does redaction. A read the gate refused is not
+counted either, so a reveal that threw is absent rather than recorded as a reveal that happened.
 
 `warnOnMissingContext` reports the reveals that nothing explains, and does so even when
 `logReveals` is off, which is usually the first thing worth seeing. `logReveals.enabled` reports

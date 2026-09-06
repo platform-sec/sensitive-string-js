@@ -21,6 +21,9 @@ import type {
 
 const CANARY = 'REVOCATION_SECURITY_CANARY_7c3e';
 
+/** An HMAC key long enough to clear the 16-byte floor. */
+const HMAC_KEY = 'k'.repeat(32);
+
 /**
  * Every operation that reaches the raw value, named so a new one that forgets
  * the gate fails here rather than shipping as a bypass.
@@ -56,6 +59,8 @@ const RAW_VALUE_OPERATIONS: readonly [string, (value: SensitiveString<'sensitive
     ['replaceAll', (v) => v.replaceAll(/CANARY/g, 'x')],
     ['charAt', (v) => v.charAt(0)],
     ['at', (v) => v.at(0)],
+    ['hash', (v) => v.hash('sha256')],
+    ['hmac', (v) => v.hmac('sha256', HMAC_KEY)],
     ['map', (v) => v.map((raw) => raw)],
     ['reclassify', (v) => v.reclassify('credential')],
     ['serialize', (v) => v.serialize()],
@@ -90,6 +95,8 @@ const DERIVING_OPERATIONS: readonly [
   ['replaceAll', (v) => [v.replaceAll(/CANARY/g, 'x')]],
   ['charAt', (v) => [v.charAt(0)]],
   ['at', (v) => [v.at(0)!]],
+  ['hash', (v) => [v.hash('sha256')]],
+  ['hmac', (v) => [v.hmac('sha256', HMAC_KEY)]],
   ['map', (v) => [v.map((raw) => raw)]],
   ['reclassify', (v) => [v.reclassify('credential')]],
   ['template literal', (v) => [st`prefix ${v}`]],

@@ -5,6 +5,9 @@ import type {
   SensitiveStringOptions,
   SerializedSensitiveString,
   MaskOptions,
+  HashAlgorithm,
+  HashOptions,
+  HmacOptions,
   RenewalOptions,
   RevealContext,
   RevealDetails,
@@ -13,6 +16,15 @@ import { getPolicy, defaultCombineClasses, hasPolicy } from './policy.js';
 import { getCurrentRevealContext } from './context.js';
 import { isInsideRedaction, RevealDuringRedactionError } from './redaction-scope.js';
 import { applyMask, maskAuditDetails, planMask } from './mask.js';
+import {
+  applyHash,
+  applyHmac,
+  hashAuditDetails,
+  hashLabel,
+  hmacAuditDetails,
+  planHash,
+  requireHmacKey,
+} from './hash.js';
 import { devMode, readDevInfo, recordCreation, recordReveal, type DevInfo } from './dev-mode.js';
 import {
   ExpiredSensitiveValueError,
@@ -690,6 +702,142 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   }
 
   /**
+   * Refuse a digest when the class policy forbids one.
+   *
+   * `advisory.allowHash` has been declared since the beginning and read by
+   * nothing. This is what reads it. `undefined` allows, which is the opposite
+   * of how `allowSendToExternal` is read and is deliberate: hashing is the
+   * operation this library wants used in place of holding a value, so the flag
+   * exists to forbid it for a class where even a digest is too much, not to
+   * require permission for the safe path.
+   */
+  #requireHashingAllowed(operation: 'hash' | 'hmac'): void {
+    if (this.policy.advisory?.allowHash === false) {
+      const label = this.label !== undefined ? ` (${this.label})` : '';
+      throw new Error(
+        `SensitiveString.${operation}: hashing is not allowed for sensitivity class ` +
+          `'${this.klass}'${label}; its policy sets advisory.allowHash: false`
+      );
+    }
+  }
+
+  /**
+   * A one-way digest of the value, as a protected value.
+   *
+   * For a lookup key, a deduplication key, or a correlation token: something
+   * derived from the value that can be stored or compared without storing the
+   * value. It is an exposure like any other, so it runs the class policy, fires
+   * the audit hook with `operation: 'hash'`, counts against a reveal budget,
+   * and refuses on an expired or revoked value.
+   *
+   * ⚠️ This is not password hashing. The digest is fast to compute, which is
+   * the one property a stored password must not have: a wordlist runs through
+   * SHA-256 at billions of guesses a second, and a salt does not slow that down
+   * for the attacker who has the salt, which is everyone holding the record.
+   * Use `hashForStorage` from `@platform-sec/sensitive-string-kdf`.
+   *
+   * The result is always `credential`, whatever the source class was, because a
+   * digest of a value an attacker can guess is a copy of that value behind a
+   * lookup table, and one that correlates the same subject across every system
+   * that stores it. It carries the deadline, the reveal budget and the
+   * revocation of the value it came from, for the same reason.
+   *
+   * @param algorithm - One of sha256, sha384, sha512, sha3-256, sha3-512.
+   * @param options - Salt and digest encoding.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   * @throws Error If the class policy sets `advisory.allowHash: false`, or the algorithm is broken or unavailable in this Node build.
+   * @throws TypeError If the algorithm, encoding, salt or options object has the wrong type.
+   * @throws RangeError If the salt is empty.
+   *
+   * @example
+   * ```ts
+   * const token = new SensitiveString(raw, 'credential', 'session_token');
+   * const lookupKey = token.hash('sha256');            // SensitiveString<'credential'>
+   * await db.sessions.findUnique({ where: { tokenHash: lookupKey.reveal() } });
+   * ```
+   */
+  hash(
+    algorithm: HashAlgorithm,
+    options: HashOptions = {},
+    ctx?: RevealContext
+  ): SensitiveString<'credential'> {
+    this.#requireHashingAllowed('hash');
+
+    // Options are validated before the value is read, so a rejected call leaves
+    // no audit record and charges nothing for a digest that was never taken.
+    const plan = planHash('hash', algorithm, options);
+    const value = this.#readRawValue('expose', ctx, hashAuditDetails(plan));
+
+    return SensitiveString.#derived(
+      applyHash(value, plan),
+      'credential',
+      hashLabel(this.label, 'hash'),
+      [this]
+    );
+  }
+
+  /**
+   * A keyed one-way digest of the value, as a protected value.
+   *
+   * The version of `hash()` to reach for when the value is something an
+   * attacker can enumerate: an email address, a phone number, a card number, a
+   * six-digit code. A salt stops precomputation and nothing else, because the
+   * salt sits beside the digest in the same record; a key that the attacker
+   * does not have is what makes the digest unanswerable, and it is also what
+   * stops the same subject being correlated across two systems that both
+   * store one.
+   *
+   * The key may itself be protected, and then it is read through its own gate:
+   * its policy, its audit hook, its budget and its revocation all apply, and
+   * the result carries the constraints of the value and the key both. Using a
+   * value as a key reads it.
+   *
+   * @param algorithm - One of sha256, sha384, sha512, sha3-256, sha3-512.
+   * @param key - At least 16 bytes. 32 bytes from `randomBytes` or a secrets manager is the recommendation.
+   * @param options - Digest encoding.
+   * @param ctx - Optional reveal context for authorization and auditing.
+   * @throws Error If the class policy sets `advisory.allowHash: false`, or the algorithm is broken or unavailable in this Node build.
+   * @throws TypeError If the algorithm, encoding, key or options object has the wrong type, or a salt is supplied.
+   * @throws RangeError If the key is shorter than 16 bytes.
+   *
+   * @example
+   * ```ts
+   * const email = new SensitiveString('jane@example.com', 'sensitive', 'email');
+   * const pseudonym = email.hmac('sha256', process.env.CORRELATION_KEY!);
+   * ```
+   */
+  hmac(
+    algorithm: HashAlgorithm,
+    key: string | Uint8Array | SensitiveString<SensitivityClass>,
+    options: HmacOptions = {},
+    ctx?: RevealContext
+  ): SensitiveString<'credential'> {
+    this.#requireHashingAllowed('hmac');
+
+    const plan = planHash('hmac', algorithm, options);
+    const details = hmacAuditDetails(plan, key instanceof SensitiveString);
+
+    // The key is read and measured before the value is, which is the one place
+    // this class puts an argument ahead of its receiver. A key below the floor
+    // is a call that will not produce a digest, and refusing it after the
+    // receiver had been read would charge an exposure for nothing.
+    const keyBytes = requireHmacKey(
+      key instanceof SensitiveString ? key.#readRawValue('expose', ctx, details) : key
+    );
+    const value = this.#readRawValue('expose', ctx, details);
+
+    const sources: SensitiveString<SensitivityClass>[] =
+      key instanceof SensitiveString ? [this, key] : [this];
+
+    return SensitiveString.#derived(
+      applyHmac(value, keyBytes, plan),
+      'credential',
+      hashLabel(this.label, 'hmac'),
+      sources
+    );
+  }
+
+  /**
    * The deadline after which this value can no longer be read, if it has one.
    *
    * A derived value carries the deadlines of every value it came from, and this
@@ -923,8 +1071,10 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * How many times this value has been exposed.
    *
    * Counted for every value, whether or not it limits reveals. An exposure is
-   * what an audit hook sees: `reveal()`, `mask()`, `serialize()`, `map()`, and
-   * the string, regex, and template operations, one per call. `equals()` is
+   * what an audit hook sees: `reveal()`, `mask()`, `hash()`, `hmac()`,
+   * `serialize()`, `map()`, and the string, regex, and template operations, one
+   * per call. An `hmac()` with a protected key counts once against the value
+   * and once against the key. `equals()` is
    * not, because a comparison reads the value without disclosing it, and
    * neither is redaction. A read the gate refused, or one an audit hook stopped
    * by throwing, is not counted: a denied reveal is not a reveal.

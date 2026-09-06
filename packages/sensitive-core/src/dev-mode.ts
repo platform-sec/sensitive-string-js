@@ -570,6 +570,20 @@ function emit(config: ResolvedDevMode, message: string): void {
   }
 }
 
+/**
+ * What each exposing operation is called in a development-mode log line.
+ *
+ * A record rather than a chain of comparisons, so an operation added to
+ * `RevealDetails` without a name here falls back to `Reveal` in one place that
+ * is easy to find, rather than silently in the middle of a message.
+ */
+const EXPOSURE_NAMES: Partial<Record<RevealDetails['operation'], string>> = {
+  reveal: 'Reveal',
+  mask: 'Mask',
+  hash: 'Hash',
+  hmac: 'HMAC',
+};
+
 function describeValue(klass: SensitivityClass, label: string | undefined): string {
   return `'${label ?? klass}'`;
 }
@@ -596,7 +610,11 @@ function logExposure(
     return;
   }
 
-  const operation = details.operation === 'mask' ? 'Mask' : 'Reveal';
+  // Only the exposing operations reach here, since that is the branch of the
+  // gate that records. Naming each of them is the point of the line: a digest
+  // logged as a reveal tells a developer their value was handed out when it
+  // was not.
+  const operation = EXPOSURE_NAMES[details.operation] ?? 'Reveal';
   let message = `[SensitiveString] ${operation} of ${describeValue(klass, label)}`;
 
   if (config.log.showPartialValue) {
