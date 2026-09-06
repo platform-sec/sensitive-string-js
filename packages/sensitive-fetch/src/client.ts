@@ -1,5 +1,6 @@
 import {
   SensitiveHttpError,
+  assertBodyMayFollow,
   assertHopAllowed,
   headersWithout,
   isCrossOrigin,
@@ -94,6 +95,8 @@ export function sensitiveFetch<T = unknown>(
           method: currentMethod,
           url: currentUrl,
           headers: headersWithout(init.headers, dropped),
+          // Merged on the first hop only; `prepareRequest` drops it for the
+          // hops that follow.
           query: init.searchParams,
           body,
           form,
@@ -126,20 +129,26 @@ export function sensitiveFetch<T = unknown>(
 
       await discardBody(response);
 
+      const next = new URL(location, currentUrl);
+
       // Before the next request is built, so nothing is revealed for a host the
       // caller never named.
-      assertHopAllowed(new URL(location, currentUrl), hop, prepared.redirects, budget);
-
-      if (
-        prepared.redirects === 'strip' &&
-        isCrossOrigin(new URL(prepared.url), new URL(location, currentUrl))
-      ) {
-        dropped = [...dropped, ...prepared.plan.headers];
-      }
+      assertHopAllowed(next, hop, prepared.redirects, budget);
 
       const rewritten = redirectMethod(response.status, currentMethod);
 
-      currentUrl = new URL(location, currentUrl).toString();
+      if (prepared.redirects === 'strip' && isCrossOrigin(new URL(prepared.url), next)) {
+        // A 307 or 308 re-sends the body, and a body carrying a wrapped value
+        // cannot be stripped the way a header can. Refused rather than
+        // forwarded, before anything is revealed for the next hop.
+        if (rewritten.keepBody) {
+          assertBodyMayFollow(next, hop, prepared);
+        }
+
+        dropped = [...dropped, ...prepared.plan.headers];
+      }
+
+      currentUrl = next.toString();
       currentMethod = rewritten.method;
 
       if (!rewritten.keepBody) {

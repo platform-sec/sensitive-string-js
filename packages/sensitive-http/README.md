@@ -7,13 +7,13 @@ and transport checks, and the response decoder.
 You do not normally install this directly. Install the package for your client, which depends on this
 one:
 
-| Client | Package |
-|---|---|
-| axios | `@platform-sec/sensitive-string-axios` |
-| got | `@platform-sec/sensitive-string-got` |
-| ky | `@platform-sec/sensitive-string-ky` |
-| Node `fetch`, `undici.fetch` | `@platform-sec/sensitive-string-fetch` |
-| undici dispatcher | `@platform-sec/sensitive-string-undici` |
+| Client                       | Package                                 |
+| ---------------------------- | --------------------------------------- |
+| axios                        | `@platform-sec/sensitive-string-axios`  |
+| got                          | `@platform-sec/sensitive-string-got`    |
+| ky                           | `@platform-sec/sensitive-string-ky`     |
+| Node `fetch`, `undici.fetch` | `@platform-sec/sensitive-string-fetch`  |
+| undici dispatcher            | `@platform-sec/sensitive-string-undici` |
 
 ## Why this row is different from every other integration
 
@@ -23,8 +23,11 @@ so redaction turns a working request into a broken one with no error:
 
 ```typescript
 const token = new SensitiveString(process.env.API_TOKEN!, 'credential', 'api_token');
-await axios.post('https://api.example.com/charges', { amount },
-  { headers: { Authorization: `Bearer ${token}` } });
+await axios.post(
+  'https://api.example.com/charges',
+  { amount },
+  { headers: { Authorization: `Bearer ${token}` } }
+);
 ```
 
 `Authorization: Bearer [REDACTED:credential]` goes out. axios does not throw, the server answers 401,
@@ -41,12 +44,12 @@ suites in `src/__tests__/` and in each client package.
 
 ### A revealed value survives the call
 
-| Client | Rejection keeps it in | Resolution keeps it in |
-|---|---|---|
-| axios | `error.config.headers`, `error.toJSON()`, `config.url` | `response.config.headers`, `response.request` |
-| got | `error.options.headers`, `error.options._init[n]`, `HTTPError.message` and its stack, `error.response.url` | `response.request.options`, `response.req._header` |
-| ky | `error.request.headers`, the frozen `error.options` | nothing |
-| `fetch` | the failure message, when the credential is in the query | nothing |
+| Client  | Rejection keeps it in                                                                                      | Resolution keeps it in                             |
+| ------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| axios   | `error.config.headers`, `error.toJSON()`, `config.url`                                                     | `response.config.headers`, `response.request`      |
+| got     | `error.options.headers`, `error.options._init[n]`, `HTTPError.message` and its stack, `error.response.url` | `response.request.options`, `response.req._header` |
+| ky      | `error.request.headers`, the frozen `error.options`                                                        | nothing                                            |
+| `fetch` | the failure message, when the credential is in the query                                                   | nothing                                            |
 
 Three consequences.
 
@@ -70,13 +73,13 @@ A 302 from origin A to origin B, with four headers carrying a raw value. Two loo
 different ports, which is a different origin under the scheme/host/port rule, and the second server
 recording exactly what arrived:
 
-| Client | `Authorization` at B | `Cookie` at B | `Proxy-Authorization` at B | `x-api-key` at B |
-|---|---|---|---|---|
-| axios 1.20.0 | stripped | stripped | stripped | **forwarded verbatim** |
-| got 16.0.0 | stripped | stripped | stripped | **forwarded verbatim** |
-| ky 2.1.0 | stripped | stripped | stripped | **forwarded verbatim** |
-| undici 8.10.1 | stripped | stripped | stripped | **forwarded verbatim** |
-| Node 22.15 `fetch` | stripped | stripped | stripped | **forwarded verbatim** |
+| Client             | `Authorization` at B | `Cookie` at B | `Proxy-Authorization` at B | `x-api-key` at B       |
+| ------------------ | -------------------- | ------------- | -------------------------- | ---------------------- |
+| axios 1.20.0       | stripped             | stripped      | stripped                   | **forwarded verbatim** |
+| got 16.0.0         | stripped             | stripped      | stripped                   | **forwarded verbatim** |
+| ky 2.1.0           | stripped             | stripped      | stripped                   | **forwarded verbatim** |
+| undici 8.10.1      | stripped             | stripped      | stripped                   | **forwarded verbatim** |
+| Node 22.15 `fetch` | stripped             | stripped      | stripped                   | **forwarded verbatim** |
 
 All five implement the Fetch specification, which names `Authorization`, `Cookie` and
 `Proxy-Authorization` and no other header. Every provider that authenticates with a non-standard name
@@ -91,6 +94,14 @@ wrapped it, so a header the library has never heard of is covered on the same te
 `Authorization`. It is never a default, because a request that quietly continues without its
 credential succeeds at doing less than it appears to.
 
+Two things a header-shaped mode cannot strip are handled on their own terms. The caller's query is
+sent on the first hop only, under every policy: a redirect target is the URL the server named, and
+re-applying the query to it once carried a wrapped query credential to a second origin that the same
+mode had just removed it from the headers of. And a cross-origin 307 or 308 that would re-send a
+body carrying a wrapped value is refused with `RedirectWouldResendCredentialError` rather than
+followed, because a body with one field removed is a different request; a host that is trusted with
+the body can be named in `allowedHosts` instead.
+
 The exemption those three names earn is recorded per client rather than once for every client,
 because agreeing with the specification is not a property of the header. It is a property of the
 implementation holding the request, and implementations disagree: a survey of Node HTTP clients found
@@ -102,12 +113,12 @@ refusing redirects outright. Naming `allowedHosts` still overrides that, in eith
 
 Server returns a bare API key with `content-type: application/json`:
 
-| Decoder | 14-character body |
-|---|---|
-| `JSON.parse` | `Unexpected token 's', "sk_live_abc123" is not valid JSON` |
-| got `.json()` | the same, plus ` in "<full request URL>"` |
-| ky `.json()` | the same |
-| axios | **does not throw**; `response.data` is the raw body as a plain `string` |
+| Decoder       | 14-character body                                                       |
+| ------------- | ----------------------------------------------------------------------- |
+| `JSON.parse`  | `Unexpected token 's', "sk_live_abc123" is not valid JSON`              |
+| got `.json()` | the same, plus ` in "<full request URL>"`                               |
+| ky `.json()`  | the same                                                                |
+| axios         | **does not throw**; `response.data` is the raw body as a plain `string` |
 
 axios is not better, only differently wrong: a raw secret becomes an ordinary string in application
 code with no class, no label and no audit trail.
@@ -133,12 +144,12 @@ and then declining to send.
 
 The clients disagree about which half of a request a hook can still reach:
 
-| Client | Hook | Header there | Body there | Revealing in the hook fixes |
-|---|---|---|---|---|
-| axios | `interceptors.request` | already a `String` | still structured | the body only |
-| got | `hooks.beforeRequest` | still an instance | already serialized | the header only |
-| ky | `hooks.beforeRequest` | mutable `Request` headers | needs a replacement `Request` | both, at a cost |
-| `fetch`, undici | none | n/a | n/a | nothing |
+| Client          | Hook                   | Header there              | Body there                    | Revealing in the hook fixes |
+| --------------- | ---------------------- | ------------------------- | ----------------------------- | --------------------------- |
+| axios           | `interceptors.request` | already a `String`        | still structured              | the body only               |
+| got             | `hooks.beforeRequest`  | still an instance         | already serialized            | the header only             |
+| ky              | `hooks.beforeRequest`  | mutable `Request` headers | needs a replacement `Request` | both, at a cost             |
+| `fetch`, undici | none                   | n/a                       | n/a                           | nothing                     |
 
 A hook-based design would need a different correctness argument per client for a guarantee that has
 to hold uniformly, and would still leave `fetch` and undici with none. It also would not reach steps
@@ -169,11 +180,11 @@ Decoding once covers all three, and this is on by default.
 completely. Base64 has three byte alignments, so the scan uses three needles, derived from the fully
 determined groups of the ten-byte prefix `[REDACTED:`:
 
-| Alignment | Determined bytes | Needle |
-|---|---|---|
-| 0 mod 3 | `[REDACTED` | `W1JFREFDVEVE` |
-| 1 mod 3 | `EDACTE` | `RURBQ1RF` |
-| 2 mod 3 | `REDACTED:` | `UkVEQUNURUQ6` |
+| Alignment | Determined bytes | Needle         |
+| --------- | ---------------- | -------------- |
+| 0 mod 3   | `[REDACTED`      | `W1JFREFDVEVE` |
+| 1 mod 3   | `EDACTE`         | `RURBQ1RF`     |
+| 2 mod 3   | `REDACTED:`      | `UkVEQUNURUQ6` |
 
 Off by default, because it is a heuristic on a heuristic and the auth helpers remove the need for it
 on the happy path. Turn it on with `scanBase64: true`.
@@ -234,12 +245,12 @@ alternative is handing back an object the next `console.log` discloses.
 
 ## Redirects and transport
 
-| `allowedHosts` | Behaviour |
-|---|---|
-| an array | redirects are followed hop by hop, and one to a host outside the list rejects with `RedirectHostNotAllowedError` before the next request is built |
-| `false` | redirects are not followed |
-| unset, credential in a non-standard header | `false` |
-| unset, every credential in `Authorization` or `Cookie` | the client's own handling, untouched |
+| `allowedHosts`                                         | Behaviour                                                                                                                                         |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| an array                                               | redirects are followed hop by hop, and one to a host outside the list rejects with `RedirectHostNotAllowedError` before the next request is built |
+| `false`                                                | redirects are not followed                                                                                                                        |
+| unset, credential in a non-standard header             | `false`                                                                                                                                           |
+| unset, every credential in `Authorization` or `Cookie` | the client's own handling, untouched                                                                                                              |
 
 The last row is deliberate: three independent implementations agree on stripping those two headers,
 and re-implementing that would be worse than trusting them.
@@ -272,17 +283,17 @@ property that runs.
 
 ## API
 
-| Export | What it does |
-|---|---|
-| `prepareRequest(request, options)` | steps 1 to 5, returning the revealed structure, the plan and the context |
-| `revealOutgoing(value, ctx, recorder)` | the one walker; descends into class instances, refuses `Map`/`Set`, resolves cycles |
-| `revealHeaders` / `revealQuery` / `revealForm` | the header, query and form reveals, guarded |
-| `assertNoMarker` / `containsMarker` / `markerMatchers` | the guard |
-| `bearer` / `basic` / `apiKey` / `renderAuthHeader` | the auth descriptors |
-| `PlanBuilder` / `ScrubPlan` / `scrubHeaderBag` / `scrubBody` / `scrubQuery` / `scrubUrlString` / `scrubMessage` | the scrub |
-| `assertTransport` / `resolveRedirectPolicy` / `assertHopAllowed` / `redirectMethod` | redirects and transport |
-| `decodeJson` / `assertDecoded` / `wrapResponseFields` / `safeUrl` | the response half |
-| `buildAttemptContext` | the per-attempt `RevealContext` |
+| Export                                                                                                          | What it does                                                                        |
+| --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `prepareRequest(request, options)`                                                                              | steps 1 to 5, returning the revealed structure, the plan and the context            |
+| `revealOutgoing(value, ctx, recorder)`                                                                          | the one walker; descends into class instances, refuses `Map`/`Set`, resolves cycles |
+| `revealHeaders` / `revealQuery` / `revealForm`                                                                  | the header, query and form reveals, guarded                                         |
+| `assertNoMarker` / `containsMarker` / `markerMatchers`                                                          | the guard                                                                           |
+| `bearer` / `basic` / `apiKey` / `renderAuthHeader`                                                              | the auth descriptors                                                                |
+| `PlanBuilder` / `ScrubPlan` / `scrubHeaderBag` / `scrubBody` / `scrubQuery` / `scrubUrlString` / `scrubMessage` | the scrub                                                                           |
+| `assertTransport` / `resolveRedirectPolicy` / `assertHopAllowed` / `redirectMethod`                             | redirects and transport                                                             |
+| `decodeJson` / `assertDecoded` / `wrapResponseFields` / `safeUrl`                                               | the response half                                                                   |
+| `buildAttemptContext`                                                                                           | the per-attempt `RevealContext`                                                     |
 
 `@platform-sec/sensitive-string-http/testing` exports `startRecordingServer` and `findMarker`, the
 harness every client suite asserts bytes against.
@@ -303,7 +314,7 @@ inherits the request's context and its audit sink, with the destination added:
 The context is built **per attempt**, not per call, so `tags.attempt` is meaningful and a retry storm
 is visible in the audit log as what it is. `tags.hop` counts redirect hops separately, because the
 two answer different questions: a retry re-sends the same request to the same host, while a hop sends
-it to a host the *server* chose. Both write the value to a socket and both are audited, so without
+it to a host the _server_ chose. Both write the value to a socket and both are audited, so without
 the second tag an audit log cannot tell one from the other.
 
 `tags.sink: 'http'` is set on every reveal. It costs nothing today and is the field a future

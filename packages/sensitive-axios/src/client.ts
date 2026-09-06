@@ -1,4 +1,5 @@
 import {
+  assertBodyMayFollow,
   assertDecoded,
   assertHopAllowed,
   headersWithout,
@@ -247,6 +248,9 @@ export function createSensitiveAxios(
             withDefaultHeaders(client, currentMethod, config.headers),
             dropped
           ),
+          // Merged on the first hop only; `prepareRequest` drops it for the
+          // hops that follow, because a redirect target is the URL the server
+          // named and nothing else.
           query: config.params,
           body,
           form,
@@ -290,6 +294,13 @@ export function createSensitiveAxios(
       const rewritten = redirectMethod(response.status, currentMethod);
 
       if (prepared.redirects === 'strip' && isCrossOrigin(new URL(prepared.url), next)) {
+        // A 307 or 308 re-sends the body, and a body carrying a wrapped value
+        // cannot be stripped the way a header can. Refused rather than
+        // forwarded, before anything is revealed for the next hop.
+        if (rewritten.keepBody) {
+          assertBodyMayFollow(next, hop, prepared);
+        }
+
         dropped = [...dropped, ...prepared.plan.headers];
       }
 

@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { RedirectHostNotAllowedError, apiKey, bearer } from '@platform-sec/sensitive-string-http';
+import {
+  RedirectHostNotAllowedError,
+  RedirectWouldResendCredentialError,
+  apiKey,
+  bearer,
+} from '@platform-sec/sensitive-string-http';
 
 import { createSensitiveAxios } from '../client.js';
 import { CANARY, instance, startRecordingServer, token } from './fixtures.js';
@@ -191,5 +196,62 @@ describe('allowedHosts: strip', () => {
     await api.get('/redirect', { headers: { 'x-api-key': apiKey(token()) } });
 
     expect(origin.requests[1]?.headers['x-api-key']).toBe(CANARY);
+  });
+
+  it("sends the caller's query on the first hop only", async () => {
+    // Found by verification: every hop re-merged `params` onto the URL the
+    // server named, so a wrapped query credential reached the second origin
+    // that `'strip'` had just removed it from the headers of.
+    redirectTo(`${second.origin}/landing`);
+
+    const api = createSensitiveAxios(instance(origin), {
+      allowInsecureTransport: true,
+      allowedHosts: 'strip',
+    });
+
+    await api.get('/redirect', {
+      params: { token: token() },
+      headers: { 'x-api-key': apiKey(token()) },
+    });
+
+    expect(origin.requests[0]?.target).toContain(CANARY);
+    expect(second.requests).toHaveLength(1);
+    expect(second.requests[0]?.target).not.toContain(CANARY);
+    expect(second.transcript).not.toContain(CANARY);
+  });
+
+  it('refuses a cross-origin 307 that would re-send a body carrying a credential', async () => {
+    // A header can be dropped at the boundary; a body cannot be dropped in
+    // part. Refused before anything is revealed for the hop.
+    origin.reply({ status: 307, headers: { location: `${second.origin}/landing` }, body: '' });
+
+    const api = createSensitiveAxios(instance(origin), {
+      allowInsecureTransport: true,
+      allowedHosts: 'strip',
+    });
+
+    const error = await api
+      .post('/redirect', { secret: token() }, { headers: { 'x-api-key': apiKey(token()) } })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(RedirectWouldResendCredentialError);
+    expect((error as RedirectWouldResendCredentialError).paths).toEqual(['secret']);
+    expect(second.requests).toHaveLength(0);
+    expect(String((error as Error).message)).not.toContain(CANARY);
+  });
+
+  it('follows a cross-origin 302 from a POST, which drops the body on its own', async () => {
+    redirectTo(`${second.origin}/landing`);
+
+    const api = createSensitiveAxios(instance(origin), {
+      allowInsecureTransport: true,
+      allowedHosts: 'strip',
+    });
+
+    await api.post('/redirect', { secret: token() }, { headers: { 'x-api-key': apiKey(token()) } });
+
+    expect(second.requests).toHaveLength(1);
+    expect(second.requests[0]?.method).toBe('GET');
+    expect(second.transcript).not.toContain(CANARY);
   });
 });

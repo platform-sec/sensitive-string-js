@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { RedirectHostNotAllowedError, apiKey, bearer } from '@platform-sec/sensitive-string-http';
+import {
+  RedirectHostNotAllowedError,
+  RedirectWouldResendCredentialError,
+  apiKey,
+  bearer,
+} from '@platform-sec/sensitive-string-http';
 
 import { createSensitiveGot } from '../client.js';
 import { CANARY, instance, startRecordingServer, token } from './fixtures.js';
@@ -125,5 +130,62 @@ describe('allowedHosts: strip', () => {
     await api.get('/redirect', { headers: { 'x-api-key': apiKey(token()) } });
 
     expect(origin.requests[1]?.headers['x-api-key']).toBe(CANARY);
+  });
+
+  it('strips a credential that came from the instance defaults, not just the call', async () => {
+    // `got.extend({ headers })` is how an instance gets its credential, and
+    // got merges it in at send time. Measured before this was handled: a
+    // wrapped value there reached both origins as the redaction marker,
+    // revealed nowhere and stripped by nothing.
+    origin.reply({ status: 302, headers: { location: `${second.origin}/landing` } });
+
+    const api = createSensitiveGot(
+      instance(origin).extend({ headers: { 'x-api-key': apiKey(token()) } }),
+      { allowInsecureTransport: true, allowedHosts: 'strip' }
+    );
+
+    await api.get('/redirect');
+
+    expect(origin.requests[0]?.headers['x-api-key']).toBe(CANARY);
+    expect(second.requests).toHaveLength(1);
+    expect(second.requests[0]?.headers['x-api-key']).toBeUndefined();
+    expect(second.transcript).not.toContain(CANARY);
+    expect(origin.transcript).not.toContain('[REDACTED');
+    expect(origin.transcript).not.toContain('[object Object]');
+  });
+
+  it('refuses a cross-origin 307 that would re-send a body carrying a credential', async () => {
+    // got keeps the body across a 307 and hands it to `beforeRedirect` as
+    // `json`. A body cannot be stripped in part, so the hop is refused; got
+    // wraps the throw and the wrapper unwraps it.
+    origin.reply({ status: 307, headers: { location: `${second.origin}/landing` } });
+
+    const api = createSensitiveGot(instance(origin), {
+      allowInsecureTransport: true,
+      allowedHosts: 'strip',
+    });
+
+    const error = await api
+      .post('/redirect', { secret: token() }, { headers: { 'x-api-key': apiKey(token()) } })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(RedirectWouldResendCredentialError);
+    expect((error as RedirectWouldResendCredentialError).paths).toEqual(['secret']);
+    expect(second.requests).toHaveLength(0);
+  });
+
+  it('follows a cross-origin 302 from a POST, which drops the body on its own', async () => {
+    origin.reply({ status: 302, headers: { location: `${second.origin}/landing` } });
+
+    const api = createSensitiveGot(instance(origin), {
+      allowInsecureTransport: true,
+      allowedHosts: 'strip',
+    });
+
+    await api.post('/redirect', { secret: token() }, { headers: { 'x-api-key': apiKey(token()) } });
+
+    expect(second.requests).toHaveLength(1);
+    expect(second.requests[0]?.method).toBe('GET');
+    expect(second.transcript).not.toContain(CANARY);
   });
 });

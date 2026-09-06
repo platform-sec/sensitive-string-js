@@ -24,8 +24,15 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
  *
  * Hashing both sides first removes the branch instead of balancing it.
  * `timingSafeEqual` then always receives two 32-byte digests, so there is no
- * length to check and no path to choose between, and the only work that varies
- * with input is the HMAC over the caller's own comparand.
+ * length to check and no path to choose between. What remains is the HMAC
+ * itself, whose cost grows with its input one 64-byte block at a time, over
+ * the stored value as well as over the comparand. That is not a branch and it
+ * is not nothing: measured independently, stored values of 8 to 256 bytes were
+ * indistinguishable within the timing analysis's noise floor, while 1024 bytes
+ * cost about 460ns more than 8 and 4096 about 2.5us more. For a credential-sized
+ * value the length is hidden to the resolution anyone has measured; for a value
+ * hundreds of bytes long it is hidden at 64-byte granularity, which is a
+ * weaker promise and is stated here rather than implied away.
  *
  * It is bought rather than free. Measured on Node 22.15 against 32-character
  * operands, a comparison went from about 130ns to about 5us, because two
@@ -65,7 +72,8 @@ function probe(value: string): Buffer {
 
 /**
  * Whether two raw values are equal, in time that does not depend on either
- * value's contents or on either value's length.
+ * value's contents, and that depends on the stored value's length only through
+ * the HMAC's block count, as described above.
  *
  * Two distinct values collide only on an HMAC-SHA256 collision, which is not a
  * failure mode anyone has to plan around.

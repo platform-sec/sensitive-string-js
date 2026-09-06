@@ -1129,10 +1129,11 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @returns true if values are equal
    *
    * @remarks
-   * The constant-time path hides the stored value's length as well as its
-   * contents, so a comparand of the wrong length costs what a comparand of the
-   * right length costs. See `compare.ts` for why that needs more than
-   * `timingSafeEqual` alone.
+   * The constant-time path hides the stored value's contents, and hides its
+   * length to the granularity of a SHA-256 block: a comparand of the wrong
+   * length costs what a comparand of the right length costs, and a stored
+   * value of 8 bytes costs what one of 55 costs. See `compare.ts` for why that
+   * needs more than `timingSafeEqual` alone, and for what it still leaves.
    */
   equals(other: string | SensitiveString<SensitivityClass>, ctx?: RevealContext): boolean {
     const value = this.#readRawValue('compare', ctx);

@@ -251,14 +251,33 @@ describe('constant-time comparison timing analysis', () => {
       { name: 'short', stored: new SensitiveString('a'.repeat(5), 'credential') },
       { name: 'same', stored: new SensitiveString('a'.repeat(64), 'credential') },
       { name: 'long', stored: new SensitiveString('a'.repeat(128), 'credential') },
+      // Beyond credential size. The HMAC's cost grows with its input one
+      // 64-byte block at a time, so these two are expected to read above the
+      // others: independently measured at about +460ns for 1024 bytes. That is
+      // the remaining length dependence, stated rather than hidden by choosing
+      // only lengths that fit in a few blocks.
+      { name: 'kilobyte', stored: new SensitiveString('a'.repeat(1024), 'credential') },
+      { name: 'four-kilobytes', stored: new SensitiveString('a'.repeat(4096), 'credential') },
     ]);
 
     // No assertion, for the reason every test in this file has none: a wall
     // clock verdict depends on how busy the machine is.
-    console.log('Timing analysis (stored length, should not leak):');
-    console.log('  5 characters:  ', (fastest.get('short') ?? Number.NaN).toFixed(1));
-    console.log('  64 characters: ', (fastest.get('same') ?? Number.NaN).toFixed(1));
-    console.log('  128 characters:', (fastest.get('long') ?? Number.NaN).toFixed(1));
-    console.log('  spread:        ', spread([...fastest.values()]).toFixed(1));
+    const at = (name: string): string => (fastest.get(name) ?? Number.NaN).toFixed(1);
+    console.log(
+      'Timing analysis (stored length; credential-sized groups should sit in the noise):'
+    );
+    console.log('  5 characters:   ', at('short'));
+    console.log('  64 characters:  ', at('same'));
+    console.log('  128 characters: ', at('long'));
+    console.log('  1024 characters:', at('kilobyte'), '(expected above: block count)');
+    console.log('  4096 characters:', at('four-kilobytes'), '(expected above: block count)');
+    console.log(
+      '  spread, 5 to 128:',
+      spread([
+        fastest.get('short') ?? 0,
+        fastest.get('same') ?? 0,
+        fastest.get('long') ?? 0,
+      ]).toFixed(1)
+    );
   });
 });

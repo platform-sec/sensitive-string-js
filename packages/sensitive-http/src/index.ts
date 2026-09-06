@@ -121,6 +121,12 @@ export { assertDecoded, decodeJson, safeUrl, wrapResponseFields } from './respon
 export { buildAttemptContext } from './context.js';
 
 export { prepareRequest, scanPassThrough } from './request.js';
+
+// The body-on-redirect refusal, added with the fix for the query re-attachment
+// under `'strip'`. Exported beside the other hop checks so a wrapper following
+// hops itself can apply it where it holds the next URL.
+export { assertBodyMayFollow } from './redirect.js';
+export { RedirectWouldResendCredentialError } from './errors.js';
 export type { PrepareOptions, PreparedRequest } from './request.js';
 
 export type {

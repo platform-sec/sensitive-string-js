@@ -1,6 +1,7 @@
 import {
   RedirectHostNotAllowedError,
   SensitiveHttpError,
+  assertBodyMayFollow,
   decodeJson,
   headersWithout,
   hostAllowed,
@@ -12,6 +13,7 @@ import {
 import type {
   PreparedRequest,
   SensitiveClientOptions,
+  SensitiveHeaderValue,
   SensitiveHeaders,
   SensitiveQuery,
 } from '@platform-sec/sensitive-string-http';
@@ -113,6 +115,44 @@ function resolveUrl(client: Got, url: string): string {
 }
 
 /**
+ * Default headers merged in, so an instance-level credential is revealed too.
+ *
+ * `got.extend({ headers })` is the ordinary way to give an instance a
+ * credential, and got merges those under the call's headers at send time.
+ * Measured: a wrapped value placed there reached the wire as
+ * `[REDACTED:credential]` and an `apiKey()` descriptor as `[object Object]`,
+ * because the wrapper only ever saw the call's own headers. Merged here so an
+ * instance default is revealed, recorded in the plan, scrubbed on the way back
+ * and, under `'strip'`, dropped at the origin boundary like any other.
+ *
+ * got stores its defaults with lowercased names; a value got itself put there,
+ * such as its `user-agent`, is a plain string and passes through unchanged.
+ */
+function withDefaultHeaders(client: Got, headers: SensitiveHeaders | undefined): SensitiveHeaders {
+  const defaults = (client.defaults.options.headers ?? {}) as Readonly<Record<string, unknown>>;
+  const merged: SensitiveHeaders = {};
+
+  for (const [name, value] of Object.entries(defaults)) {
+    if (value === undefined) {
+      continue;
+    }
+
+    merged[name] = (Array.isArray(value) ? value.join(', ') : value) as SensitiveHeaderValue;
+  }
+
+  return { ...merged, ...(headers ?? {}) };
+}
+
+/** Whether got will send a body again on this hop: true after a 307 or 308, never after a 303. */
+function resendsBody(redirectOptions: { json?: unknown; body?: unknown; form?: unknown }): boolean {
+  return (
+    redirectOptions.json !== undefined ||
+    redirectOptions.body !== undefined ||
+    redirectOptions.form !== undefined
+  );
+}
+
+/**
  * got wraps anything a hook throws in a `RequestError` and hangs the original
  * off `cause`. A refusal from this package has to arrive as itself.
  */
@@ -132,7 +172,7 @@ export function createSensitiveGot(client: Got, options: SensitiveGotOptions = {
       {
         method: String(config['method'] ?? 'GET'),
         url,
-        headers: config.headers,
+        headers: withDefaultHeaders(client, config.headers),
         query: config.searchParams,
         body: config.json,
         form: config.form,
@@ -238,25 +278,47 @@ export function createSensitiveGot(client: Got, options: SensitiveGotOptions = {
       // tracked by hand, because the other four rebuild the request each hop
       // and already hold the previous URL.
       let from = new URL(prepared.url);
+      // Counted here because got's hook is not told which hop it is on. The
+      // first redirect is hop 1, as in the wrappers that drive the loop.
+      let hop = 0;
 
       out['hooks'] = {
         ...((rest as { hooks?: Record<string, unknown> }).hooks ?? {}),
         beforeRedirect: [
-          (redirectOptions: { url: URL | undefined; headers?: Record<string, unknown> }) => {
+          (redirectOptions: {
+            url: URL | undefined;
+            headers?: Record<string, unknown>;
+            json?: unknown;
+            body?: unknown;
+            form?: unknown;
+          }) => {
             const next = redirectOptions.url;
 
             if (next === undefined) {
               return;
             }
 
+            hop += 1;
+
             // got is the one client that follows hops itself while still
             // handing the next request's options over for editing, so `'strip'`
             // is a deletion here rather than a rebuilt request. The other
             // wrappers drive the loop and rebuild.
             if (policy === 'strip') {
-              const current = redirectOptions.headers;
-              if (isCrossOrigin(from, next) && current !== undefined) {
-                redirectOptions.headers = { ...headersWithout(current, revealed) };
+              if (isCrossOrigin(from, next)) {
+                // got keeps the body across a 307 or 308 and hands it over
+                // here as `json`, `body` or `form`; after a 303 it has already
+                // dropped it. A body carrying a wrapped value cannot be
+                // stripped the way a header can, so the hop is refused. got
+                // wraps the throw in a RequestError and the wrapper unwraps it.
+                if (resendsBody(redirectOptions)) {
+                  assertBodyMayFollow(next, hop, prepared);
+                }
+
+                const current = redirectOptions.headers;
+                if (current !== undefined) {
+                  redirectOptions.headers = { ...headersWithout(current, revealed) };
+                }
               }
               from = next;
               return;

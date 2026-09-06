@@ -88,6 +88,14 @@ export interface SensitiveClientOptions {
    * storage. It is never a default and must be asked for, because a request
    * that quietly continues without its credential succeeds at doing less than
    * it appears to.
+   *
+   * Two things a header-shaped mode cannot strip are handled separately. The
+   * caller's query is sent on the first hop only, whatever the policy, because
+   * a redirect target is the URL the server named. A cross-origin 307 or 308
+   * that would re-send a body carrying a wrapped value is refused with
+   * `RedirectWouldResendCredentialError` rather than followed, since a body
+   * with a field removed is a different request; name the host instead if it
+   * is trusted with the body.
    */
   readonly allowedHosts?: readonly string[] | false | 'strip';
 

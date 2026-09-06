@@ -16,6 +16,13 @@ receives two 32-byte digests and there is no length to check and no path to choo
 per-process key it hashes under is ephemeral and never exported: it exists to make a digest of a
 guessable value worthless if it were ever observed, not to be agreed with anything.
 
+What remains is the HMAC's own cost, which grows with its input one 64-byte block at a time, over
+the stored value as well as over the comparand. Measured independently, stored values from 8 to 256
+bytes were indistinguishable within the timing analysis's noise floor; 1024 bytes cost about 460ns
+more than 8 and 4096 about 2.5us more. A credential-sized value has its length hidden to the
+resolution anyone has measured. A value hundreds of bytes long has it hidden at block granularity,
+which is a weaker promise than "no dependence" and is what the source comments now say.
+
 Comparing a wrong-length comparand against a zero-filled buffer of its own length is the more common
 repair and was not used. It moves the branch rather than removing it, since only the mismatch path
 allocates and fills that buffer, so that path becomes the slower one and the signal survives with

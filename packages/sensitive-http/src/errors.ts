@@ -87,6 +87,36 @@ export class RedirectHostNotAllowedError extends SensitiveHttpError {
   }
 }
 
+/**
+ * A cross-origin redirect would re-send a body carrying a credential.
+ *
+ * `allowedHosts: 'strip'` drops credential-bearing headers at the origin
+ * boundary and follows. A body cannot be dropped the same way: a 307 or 308
+ * re-sends it whole, and a body with one field removed is a different request
+ * that succeeds at doing something else. Refusing is the answer that cannot go
+ * wrong quietly, and a host the caller trusts with the body they built can be
+ * named in `allowedHosts` instead.
+ */
+export class RedirectWouldResendCredentialError extends SensitiveHttpError {
+  constructor(
+    /** The host the server redirected to. */
+    readonly host: string,
+    /** Which hop refused, counting from 1. */
+    readonly hop: number,
+    /** Dot paths of the wrapped values in the body, where the body was structured. */
+    readonly paths: readonly string[]
+  ) {
+    super(
+      `Refusing to follow a cross-origin redirect to '${host}' at hop ${hop} under ` +
+        `allowedHosts: 'strip': the request body carries a wrapped value` +
+        `${paths.length > 0 ? ` at ${paths.join(', ')}` : ''}, and a 307 or 308 re-sends the ` +
+        `body. Headers are stripped at the origin boundary; a body cannot be partially ` +
+        `stripped without sending a different request. Name the destination in allowedHosts ` +
+        `if it is trusted with the body.`
+    );
+  }
+}
+
 /** A credential was about to be revealed into a plaintext socket. */
 export class InsecureTransportError extends SensitiveHttpError {
   constructor(

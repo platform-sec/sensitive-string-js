@@ -42,6 +42,12 @@ export interface PreparedRequest {
   /** The revealed form body as `application/x-www-form-urlencoded` text. */
   readonly formText: string | undefined;
   readonly plan: ScrubPlan;
+  /**
+   * Whether the structured or form body carried a wrapped value. What a
+   * wrapper following a 307 or 308 under `'strip'` has to know before it
+   * re-sends the body to another origin; see `assertBodyMayFollow`.
+   */
+  readonly bodyCarriesCredential: boolean;
   readonly context: RevealContext;
   /**
    * `'client'` means the client's own redirect handling is left alone, which is
@@ -164,7 +170,23 @@ export interface PrepareOptions extends SensitiveClientOptions {
 }
 
 /** Steps 1 to 5. Throws before revealing anything when a check fails. */
-export function prepareRequest(request: OutgoingRequest, options: PrepareOptions): PreparedRequest {
+export function prepareRequest(
+  incoming: OutgoingRequest,
+  options: PrepareOptions
+): PreparedRequest {
+  // A redirect target is the URL the server named and nothing else. The
+  // caller's query belongs to the request they made, so it is merged on the
+  // first hop only. Re-applying it on every hop carried a wrapped query
+  // credential to a cross-origin target under `'strip'`, which had just removed
+  // the same credential from the headers: the query gap the corpus recorded
+  // against GHSA-p2f4-r6v6-j797 and withdrew on reasoning that held only for
+  // the delegated mode. Dropped here rather than in each wrapper, so a wrapper
+  // cannot forget.
+  const request: OutgoingRequest =
+    (options.hop ?? 1) > 1 && incoming.query !== undefined
+      ? { ...incoming, query: undefined }
+      : incoming;
+
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
 
@@ -208,7 +230,23 @@ export function prepareRequest(request: OutgoingRequest, options: PrepareOptions
 
   const headers = revealHeaders(request.headers, context, builder.section('header'), scanOptions);
   const query = revealQuery(request.query, context, builder.section('query'), scanOptions);
-  const formText = revealForm(request.form, context, builder.section('query'), scanOptions);
+
+  // Form fields share the plan's `query` section with the query string, since
+  // both are scrubbed the same way, so whether the *form* carried a wrapped
+  // value is noted here on the way past rather than read back from the plan.
+  const formRecorder = builder.section('query');
+  let formCarriesCredential = false;
+  const formText = revealForm(
+    request.form,
+    context,
+    {
+      record: (position, value) => {
+        formCarriesCredential = true;
+        formRecorder.record(position, value);
+      },
+    },
+    scanOptions
+  );
 
   let body: unknown;
   let bodyText: string | undefined;
@@ -243,6 +281,8 @@ export function prepareRequest(request: OutgoingRequest, options: PrepareOptions
 
   assertNoMarker(url.search, 'query string', scanOptions);
 
+  const plan = builder.build();
+
   return {
     method,
     url: url.toString(),
@@ -250,7 +290,8 @@ export function prepareRequest(request: OutgoingRequest, options: PrepareOptions
     body,
     bodyText,
     formText,
-    plan: builder.build(),
+    plan,
+    bodyCarriesCredential: plan.bodyPaths.length > 0 || formCarriesCredential,
     context,
     redirects,
     descriptor,

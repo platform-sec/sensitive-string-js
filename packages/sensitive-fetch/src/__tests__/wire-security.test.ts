@@ -5,6 +5,7 @@ import { SensitiveString, withRevealContext } from '@platform-sec/sensitive-stri
 import {
   MarkerLeakError,
   RedirectHostNotAllowedError,
+  RedirectWouldResendCredentialError,
   ResponseDecodeError,
   apiKey,
   basic,
@@ -251,5 +252,53 @@ describe('allowedHosts: strip', () => {
     });
 
     expect(server.requests[1]?.headers['x-api-key']).toBe(CANARY);
+  });
+
+  it("sends the caller's query on the first hop only", async () => {
+    // Found by verification: every hop re-merged `searchParams` onto the URL
+    // the server named, so a wrapped query credential reached the second
+    // origin that `'strip'` had just removed it from the headers of.
+    server.reply({ status: 302, headers: { location: `${second.origin}/landing` } });
+
+    await sensitiveFetch(`${server.origin}/redirect`, {
+      searchParams: { token: token() },
+      headers: { 'x-api-key': apiKey(token()) },
+      allowedHosts: 'strip',
+    });
+
+    expect(server.requests[0]?.target).toContain(CANARY);
+    expect(second.requests).toHaveLength(1);
+    expect(second.requests[0]?.target).not.toContain(CANARY);
+    expect(second.transcript).not.toContain(CANARY);
+  });
+
+  it('refuses a cross-origin 307 that would re-send a body carrying a credential', async () => {
+    server.reply({ status: 307, headers: { location: `${second.origin}/landing` } });
+
+    const error = await sensitiveFetch(`${server.origin}/redirect`, {
+      method: 'POST',
+      sensitiveJson: { secret: token() },
+      headers: { 'x-api-key': apiKey(token()) },
+      allowedHosts: 'strip',
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(RedirectWouldResendCredentialError);
+    expect((error as RedirectWouldResendCredentialError).paths).toEqual(['secret']);
+    expect(second.requests).toHaveLength(0);
+  });
+
+  it('follows a cross-origin 302 from a POST, which drops the body on its own', async () => {
+    server.reply({ status: 302, headers: { location: `${second.origin}/landing` } });
+
+    await sensitiveFetch(`${server.origin}/redirect`, {
+      method: 'POST',
+      sensitiveJson: { secret: token() },
+      headers: { 'x-api-key': apiKey(token()) },
+      allowedHosts: 'strip',
+    });
+
+    expect(second.requests).toHaveLength(1);
+    expect(second.requests[0]?.method).toBe('GET');
+    expect(second.transcript).not.toContain(CANARY);
   });
 });

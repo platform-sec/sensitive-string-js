@@ -30,24 +30,35 @@ const api = createSensitiveKy(ky, {
   responseFields: { 'customer.email': 'sensitive' },
 });
 
-const body = await api.post('/charges', { amount, card: { number: cardNumber } }, {
-  headers: { authorization: bearer(token) },
-}).json<{ customer: { email: unknown } }>();
+const body = await api
+  .post(
+    '/charges',
+    { amount, card: { number: cardNumber } },
+    {
+      headers: { authorization: bearer(token) },
+    }
+  )
+  .json<{ customer: { email: unknown } }>();
 ```
 
 `prefix` is this package's option, named after ky 2's own, because ky does not expose the defaults of
 an extended instance and the wrapper needs the destination host **before** it reveals anything.
 
+The same opacity means a wrapped value placed in `ky.extend({ headers })` is never seen by the
+wrapper: measured, it reaches the wire as `[REDACTED:credential]` on every hop, revealed nowhere and
+stripped by nothing. Put a wrapped credential in the call's `headers`, where it is revealed, recorded
+and scrubbed; the got and axios packages read their clients' instance defaults, and this one cannot.
+
 ## What it protects against
 
 Measured on ky 2.1.0 against a local recording server.
 
-| Measured | What the wrapper does |
-|---|---|
-| a `SensitiveString` in a header or a `json` body reaches the wire as `[REDACTED:credential]` | reveals before the call |
-| a 401 leaves the credential in `error.request.headers` and in the frozen `error.options` | sets the named headers on the `Request` to their markers, and replaces `error.options` with a scrubbed copy |
-| a 302 to another origin forwards `x-api-key` verbatim, because ky runs on the platform's `fetch` | refuses the hop unless the host is in `allowedHosts` |
-| `.json()` propagates `JSON.parse`'s quoted body | rewrites it to a `ResponseDecodeError` naming the request, carrying none of the body and chaining no `cause` |
+| Measured                                                                                         | What the wrapper does                                                                                        |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| a `SensitiveString` in a header or a `json` body reaches the wire as `[REDACTED:credential]`     | reveals before the call                                                                                      |
+| a 401 leaves the credential in `error.request.headers` and in the frozen `error.options`         | sets the named headers on the `Request` to their markers, and replaces `error.options` with a scrubbed copy  |
+| a 302 to another origin forwards `x-api-key` verbatim, because ky runs on the platform's `fetch` | refuses the hop unless the host is in `allowedHosts`                                                         |
+| `.json()` propagates `JSON.parse`'s quoted body                                                  | rewrites it to a `ResponseDecodeError` naming the request, carrying none of the body and chaining no `cause` |
 
 The **success** path needs nothing, and that is a measurement rather than an omission: a `Response`
 carries no request headers, so `util.inspect` on a ky response holding a revealed `Authorization`
@@ -69,11 +80,11 @@ a query key, `error.response` is dropped for the same reason: a `Response`'s `ur
 
 ## Options the wrapper owns
 
-| Option | What happens |
-|---|---|
-| `retry` | set to 0; retries are driven by the wrapper, so a retried request reveals and audits once **per attempt**. The cost is ky's `ky.retry()` control from `afterResponse` |
-| `redirect` | set to `'manual'` while the wrapper follows hops, which it does whenever a redirect policy applies |
-| `prefix`, `baseUrl` | neutralized on the outgoing call, because the URL the wrapper hands ky is already absolute |
+| Option              | What happens                                                                                                                                                          |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `retry`             | set to 0; retries are driven by the wrapper, so a retried request reveals and audits once **per attempt**. The cost is ky's `ky.retry()` control from `afterResponse` |
+| `redirect`          | set to `'manual'` while the wrapper follows hops, which it does whenever a redirect policy applies                                                                    |
+| `prefix`, `baseUrl` | neutralized on the outgoing call, because the URL the wrapper hands ky is already absolute                                                                            |
 
 ky throws on every non-2xx, so a 3xx under `redirect: 'manual'` arrives as an `HTTPError` rather than
 as a response. The hop loop reads the response off that error; every other status keeps ky's own

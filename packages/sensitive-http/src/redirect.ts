@@ -1,8 +1,10 @@
 import {
   InsecureTransportError,
   RedirectHostNotAllowedError,
+  RedirectWouldResendCredentialError,
   TooManyRedirectsError,
 } from './errors.js';
+import type { PreparedRequest } from './request.js';
 
 /**
  * Where a revealed credential is allowed to go.
@@ -174,6 +176,29 @@ export function assertHopAllowed(
 
   if (!hostAllowed(next, policy)) {
     throw new RedirectHostNotAllowedError(next.host, policy, hop);
+  }
+}
+
+/**
+ * Refuse a cross-origin hop that would re-send a body carrying a wrapped value.
+ *
+ * `'strip'` removes credential-bearing headers at the origin boundary because
+ * a header can be dropped without changing what the request means. A body
+ * cannot: a 307 or 308 re-sends it whole, and a JSON or form body with one
+ * field removed is a different request that succeeds at doing something else.
+ * So the hop is refused, before anything is revealed for it. Only under
+ * `'strip'`: a host the caller named is a host they trust with the body they
+ * built, and a 301, 302 or 303 drops the body on its own.
+ *
+ * Found by independent verification of the corpus study, which measured a
+ * 307 carrying a wrapped body through all five wrappers under `'strip'` and
+ * watched it arrive at the second origin.
+ *
+ * @throws RedirectWouldResendCredentialError
+ */
+export function assertBodyMayFollow(next: URL, hop: number, prepared: PreparedRequest): void {
+  if (prepared.bodyCarriesCredential) {
+    throw new RedirectWouldResendCredentialError(next.host, hop, prepared.plan.bodyPaths);
   }
 }
 

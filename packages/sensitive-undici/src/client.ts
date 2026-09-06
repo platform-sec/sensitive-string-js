@@ -2,6 +2,7 @@ import { request as undiciRequest } from 'undici';
 import type { Dispatcher } from 'undici';
 
 import {
+  assertBodyMayFollow,
   assertHopAllowed,
   headersWithout,
   isCrossOrigin,
@@ -97,6 +98,8 @@ export async function sensitiveRequest<T = unknown>(
         method: currentMethod,
         url: currentUrl,
         headers: headersWithout(options.headers, dropped),
+        // Merged on the first hop only; `prepareRequest` drops it for the
+        // hops that follow.
         query: options.query,
         body,
         form,
@@ -146,18 +149,24 @@ export async function sensitiveRequest<T = unknown>(
     // first, because undici keeps the connection until it is.
     await response.body.dump();
 
-    assertHopAllowed(new URL(target, currentUrl), hop, prepared.redirects, budget);
+    const next = new URL(target, currentUrl);
 
-    if (
-      prepared.redirects === 'strip' &&
-      isCrossOrigin(new URL(prepared.url), new URL(target, currentUrl))
-    ) {
-      dropped = [...dropped, ...prepared.plan.headers];
-    }
+    assertHopAllowed(next, hop, prepared.redirects, budget);
 
     const rewritten = redirectMethod(response.statusCode, currentMethod);
 
-    currentUrl = new URL(target, currentUrl).toString();
+    if (prepared.redirects === 'strip' && isCrossOrigin(new URL(prepared.url), next)) {
+      // A 307 or 308 re-sends the body, and a body carrying a wrapped value
+      // cannot be stripped the way a header can. Refused rather than
+      // forwarded, before anything is revealed for the next hop.
+      if (rewritten.keepBody) {
+        assertBodyMayFollow(next, hop, prepared);
+      }
+
+      dropped = [...dropped, ...prepared.plan.headers];
+    }
+
+    currentUrl = next.toString();
     currentMethod = rewritten.method;
 
     if (!rewritten.keepBody) {
