@@ -1,6 +1,8 @@
 import {
   SensitiveHttpError,
   assertHopAllowed,
+  headersForHop,
+  isCrossOrigin,
   decodeJson,
   isRedirect,
   prepareRequest,
@@ -80,6 +82,10 @@ export function sensitiveFetch<T = unknown>(
     let body = init.sensitiveJson;
     let form = init.form;
     let hop = 0;
+    // Rebuilt from the caller's headers on every hop, so `'strip'` narrows
+    // this rather than the configuration. A credential removed at hop two
+    // must stay removed at hop three.
+    let headers = init.headers;
     const budget = init.maxRedirects ?? 5;
 
     for (;;) {
@@ -87,7 +93,7 @@ export function sensitiveFetch<T = unknown>(
         {
           method: currentMethod,
           url: currentUrl,
-          headers: init.headers,
+          headers,
           query: init.searchParams,
           body,
           form,
@@ -123,6 +129,14 @@ export function sensitiveFetch<T = unknown>(
       // Before the next request is built, so nothing is revealed for a host the
       // caller never named.
       assertHopAllowed(new URL(location, currentUrl), hop, prepared.redirects, budget);
+
+      if (prepared.redirects === 'strip') {
+        headers = headersForHop(
+          headers,
+          prepared.plan.headers,
+          isCrossOrigin(new URL(prepared.url), new URL(location, currentUrl))
+        );
+      }
 
       const rewritten = redirectMethod(response.status, currentMethod);
 

@@ -2,7 +2,9 @@ import {
   RedirectHostNotAllowedError,
   SensitiveHttpError,
   decodeJson,
+  headersForHop,
   hostAllowed,
+  isCrossOrigin,
   prepareRequest,
   safeUrl,
   wrapResponseFields,
@@ -226,14 +228,28 @@ export function createSensitiveGot(client: Got, options: SensitiveGotOptions = {
 
     if (prepared.redirects !== 'client') {
       const policy = prepared.redirects;
+      const from = new URL(prepared.url);
+      const revealed = prepared.plan.headers;
 
       out['hooks'] = {
         ...((rest as { hooks?: Record<string, unknown> }).hooks ?? {}),
         beforeRedirect: [
-          (redirectOptions: { url: URL | undefined }) => {
+          (redirectOptions: { url: URL | undefined; headers?: Record<string, unknown> }) => {
             const next = redirectOptions.url;
 
             if (next === undefined) {
+              return;
+            }
+
+            // got is the one client that follows hops itself while still
+            // handing the next request's options over for editing, so `'strip'`
+            // is a deletion here rather than a rebuilt request. The other
+            // wrappers drive the loop and rebuild.
+            if (policy === 'strip') {
+              const current = redirectOptions.headers;
+              if (isCrossOrigin(from, next) && current !== undefined) {
+                redirectOptions.headers = { ...headersForHop(current, revealed, true) };
+              }
               return;
             }
 

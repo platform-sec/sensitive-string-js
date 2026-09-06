@@ -33,6 +33,41 @@ export function isLoopback(hostname: string): boolean {
   return LOOPBACK.has(hostname) || LOOPBACK.has(bare) || bare.startsWith('127.');
 }
 
+/** Ports the URL parser leaves implicit, so `http://a` and `http://a:80` are one origin. */
+const DEFAULT_PORT: Readonly<Record<string, string>> = { 'http:': '80', 'https:': '443' };
+
+function effectivePort(url: URL): string {
+  return url.port === '' ? (DEFAULT_PORT[url.protocol] ?? '') : url.port;
+}
+
+/**
+ * Whether a hop leaves the origin, by the scheme/host/port rule.
+ *
+ * One exception, and it is the only one: `http:` to `https:` on the same host,
+ * where neither side names a non-default port. That is an upgrade to the same
+ * server, every client in the measured set follows it without stripping, and
+ * treating it as a boundary would drop a credential on a request that is
+ * strictly more protected than the one that carried it. The reverse is never
+ * allowed: `https:` to `http:` is a downgrade and always crosses.
+ *
+ * Deliberately not `hostAllowed`'s comparison. That one answers whether a host
+ * is on a list the caller wrote, which is a different question with a different
+ * failure mode.
+ */
+export function isCrossOrigin(from: URL, to: URL): boolean {
+  if (from.hostname.toLowerCase() !== to.hostname.toLowerCase()) {
+    return true;
+  }
+
+  if (from.protocol === to.protocol) {
+    return effectivePort(from) !== effectivePort(to);
+  }
+
+  const upgrading = from.protocol === 'http:' && to.protocol === 'https:';
+
+  return !(upgrading && from.port === '' && to.port === '');
+}
+
 /**
  * Refuse a plaintext hop that would carry a credential.
  *
@@ -63,13 +98,18 @@ export function assertTransport(
  *
  * `false` means the wrapper does not follow redirects at all, which is the
  * default the moment a credential sits in a header this client will not strip.
- * An explicit `allowedHosts` array always wins, because naming the hosts is the
- * caller saying they have thought about it.
+ * An explicit `allowedHosts` always wins, because naming the hosts, or naming
+ * `'strip'`, is the caller saying they have thought about it.
+ *
+ * `'strip'` is never a default and cannot become one. Refusing is the answer
+ * that cannot go wrong quietly, and a request that stops is a bug report;
+ * a credential dropped on a hop the caller did not expect to be crossed is a
+ * request that succeeds while doing less than it looks like it did.
  */
 export function resolveRedirectPolicy(
-  configured: readonly string[] | false | undefined,
+  configured: RedirectPolicy | undefined,
   hasUnstrippedCredential: boolean
-): readonly string[] | false | 'client' {
+): ResolvedRedirectPolicy {
   if (configured !== undefined) {
     return configured;
   }
@@ -80,6 +120,21 @@ export function resolveRedirectPolicy(
   // and a client outside those five never reaches here with `false`.
   return hasUnstrippedCredential ? false : 'client';
 }
+
+/**
+ * What a caller may configure.
+ *
+ * `'strip'` follows the redirect with every credential-bearing header removed
+ * on a cross-origin hop, which is the third answer between refusing outright
+ * and naming hosts. It exists because naming hosts is impossible for a
+ * provider that redirects release assets to object storage the caller cannot
+ * enumerate in advance, and the two answers this package had before were
+ * "break the feature" and "list what you cannot list".
+ */
+export type RedirectPolicy = readonly string[] | false | 'strip';
+
+/** What `resolveRedirectPolicy` returns, adding the delegating case. */
+export type ResolvedRedirectPolicy = RedirectPolicy | 'client';
 
 /** Match a host against the allow list, comparing `host` (with port) and `hostname`. */
 export function hostAllowed(url: URL, allowed: readonly string[]): boolean {
@@ -99,11 +154,18 @@ export function hostAllowed(url: URL, allowed: readonly string[]): boolean {
 export function assertHopAllowed(
   next: URL,
   hop: number,
-  policy: readonly string[] | false,
+  policy: RedirectPolicy,
   budget: number
 ): void {
   if (hop > budget) {
     throw new TooManyRedirectsError(budget);
+  }
+
+  // `'strip'` allows every host, which is the point of it: the credential is
+  // what is not allowed to travel, not the request. The hop budget above still
+  // applies, because an unbounded redirect chain is a separate problem.
+  if (policy === 'strip') {
+    return;
   }
 
   if (policy === false) {
@@ -113,6 +175,44 @@ export function assertHopAllowed(
   if (!hostAllowed(next, policy)) {
     throw new RedirectHostNotAllowedError(next.host, policy, hop);
   }
+}
+
+/**
+ * The headers to send on the next hop, given what the last one revealed.
+ *
+ * The list of names to drop is derived rather than enumerated: `plan.headers`
+ * holds exactly the header names whose values carried a wrapped class, so the
+ * caller's own classification decides what a credential is. That is the whole
+ * difference between this and a fixed denylist, which has to guess the names an
+ * application invents and is wrong for `PRIVATE-TOKEN` and every other header
+ * a provider makes up.
+ *
+ * Same-origin hops keep everything. A credential that has not left its origin
+ * has not been disclosed to anyone new.
+ *
+ * @param headers - The headers the caller configured, in their original casing.
+ * @param revealed - Lowercased names that carried a wrapped value, from `plan.headers`.
+ * @param crossOrigin - Whether this hop leaves the origin.
+ */
+export function headersForHop<T>(
+  headers: Readonly<Record<string, T>> | undefined,
+  revealed: readonly string[],
+  crossOrigin: boolean
+): Readonly<Record<string, T>> | undefined {
+  if (headers === undefined || !crossOrigin || revealed.length === 0) {
+    return headers;
+  }
+
+  const drop = new Set(revealed.map((name) => name.toLowerCase()));
+  const kept: Record<string, T> = {};
+
+  for (const [name, value] of Object.entries(headers)) {
+    if (!drop.has(name.toLowerCase())) {
+      kept[name] = value;
+    }
+  }
+
+  return kept;
 }
 
 /** Status codes that carry a `Location` a client is expected to follow. */

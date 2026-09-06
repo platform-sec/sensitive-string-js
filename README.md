@@ -1621,7 +1621,11 @@ and nothing else, and forwards `x-api-key` verbatim. Most providers authenticate
 that set, so a credential sent to a host the caller trusts is delivered to a host they never named, on
 that host's say-so. That exemption is recorded per client, from a measurement of each one, rather than
 assumed from the specification: clients that ignore it exist, so a client this package has not
-measured is exempt from nothing and defaults to refusing redirects.
+measured is exempt from nothing and defaults to refusing redirects. When the hosts genuinely cannot be
+named in advance, which is the ordinary case for a provider that redirects a download to object
+storage, `allowedHosts: 'strip'` follows the hop with every credential-bearing header removed at the
+origin boundary. Which headers those are is derived from what the caller wrapped, not from a list of
+names the library had to guess.
 
 The wrapper owns the call rather than installing a hook: axios's request interceptor sees stringified
 headers and a structured body, got's `beforeRequest` sees the exact mirror image, and `fetch` and

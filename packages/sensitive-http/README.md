@@ -83,6 +83,14 @@ All five implement the Fetch specification, which names `Authorization`, `Cookie
 (`x-api-key`, `api-key`, `X-Auth-Token`, `PRIVATE-TOKEN`) is outside that rule. "Reveal at the wire"
 is incomplete, because the wire is not a point: it is a sequence of hosts chosen partly by the server.
 
+When the hosts cannot be named in advance, `allowedHosts: 'strip'` is the third answer. The wrapper
+follows the redirect and removes every header that carried a wrapped value the moment the hop leaves
+the origin, so the request finishes and the credential does not travel. The list of names to drop is
+derived from the request rather than enumerated: the caller decided what a credential was when they
+wrapped it, so a header the library has never heard of is covered on the same terms as
+`Authorization`. It is never a default, because a request that quietly continues without its
+credential succeeds at doing less than it appears to.
+
 The exemption those three names earn is recorded per client rather than once for every client,
 because agreeing with the specification is not a property of the header. It is a property of the
 implementation holding the request, and implementations disagree: a survey of Node HTTP clients found

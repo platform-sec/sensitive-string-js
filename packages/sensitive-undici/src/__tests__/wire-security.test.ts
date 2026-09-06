@@ -236,3 +236,41 @@ describe('markerGuard', () => {
     }
   });
 });
+
+describe('allowedHosts: strip', () => {
+  it('follows a cross-origin hop with the credential removed', async () => {
+    // The third answer. Refusing breaks a provider that redirects downloads to
+    // storage the caller cannot name; naming hosts is impossible for the same
+    // reason. This drops the credential at the boundary and lets the request
+    // finish, which is what the leak this mode was written for actually needed.
+    server.replyOnce({ status: 302, headers: { location: `${second.origin}/landing` } });
+
+    const response = await sensitiveRequest(`${server.origin}/redirect`, {
+      headers: { 'x-api-key': apiKey(token()) },
+      allowedHosts: 'strip',
+      allowInsecureTransport: true,
+    });
+
+    await response.body.dump();
+
+    expect(second.transcript).not.toContain(CANARY);
+    expect(second.requests[0]?.headers['x-api-key']).toBeUndefined();
+    expect(second.requests).toHaveLength(1);
+  });
+
+  it('keeps the credential on a same-origin hop', async () => {
+    // Stripping every hop would be a different bug: a redirect inside one
+    // origin discloses the credential to nobody new.
+    server.replyOnce({ status: 302, headers: { location: `${server.origin}/landing` } });
+
+    const response = await sensitiveRequest(`${server.origin}/redirect`, {
+      headers: { 'x-api-key': apiKey(token()) },
+      allowedHosts: 'strip',
+      allowInsecureTransport: true,
+    });
+
+    await response.body.dump();
+
+    expect(server.requests[1]?.headers['x-api-key']).toBe(CANARY);
+  });
+});

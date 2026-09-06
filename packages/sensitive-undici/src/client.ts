@@ -3,6 +3,8 @@ import type { Dispatcher } from 'undici';
 
 import {
   assertHopAllowed,
+  headersForHop,
+  isCrossOrigin,
   decodeJson,
   isRedirect,
   prepareRequest,
@@ -83,6 +85,10 @@ export async function sensitiveRequest<T = unknown>(
   let body = options.json;
   let form = options.form;
   let hop = 0;
+  // Rebuilt from the caller's headers on every hop, so `'strip'` narrows
+  // this rather than the configuration. A credential removed at hop two
+  // must stay removed at hop three.
+  let hopHeaders = options.headers;
   const budget = options.maxRedirects ?? 5;
 
   for (;;) {
@@ -90,7 +96,7 @@ export async function sensitiveRequest<T = unknown>(
       {
         method: currentMethod,
         url: currentUrl,
-        headers: options.headers,
+        headers: hopHeaders,
         query: options.query,
         body,
         form,
@@ -141,6 +147,14 @@ export async function sensitiveRequest<T = unknown>(
     await response.body.dump();
 
     assertHopAllowed(new URL(target, currentUrl), hop, prepared.redirects, budget);
+
+    if (prepared.redirects === 'strip') {
+      hopHeaders = headersForHop(
+        hopHeaders,
+        prepared.plan.headers,
+        isCrossOrigin(new URL(prepared.url), new URL(target, currentUrl))
+      );
+    }
 
     const rewritten = redirectMethod(response.statusCode, currentMethod);
 

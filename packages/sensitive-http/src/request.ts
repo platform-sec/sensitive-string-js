@@ -7,7 +7,7 @@ import { isAuthHeader, isStrippedAcrossOrigins } from './auth.js';
 import { buildAttemptContext } from './context.js';
 import { assertNoMarker } from './marker.js';
 import { isSensitive, revealForm, revealHeaders, revealOutgoing, revealQuery } from './reveal.js';
-import { assertTransport, resolveRedirectPolicy } from './redirect.js';
+import { assertTransport, resolveRedirectPolicy, type ResolvedRedirectPolicy } from './redirect.js';
 import { PlanBuilder } from './scrub.js';
 import type { ScrubPlan } from './scrub.js';
 import type { OutgoingRequest, RequestDescriptor, SensitiveClientOptions } from './types.js';
@@ -45,10 +45,11 @@ export interface PreparedRequest {
   readonly context: RevealContext;
   /**
    * `'client'` means the client's own redirect handling is left alone, which is
-   * only chosen when the platform already strips every credential this request
-   * carries.
+   * only chosen when this client already strips every credential the request
+   * carries. `'strip'` means the wrapper follows the hops itself and removes
+   * the credential headers when one leaves the origin.
    */
-  readonly redirects: readonly string[] | false | 'client';
+  readonly redirects: ResolvedRedirectPolicy;
   readonly descriptor: RequestDescriptor;
 }
 

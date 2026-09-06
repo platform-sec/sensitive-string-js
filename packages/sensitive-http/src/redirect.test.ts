@@ -13,6 +13,8 @@ import {
   isRedirect,
   redirectMethod,
   resolveRedirectPolicy,
+  headersForHop,
+  isCrossOrigin,
 } from './redirect.js';
 
 describe('assertTransport', () => {
@@ -126,5 +128,67 @@ describe('hop mechanics', () => {
     expect(isLoopback('127.0.0.1')).toBe(true);
     expect(isLoopback('::1')).toBe(true);
     expect(isLoopback('api.example.com')).toBe(false);
+  });
+});
+
+describe('isCrossOrigin', () => {
+  const at = (u: string): URL => new URL(u);
+
+  it('treats a different host as crossing, whatever the case', () => {
+    expect(isCrossOrigin(at('https://a.example'), at('https://b.example'))).toBe(true);
+    expect(isCrossOrigin(at('https://A.example'), at('https://a.example'))).toBe(false);
+  });
+
+  it('treats a different port as crossing, normalizing the implied one', () => {
+    expect(isCrossOrigin(at('https://a.example'), at('https://a.example:8443'))).toBe(true);
+    expect(isCrossOrigin(at('https://a.example'), at('https://a.example:443'))).toBe(false);
+    expect(isCrossOrigin(at('http://a.example'), at('http://a.example:80'))).toBe(false);
+  });
+
+  it('allows an http to https upgrade on the same host', () => {
+    // The one exception, and the reason it is safe: same server, strictly more
+    // protected than the hop that carried the credential in.
+    expect(isCrossOrigin(at('http://a.example'), at('https://a.example'))).toBe(false);
+  });
+
+  it('never allows the downgrade, which is the same pair backwards', () => {
+    expect(isCrossOrigin(at('https://a.example'), at('http://a.example'))).toBe(true);
+  });
+
+  it('refuses the upgrade when either side names a non-default port', () => {
+    // A non-default port is a different service on the same machine as often as
+    // it is the same one, so the upgrade allowance does not extend to it.
+    expect(isCrossOrigin(at('http://a.example:8080'), at('https://a.example'))).toBe(true);
+    expect(isCrossOrigin(at('http://a.example'), at('https://a.example:8443'))).toBe(true);
+  });
+});
+
+describe('headersForHop', () => {
+  const headers = { Authorization: 'Bearer x', 'X-Api-Key': 'k', 'X-Trace': 't' };
+
+  it('drops the names the plan says carried a wrapped value', () => {
+    // The plan records lowercased names and the caller wrote mixed case, which
+    // is the exact mismatch that caused the disclosure this mode answers.
+    expect(headersForHop(headers, ['authorization', 'x-api-key'], true)).toEqual({
+      'X-Trace': 't',
+    });
+  });
+
+  it('keeps everything on a same-origin hop', () => {
+    expect(headersForHop(headers, ['authorization'], false)).toEqual(headers);
+  });
+
+  it('keeps everything when the request revealed nothing', () => {
+    expect(headersForHop(headers, [], true)).toEqual(headers);
+  });
+
+  it('passes undefined through rather than inventing an object', () => {
+    expect(headersForHop(undefined, ['authorization'], true)).toBeUndefined();
+  });
+
+  it('does not mutate the headers it was given', () => {
+    const original = { ...headers };
+    headersForHop(headers, ['authorization'], true);
+    expect(headers).toEqual(original);
   });
 });

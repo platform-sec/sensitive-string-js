@@ -78,10 +78,18 @@ export interface SensitiveClientOptions {
    * forward `x-api-key` verbatim across origins.
    *
    * When every credential is in `Authorization` or `Cookie` and this is unset,
-   * the client's own redirect handling is left alone, because three
-   * independent implementations already agree on stripping those.
+   * the client's own redirect handling is left alone, because five independent
+   * implementations already agree on stripping those.
+   *
+   * `'strip'` is the third answer: follow the redirect anywhere, with every
+   * header that carried a wrapped value removed the moment the hop leaves the
+   * origin. Use it when the hosts genuinely cannot be named in advance, which
+   * is the ordinary case for a provider that redirects downloads to object
+   * storage. It is never a default and must be asked for, because a request
+   * that quietly continues without its credential succeeds at doing less than
+   * it appears to.
    */
-  readonly allowedHosts?: readonly string[] | false;
+  readonly allowedHosts?: readonly string[] | false | 'strip';
 
   /**
    * Reveal a credential into a plaintext `http://` request to a non-loopback host.

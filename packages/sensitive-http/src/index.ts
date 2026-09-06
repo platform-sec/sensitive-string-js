@@ -106,12 +106,15 @@ export {
   REDIRECT_STATUSES,
   assertHopAllowed,
   assertTransport,
+  headersForHop,
   hostAllowed,
+  isCrossOrigin,
   isLoopback,
   isRedirect,
   redirectMethod,
   resolveRedirectPolicy,
 } from './redirect.js';
+export type { RedirectPolicy, ResolvedRedirectPolicy } from './redirect.js';
 
 export { assertDecoded, decodeJson, safeUrl, wrapResponseFields } from './response.js';
 

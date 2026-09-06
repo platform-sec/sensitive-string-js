@@ -1,6 +1,8 @@
 import {
   SensitiveHttpError,
   assertHopAllowed,
+  headersForHop,
+  isCrossOrigin,
   decodeJson,
   isRedirect,
   prepareRequest,
@@ -141,6 +143,10 @@ export function createSensitiveKy(
     let body = config.json;
     let form = config.form;
     let hop = 0;
+    // Rebuilt from the caller's headers on every hop, so `'strip'` narrows
+    // this rather than the configuration. A credential removed at hop two
+    // must stay removed at hop three.
+    let headers = config.headers;
     const budget = options.maxRedirects ?? 5;
 
     for (;;) {
@@ -148,7 +154,7 @@ export function createSensitiveKy(
         {
           method: currentMethod,
           url: currentUrl,
-          headers: config.headers,
+          headers,
           query: config.searchParams,
           body,
           form,
@@ -192,6 +198,14 @@ export function createSensitiveKy(
       // The refusal happens before the next request is built, so nothing is
       // revealed for a host the caller never named.
       assertHopAllowed(new URL(location, currentUrl), hop, prepared.redirects, budget);
+
+      if (prepared.redirects === 'strip') {
+        headers = headersForHop(
+          headers,
+          prepared.plan.headers,
+          isCrossOrigin(new URL(prepared.url), new URL(location, currentUrl))
+        );
+      }
 
       const rewritten = redirectMethod(response.status, currentMethod);
 

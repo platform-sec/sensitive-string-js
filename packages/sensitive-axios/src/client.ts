@@ -1,6 +1,8 @@
 import {
   assertDecoded,
   assertHopAllowed,
+  headersForHop,
+  isCrossOrigin,
   isRedirect,
   prepareRequest,
   redirectMethod,
@@ -216,13 +218,17 @@ export function createSensitiveAxios(
     let body = config.data;
     let form = config.form;
     let hop = 0;
+    // Rebuilt from the caller's headers on every hop, so `'strip'` narrows this
+    // rather than the configuration. A credential removed at hop two must stay
+    // removed at hop three.
+    let headers = config.headers;
 
     for (;;) {
       const prepared = prepareRequest(
         {
           method: currentMethod,
           url,
-          headers: withDefaultHeaders(client, currentMethod, config.headers),
+          headers: withDefaultHeaders(client, currentMethod, headers),
           query: config.params,
           body,
           form,
@@ -264,6 +270,14 @@ export function createSensitiveAxios(
       assertHopAllowed(next, hop, prepared.redirects, budget);
 
       const rewritten = redirectMethod(response.status, currentMethod);
+
+      if (prepared.redirects === 'strip') {
+        headers = headersForHop(
+          headers,
+          prepared.plan.headers,
+          isCrossOrigin(new URL(prepared.url), next)
+        );
+      }
 
       url = next.toString();
       currentMethod = rewritten.method;
