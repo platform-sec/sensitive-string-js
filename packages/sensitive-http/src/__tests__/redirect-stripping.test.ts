@@ -78,7 +78,12 @@ function forwarded(): string[] {
   return PROBE_NAMES.filter((name) => seen[name] !== undefined);
 }
 
-async function resolves(specifier: string): Promise<boolean> {
+/** Whether this client's package can be imported here, so its case can skip if not. */
+async function resolves(specifier: string | null): Promise<boolean> {
+  if (specifier === null) {
+    return true;
+  }
+
   try {
     await import(specifier);
 
@@ -88,10 +93,17 @@ async function resolves(specifier: string): Promise<boolean> {
   }
 }
 
-const CASES: ReadonlyArray<{ client: string; specifier: string; send: () => Promise<void> }> = [
+const CASES: ReadonlyArray<{
+  client: string;
+  specifier: string | null;
+  send: () => Promise<void>;
+}> = [
   {
     client: 'fetch',
-    specifier: 'node:http',
+    // Global on the Node floor this package supports, so there is nothing to
+    // resolve and nothing to skip. The field is here so every case has the same
+    // shape rather than to stand in for a package.
+    specifier: null,
     send: async () => {
       await fetch(start, { headers: { ...PROBES }, redirect: 'follow' });
     },

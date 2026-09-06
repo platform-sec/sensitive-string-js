@@ -39,6 +39,20 @@ asserting both that the canary does not reach the second origin and that the req
 got is the one that differs: it follows hops itself but hands the next request's options over through
 `beforeRedirect`, so there it is a deletion rather than a rebuilt request.
 
-New exports from the http package: `isCrossOrigin`, `headersForHop`, and the `RedirectPolicy` and
+What every wrapper accumulates is the set of dropped header *names*, applied where the next request is
+built, rather than a narrowed header object carried forward. The two are not equivalent and the
+difference is a real leak: axios merges `defaults.headers` underneath the request's own, and the axios
+wrapper deliberately supports a wrapped value there, so narrowing only the per-request headers would
+strip the call site's credential and forward the instance's. Dropped names are also set to `null` in
+the outgoing axios config, because removing a name from what is sent is not enough on its own when the
+client refills it from its defaults.
+
+got tracks the previous hop rather than comparing every hop against the request's original URL.
+Same-origin is not transitive once the http-to-https upgrade is allowed: A `http://x` to B `https://x`
+is an upgrade, B to C `http://x` is a downgrade, and C is same-origin with A, so comparing against A
+would forward a credential into plaintext. Distinguishing the two needs TLS and is not covered by a
+test; the other four wrappers rebuild each hop and already hold the previous URL.
+
+New exports from the http package: `isCrossOrigin`, `headersWithout`, and the `RedirectPolicy` and
 `ResolvedRedirectPolicy` types. `allowedHosts` accepts `'strip'` alongside the array and `false`.
 Nothing changes for a caller who does not ask for it.

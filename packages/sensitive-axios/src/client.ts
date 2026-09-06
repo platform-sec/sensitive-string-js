@@ -1,7 +1,7 @@
 import {
   assertDecoded,
   assertHopAllowed,
-  headersForHop,
+  headersWithout,
   isCrossOrigin,
   isRedirect,
   prepareRequest,
@@ -154,7 +154,8 @@ function outgoingConfig(
   prepared: PreparedRequest,
   config: SensitiveAxiosRequestConfig,
   manualRedirects: boolean,
-  client: AxiosInstance
+  client: AxiosInstance,
+  dropped: readonly string[] = []
 ): AxiosRequestConfig {
   const {
     headers: _headers,
@@ -179,6 +180,14 @@ function outgoingConfig(
       ...(prepared.formText !== undefined
         ? { 'content-type': 'application/x-www-form-urlencoded' }
         : {}),
+      // Removing a name from what we send is not enough on its own: axios
+      // merges `defaults.headers` underneath the request's own, so a header
+      // `'strip'` dropped is refilled from the instance defaults on the next
+      // hop. The value there was never revealed, so what would arrive is the
+      // descriptor's `[object Object]` rather than the secret, but a junk
+      // header on the wire is still a bug. `null` is axios's way of saying the
+      // default does not apply.
+      ...Object.fromEntries(dropped.map((name) => [name, null])),
     },
     data: body,
   };
@@ -218,17 +227,26 @@ export function createSensitiveAxios(
     let body = config.data;
     let form = config.form;
     let hop = 0;
-    // Rebuilt from the caller's headers on every hop, so `'strip'` narrows this
-    // rather than the configuration. A credential removed at hop two must stay
-    // removed at hop three.
-    let headers = config.headers;
+    // Names dropped by `'strip'` so far, lowercased, accumulated rather than
+    // recomputed: a credential removed at hop two stays removed at hop three.
+    //
+    // Accumulating names rather than narrowing a header object is what makes
+    // this correct for `withDefaultHeaders`. The instance's own
+    // `defaults.headers` are merged in below and may themselves hold a wrapped
+    // value, so they are revealed and land in the plan; filtering only the
+    // per-request headers would strip the call site's credential and forward
+    // the instance's, which is the leak this mode exists to stop.
+    let dropped: readonly string[] = [];
 
     for (;;) {
       const prepared = prepareRequest(
         {
           method: currentMethod,
           url,
-          headers: withDefaultHeaders(client, currentMethod, headers),
+          headers: headersWithout(
+            withDefaultHeaders(client, currentMethod, config.headers),
+            dropped
+          ),
           query: config.params,
           body,
           form,
@@ -242,7 +260,7 @@ export function createSensitiveAxios(
 
       try {
         response = await client.request<T>(
-          outgoingConfig(prepared, { ...config, method: currentMethod }, manual, client)
+          outgoingConfig(prepared, { ...config, method: currentMethod }, manual, client, dropped)
         );
       } catch (error) {
         throw scrubError(error, prepared.plan);
@@ -271,12 +289,8 @@ export function createSensitiveAxios(
 
       const rewritten = redirectMethod(response.status, currentMethod);
 
-      if (prepared.redirects === 'strip') {
-        headers = headersForHop(
-          headers,
-          prepared.plan.headers,
-          isCrossOrigin(new URL(prepared.url), next)
-        );
+      if (prepared.redirects === 'strip' && isCrossOrigin(new URL(prepared.url), next)) {
+        dropped = [...dropped, ...prepared.plan.headers];
       }
 
       url = next.toString();

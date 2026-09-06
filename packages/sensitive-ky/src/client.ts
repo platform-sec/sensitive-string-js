@@ -1,7 +1,7 @@
 import {
   SensitiveHttpError,
   assertHopAllowed,
-  headersForHop,
+  headersWithout,
   isCrossOrigin,
   decodeJson,
   isRedirect,
@@ -143,10 +143,10 @@ export function createSensitiveKy(
     let body = config.json;
     let form = config.form;
     let hop = 0;
-    // Rebuilt from the caller's headers on every hop, so `'strip'` narrows
-    // this rather than the configuration. A credential removed at hop two
-    // must stay removed at hop three.
-    let headers = config.headers;
+    // Names dropped by `'strip'` so far, accumulated rather than recomputed: a
+    // credential removed at hop two stays removed at hop three, and a name taken
+    // out of the caller's headers cannot be refilled by anything merged in later.
+    let dropped: readonly string[] = [];
     const budget = options.maxRedirects ?? 5;
 
     for (;;) {
@@ -154,7 +154,7 @@ export function createSensitiveKy(
         {
           method: currentMethod,
           url: currentUrl,
-          headers,
+          headers: headersWithout(config.headers, dropped),
           query: config.searchParams,
           body,
           form,
@@ -199,12 +199,11 @@ export function createSensitiveKy(
       // revealed for a host the caller never named.
       assertHopAllowed(new URL(location, currentUrl), hop, prepared.redirects, budget);
 
-      if (prepared.redirects === 'strip') {
-        headers = headersForHop(
-          headers,
-          prepared.plan.headers,
-          isCrossOrigin(new URL(prepared.url), new URL(location, currentUrl))
-        );
+      if (
+        prepared.redirects === 'strip' &&
+        isCrossOrigin(new URL(prepared.url), new URL(location, currentUrl))
+      ) {
+        dropped = [...dropped, ...prepared.plan.headers];
       }
 
       const rewritten = redirectMethod(response.status, currentMethod);

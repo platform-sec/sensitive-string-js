@@ -178,36 +178,41 @@ export function assertHopAllowed(
 }
 
 /**
- * The headers to send on the next hop, given what the last one revealed.
+ * Headers with a set of names removed, matched without regard to case.
  *
- * The list of names to drop is derived rather than enumerated: `plan.headers`
- * holds exactly the header names whose values carried a wrapped class, so the
- * caller's own classification decides what a credential is. That is the whole
- * difference between this and a fixed denylist, which has to guess the names an
- * application invents and is wrong for `PRIVATE-TOKEN` and every other header
- * a provider makes up.
+ * The names come from `plan.headers`, which holds exactly the header names
+ * whose values carried a wrapped class, so what counts as a credential is the
+ * caller's own classification. That is the whole difference between this and a
+ * fixed denylist, which has to guess the names an application invents and is
+ * wrong for `PRIVATE-TOKEN` and every other header a provider makes up.
  *
- * Same-origin hops keep everything. A credential that has not left its origin
- * has not been disclosed to anyone new.
+ * Case folding is not incidental. `plan.headers` is lowercased and the caller
+ * wrote whatever they wrote, and comparing those two without folding is
+ * precisely the mistake that disclosed a credential in GHSA-p2f4-r6v6-j797.
  *
- * @param headers - The headers the caller configured, in their original casing.
- * @param revealed - Lowercased names that carried a wrapped value, from `plan.headers`.
- * @param crossOrigin - Whether this hop leaves the origin.
+ * A wrapper is expected to accumulate `dropped` across hops and apply this at
+ * the point the next request is built, rather than narrowing a header object
+ * once. The two are not equivalent: a client that merges its own instance
+ * defaults in afterwards would refill a name that had been removed from the
+ * per-request headers, and accumulating names survives that where narrowing an
+ * object does not.
+ *
+ * @param headers - Headers about to be sent, in whatever casing the caller used.
+ * @param dropped - Names to remove, in any casing. Empty means no change.
  */
-export function headersForHop<T>(
+export function headersWithout<T>(
   headers: Readonly<Record<string, T>> | undefined,
-  revealed: readonly string[],
-  crossOrigin: boolean
+  dropped: readonly string[]
 ): Readonly<Record<string, T>> | undefined {
-  if (headers === undefined || !crossOrigin || revealed.length === 0) {
+  if (headers === undefined || dropped.length === 0) {
     return headers;
   }
 
-  const drop = new Set(revealed.map((name) => name.toLowerCase()));
+  const remove = new Set(dropped.map((name) => name.toLowerCase()));
   const kept: Record<string, T> = {};
 
   for (const [name, value] of Object.entries(headers)) {
-    if (!drop.has(name.toLowerCase())) {
+    if (!remove.has(name.toLowerCase())) {
       kept[name] = value;
     }
   }

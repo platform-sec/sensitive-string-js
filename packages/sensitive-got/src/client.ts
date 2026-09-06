@@ -2,7 +2,7 @@ import {
   RedirectHostNotAllowedError,
   SensitiveHttpError,
   decodeJson,
-  headersForHop,
+  headersWithout,
   hostAllowed,
   isCrossOrigin,
   prepareRequest,
@@ -228,8 +228,16 @@ export function createSensitiveGot(client: Got, options: SensitiveGotOptions = {
 
     if (prepared.redirects !== 'client') {
       const policy = prepared.redirects;
-      const from = new URL(prepared.url);
       const revealed = prepared.plan.headers;
+      // The previous hop, advanced on every call, not the request's original
+      // URL. Same-origin is not transitive once `isCrossOrigin` allows the
+      // http-to-https upgrade: A `http://x` to B `https://x` is an upgrade, B
+      // to C `http://x` is a downgrade, and C is same-origin with A. Comparing
+      // every hop against A would call that last one same-origin and forward
+      // the credential into plaintext. got is the only wrapper that needs this
+      // tracked by hand, because the other four rebuild the request each hop
+      // and already hold the previous URL.
+      let from = new URL(prepared.url);
 
       out['hooks'] = {
         ...((rest as { hooks?: Record<string, unknown> }).hooks ?? {}),
@@ -248,8 +256,9 @@ export function createSensitiveGot(client: Got, options: SensitiveGotOptions = {
             if (policy === 'strip') {
               const current = redirectOptions.headers;
               if (isCrossOrigin(from, next) && current !== undefined) {
-                redirectOptions.headers = { ...headersForHop(current, revealed, true) };
+                redirectOptions.headers = { ...headersWithout(current, revealed) };
               }
+              from = next;
               return;
             }
 

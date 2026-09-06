@@ -106,7 +106,7 @@ export {
   REDIRECT_STATUSES,
   assertHopAllowed,
   assertTransport,
-  headersForHop,
+  headersWithout,
   hostAllowed,
   isCrossOrigin,
   isLoopback,

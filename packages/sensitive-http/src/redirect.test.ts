@@ -13,7 +13,7 @@ import {
   isRedirect,
   redirectMethod,
   resolveRedirectPolicy,
-  headersForHop,
+  headersWithout,
   isCrossOrigin,
 } from './redirect.js';
 
@@ -163,32 +163,33 @@ describe('isCrossOrigin', () => {
   });
 });
 
-describe('headersForHop', () => {
+describe('headersWithout', () => {
   const headers = { Authorization: 'Bearer x', 'X-Api-Key': 'k', 'X-Trace': 't' };
 
-  it('drops the names the plan says carried a wrapped value', () => {
+  it('drops the named headers whatever casing either side used', () => {
     // The plan records lowercased names and the caller wrote mixed case, which
     // is the exact mismatch that caused the disclosure this mode answers.
-    expect(headersForHop(headers, ['authorization', 'x-api-key'], true)).toEqual({
+    expect(headersWithout(headers, ['authorization', 'x-api-key'])).toEqual({
       'X-Trace': 't',
     });
+    expect(headersWithout(headers, ['AUTHORIZATION'])).not.toHaveProperty('Authorization');
   });
 
-  it('keeps everything on a same-origin hop', () => {
-    expect(headersForHop(headers, ['authorization'], false)).toEqual(headers);
-  });
-
-  it('keeps everything when the request revealed nothing', () => {
-    expect(headersForHop(headers, [], true)).toEqual(headers);
+  it('keeps everything when nothing is dropped', () => {
+    expect(headersWithout(headers, [])).toEqual(headers);
   });
 
   it('passes undefined through rather than inventing an object', () => {
-    expect(headersForHop(undefined, ['authorization'], true)).toBeUndefined();
+    expect(headersWithout(undefined, ['authorization'])).toBeUndefined();
+  });
+
+  it('ignores a name that is not present', () => {
+    expect(headersWithout(headers, ['x-not-here'])).toEqual(headers);
   });
 
   it('does not mutate the headers it was given', () => {
     const original = { ...headers };
-    headersForHop(headers, ['authorization'], true);
+    headersWithout(headers, ['authorization']);
     expect(headers).toEqual(original);
   });
 });

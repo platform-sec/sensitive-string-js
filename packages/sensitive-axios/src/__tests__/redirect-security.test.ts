@@ -153,6 +153,31 @@ describe('allowedHosts: strip', () => {
     expect(second.requests).toHaveLength(1);
   });
 
+  it('strips a credential that came from the instance defaults, not just the call', async () => {
+    // `withDefaultHeaders` merges `client.defaults.headers` into what gets
+    // revealed, and those may hold a wrapped value too. A strip that narrowed
+    // only the per-request headers would drop the call site's credential and
+    // forward the instance's, which is worse than not stripping at all because
+    // it looks like it worked.
+    redirectTo(`${second.origin}/landing`);
+
+    const bare = instance(origin);
+    (bare.defaults.headers as unknown as Record<string, Record<string, unknown>>)['common'] = {
+      'x-api-key': apiKey(token()),
+    };
+
+    const api = createSensitiveAxios(bare, {
+      allowInsecureTransport: true,
+      allowedHosts: 'strip',
+    });
+
+    await api.get('/redirect');
+
+    expect(second.transcript).not.toContain(CANARY);
+    expect(second.requests[0]?.headers['x-api-key']).toBeUndefined();
+    expect(origin.requests[0]?.headers['x-api-key']).toBe(CANARY);
+  });
+
   it('keeps the credential on a same-origin hop', async () => {
     // Stripping every hop would be a different bug: a redirect inside one
     // origin discloses the credential to nobody new.
