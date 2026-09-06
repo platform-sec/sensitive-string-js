@@ -143,10 +143,42 @@ describe('prepareRequest', () => {
         url: 'https://api.example.com/x',
         headers: { Authorization: bearer(token()) },
       },
-      base
+      { ...base, client: 'axios' }
     );
 
     expect(prepared.redirects).toBe('client');
+  });
+
+  it('refuses redirects for an unmeasured client even in a header the spec strips', () => {
+    // The exemption is a claim about an implementation somebody checked, and
+    // the survey behind it found Node clients that forward `Authorization`
+    // across origins. A wrapper for one of those, passing a name this package
+    // does not know, must not inherit the exemption by default.
+    const prepared = prepareRequest(
+      {
+        method: 'GET',
+        url: 'https://api.example.com/x',
+        headers: { Authorization: bearer(token()) },
+      },
+      { ...base, client: 'some-vendor-client' }
+    );
+
+    expect(prepared.redirects).toBe(false);
+  });
+
+  it('lets an explicit allowedHosts win for an unmeasured client', () => {
+    // Naming the hosts is the caller saying they have thought about it, which
+    // is the one thing that outranks the default either way.
+    const prepared = prepareRequest(
+      {
+        method: 'GET',
+        url: 'https://api.example.com/x',
+        headers: { Authorization: bearer(token()) },
+      },
+      { ...base, client: 'some-vendor-client', allowedHosts: ['api.example.com'] }
+    );
+
+    expect(prepared.redirects).toEqual(['api.example.com']);
   });
 
   it('logs a redacted copy before anything is revealed', () => {

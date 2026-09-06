@@ -1615,11 +1615,13 @@ can read the result. The guard scans three encodings, because a query string car
 `%5BREDACTED%3Acredential%5D` and axios's `params` serializer produces a third, partly encoded form
 that neither literal scan catches.
 
-`allowedHosts` is not optional thinking. A 302 to another origin strips `Authorization` and `Cookie`
-on all three clients, because the Fetch specification names those two and `Proxy-Authorization` and
-nothing else, and forwards `x-api-key` verbatim. Most providers authenticate with a name outside that
-set, so a credential sent to a host the caller trusts is delivered to a host they never named, on that
-host's say-so.
+`allowedHosts` is not optional thinking. A 302 to another origin strips `Authorization`, `Cookie` and
+`Proxy-Authorization` on all five wrapped clients, because the Fetch specification names those three
+and nothing else, and forwards `x-api-key` verbatim. Most providers authenticate with a name outside
+that set, so a credential sent to a host the caller trusts is delivered to a host they never named, on
+that host's say-so. That exemption is recorded per client, from a measurement of each one, rather than
+assumed from the specification: clients that ignore it exist, so a client this package has not
+measured is exempt from nothing and defaults to refusing redirects.
 
 The wrapper owns the call rather than installing a hook: axios's request interceptor sees stringified
 headers and a structured body, got's `beforeRequest` sees the exact mirror image, and `fetch` and

@@ -129,20 +129,75 @@ export function renderAuthHeader(
   return header.render(revealed);
 }
 
-/** The Fetch specification's cross-origin redirect stripping set, and nothing else. */
+/**
+ * The Fetch specification's cross-origin redirect stripping set, and nothing else.
+ *
+ * This is what the specification requires, which is not the same claim as what
+ * any particular client does. Read `CLIENT_STRIPPED_HEADERS` for that.
+ */
 export const STRIPPED_HEADERS: ReadonlySet<string> = new Set([
   'authorization',
   'cookie',
   'proxy-authorization',
 ]);
 
+/** The answer for a client nobody has measured: it strips nothing. */
+const NOTHING_STRIPPED: ReadonlySet<string> = new Set();
+
 /**
- * Whether a credential in this header would be stripped on a cross-origin redirect.
+ * What each wrapped client actually drops on a cross-origin redirect.
+ *
+ * Per client rather than one global set, because "the platform strips it" is
+ * not a property of the header. It is a property of whichever client is
+ * holding the request, and clients disagree: a survey of Node HTTP clients
+ * found several that forward `Authorization` across origins, so a library that
+ * assumes the specification is obeyed is trusting an implementation it has
+ * never looked at.
+ *
+ * Every entry below was measured rather than read off the specification. Two
+ * loopback servers on different ports, which is a different origin under the
+ * scheme/host/port rule, a 302 from the first to the second, and the second
+ * recording what arrived: axios 1.20.0, got 16.0.0, ky 2.1.0, undici 8.10.1
+ * and Node 22.15's global `fetch`. All five dropped all three names, and all
+ * five forwarded `x-api-key` untouched, which is the whole reason this package
+ * exists.
+ *
+ * `proxy-authorization` is in each entry on that measurement. It used to be in
+ * the single global set on the specification's authority alone, which is the
+ * kind of claim this table exists to stop.
+ */
+const CLIENT_STRIPPED_HEADERS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['axios', STRIPPED_HEADERS],
+  ['fetch', STRIPPED_HEADERS],
+  ['got', STRIPPED_HEADERS],
+  ['ky', STRIPPED_HEADERS],
+  ['undici', STRIPPED_HEADERS],
+]);
+
+/**
+ * Whether a credential in this header would be stripped on a cross-origin
+ * redirect, by this client.
  *
  * `false` is what makes `allowedHosts: false` the default for the request: the
- * platform will not protect that header, so either the caller names the hosts
+ * client will not protect that header, so either the caller names the hosts
  * they trust or the redirect is not followed.
+ *
+ * An unrecognized client answers `false` for every header. `prepareRequest`
+ * takes the client name as a string, so anything may arrive here, and the
+ * exemption is a promise that a specific implementation was checked. Granting
+ * it to a name nobody has measured is how a wrapper around a client that
+ * forwards `Authorization` would look correct.
+ *
+ * @param name - Header name, matched case-insensitively.
+ * @param client - The client identifier `prepareRequest` was given.
  */
-export function isStrippedAcrossOrigins(name: string): boolean {
-  return STRIPPED_HEADERS.has(name.toLowerCase());
+export function isStrippedAcrossOrigins(name: string, client: string): boolean {
+  const stripped = CLIENT_STRIPPED_HEADERS.get(client) ?? NOTHING_STRIPPED;
+
+  return stripped.has(name.toLowerCase());
+}
+
+/** The clients whose stripping behaviour has been measured. */
+export function measuredClients(): readonly string[] {
+  return [...CLIENT_STRIPPED_HEADERS.keys()];
 }

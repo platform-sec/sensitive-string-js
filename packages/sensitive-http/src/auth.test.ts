@@ -7,6 +7,7 @@ import {
   bearer,
   isAuthHeader,
   isStrippedAcrossOrigins,
+  measuredClients,
   renderAuthHeader,
 } from './auth.js';
 import { MarkerLeakError } from './errors.js';
@@ -61,12 +62,31 @@ describe('auth helpers', () => {
     expect(isAuthHeader(null)).toBe(false);
   });
 
-  it('knows which header names the platform strips across origins', () => {
-    expect(isStrippedAcrossOrigins('Authorization')).toBe(true);
-    expect(isStrippedAcrossOrigins('cookie')).toBe(true);
-    expect(isStrippedAcrossOrigins('Proxy-Authorization')).toBe(true);
-    expect(isStrippedAcrossOrigins('x-api-key')).toBe(false);
-    expect(isStrippedAcrossOrigins('PRIVATE-TOKEN')).toBe(false);
+  it('knows which header names a measured client strips across origins', () => {
+    for (const client of measuredClients()) {
+      expect(isStrippedAcrossOrigins('Authorization', client)).toBe(true);
+      expect(isStrippedAcrossOrigins('cookie', client)).toBe(true);
+      expect(isStrippedAcrossOrigins('Proxy-Authorization', client)).toBe(true);
+      expect(isStrippedAcrossOrigins('x-api-key', client)).toBe(false);
+      expect(isStrippedAcrossOrigins('PRIVATE-TOKEN', client)).toBe(false);
+    }
+  });
+
+  it('names every client the wrappers actually pass', () => {
+    // If a wrapper package starts sending a name that is not here, its
+    // requests silently stop following redirects. That is the safe direction,
+    // and it is still a bug, so the list is pinned rather than sampled.
+    expect([...measuredClients()].sort()).toEqual(['axios', 'fetch', 'got', 'ky', 'undici']);
+  });
+
+  it('exempts nothing for a client nobody has measured', () => {
+    // The exemption says a specific implementation was checked, so a name that
+    // was not checked gets no part of it. Fails closed: the caller either
+    // names the hosts they trust or the redirect is not followed.
+    for (const name of ['Authorization', 'cookie', 'Proxy-Authorization', 'x-api-key']) {
+      expect(isStrippedAcrossOrigins(name, 'some-vendor-client')).toBe(false);
+      expect(isStrippedAcrossOrigins(name, '')).toBe(false);
+    }
   });
 
   it('leaves no descriptor path that produces a raw value without a reveal', () => {

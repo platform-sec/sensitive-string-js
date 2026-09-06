@@ -66,18 +66,29 @@ is a `string`, `containsSensitive` returns `false`, and the event ships.
 
 ### A custom auth header survives a cross-origin redirect
 
-A 302 from origin A to origin B, with three headers carrying a raw value:
+A 302 from origin A to origin B, with four headers carrying a raw value. Two loopback servers on
+different ports, which is a different origin under the scheme/host/port rule, and the second server
+recording exactly what arrived:
 
-| Client | `Authorization` at B | `Cookie` at B | `x-api-key` at B |
-|---|---|---|---|
-| axios | stripped | stripped | **forwarded verbatim** |
-| got | stripped | stripped | **forwarded verbatim** |
-| Node `fetch` | stripped | stripped | **forwarded verbatim** |
+| Client | `Authorization` at B | `Cookie` at B | `Proxy-Authorization` at B | `x-api-key` at B |
+|---|---|---|---|---|
+| axios 1.20.0 | stripped | stripped | stripped | **forwarded verbatim** |
+| got 16.0.0 | stripped | stripped | stripped | **forwarded verbatim** |
+| ky 2.1.0 | stripped | stripped | stripped | **forwarded verbatim** |
+| undici 8.10.1 | stripped | stripped | stripped | **forwarded verbatim** |
+| Node 22.15 `fetch` | stripped | stripped | stripped | **forwarded verbatim** |
 
-All three implement the Fetch specification, which names `Authorization`, `Cookie` and
+All five implement the Fetch specification, which names `Authorization`, `Cookie` and
 `Proxy-Authorization` and no other header. Every provider that authenticates with a non-standard name
 (`x-api-key`, `api-key`, `X-Auth-Token`, `PRIVATE-TOKEN`) is outside that rule. "Reveal at the wire"
 is incomplete, because the wire is not a point: it is a sequence of hosts chosen partly by the server.
+
+The exemption those three names earn is recorded per client rather than once for every client,
+because agreeing with the specification is not a property of the header. It is a property of the
+implementation holding the request, and implementations disagree: a survey of Node HTTP clients found
+several that forward `Authorization` across origins. `prepareRequest` takes the client as a string,
+so a client this package has not measured is exempt from nothing and its requests default to
+refusing redirects outright. Naming `allowedHosts` still overrides that, in either direction.
 
 ### A response body that is not JSON discloses itself
 

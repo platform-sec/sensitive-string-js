@@ -79,6 +79,7 @@ export {
   bearer,
   isAuthHeader,
   isStrippedAcrossOrigins,
+  measuredClients,
   renderAuthHeader,
 } from './auth.js';
 export type { AuthHeader } from './auth.js';

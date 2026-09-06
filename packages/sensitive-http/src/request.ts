@@ -123,19 +123,22 @@ function classesIn(
 }
 
 /**
- * Header names that carry a wrapped value the platform will not strip across origins.
+ * Header names that carry a wrapped value this client will not strip across origins.
  *
- * This is what flips the redirect default to `false`. `Authorization` and
- * `Cookie` are covered by every client measured; `x-api-key` and its cousins
- * are covered by nobody.
+ * This is what flips the redirect default to `false`. `Authorization`,
+ * `Cookie` and `Proxy-Authorization` are covered by every client measured;
+ * `x-api-key` and its cousins are covered by nobody. Which client is asking
+ * decides it, because the exemption is a statement about an implementation
+ * that was checked rather than about the header, and a client nobody has
+ * measured is exempt from nothing.
  *
  * Any sensitivity class counts, not only `credential`. A caller who wrapped a
  * value and put it in a custom header meant it not to travel, and the question
  * here is where it is allowed to go rather than how bad it would be to lose it.
  */
-function hasUnstrippedCredential(request: OutgoingRequest): boolean {
+function hasUnstrippedCredential(request: OutgoingRequest, client: string): boolean {
   for (const [name, value] of Object.entries(request.headers ?? {})) {
-    if (isStrippedAcrossOrigins(name)) {
+    if (isStrippedAcrossOrigins(name, client)) {
       continue;
     }
 
@@ -175,7 +178,10 @@ export function prepareRequest(request: OutgoingRequest, options: PrepareOptions
   // Step 2, before step 1's reveal and before anything else touches a value.
   assertTransport(url, carriesCredential(request), options.allowInsecureTransport === true);
 
-  const redirects = resolveRedirectPolicy(options.allowedHosts, hasUnstrippedCredential(request));
+  const redirects = resolveRedirectPolicy(
+    options.allowedHosts,
+    hasUnstrippedCredential(request, options.client)
+  );
 
   // Step 3. `redactCopy` holds no revealed value and replaces a `serialize()`
   // result with the marker of the class it names, so a wire-format payload the

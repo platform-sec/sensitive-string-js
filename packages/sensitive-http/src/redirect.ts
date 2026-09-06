@@ -7,15 +7,21 @@ import {
 /**
  * Where a revealed credential is allowed to go.
  *
- * Section 2.4 of the design measured a 302 from origin A to origin B with three
- * headers carrying a raw value, on axios 1.20.0, got 16.0.0 and Node 22's
- * `fetch`. All three stripped `Authorization` and `Cookie`, and all three
- * forwarded `x-api-key` verbatim. They are not wrong: the Fetch specification
- * names `Authorization`, `Cookie` and `Proxy-Authorization` and no other
- * header, and most providers authenticate with a name outside that set.
+ * Section 2.4 of the design measured a 302 from origin A to origin B with four
+ * headers carrying a raw value, on axios 1.20.0, got 16.0.0, ky 2.1.0, undici
+ * 8.10.1 and Node 22.15's `fetch`. All five stripped `Authorization`, `Cookie`
+ * and `Proxy-Authorization`, and all five forwarded `x-api-key` verbatim. They
+ * are not wrong: the Fetch specification names those three headers and no
+ * other, and most providers authenticate with a name outside that set.
  *
  * So "reveal at the wire" is incomplete, because the wire is not a point. It is
  * a sequence of hosts chosen partly by the server.
+ *
+ * Which of those names is actually stripped is answered per client, in
+ * `auth.ts`, rather than once for all of them. The five above agree today;
+ * clients that forward `Authorization` across origins exist, and the point of
+ * keeping the answer per client is that adding one of them cannot silently
+ * inherit an exemption measured on a different implementation.
  */
 
 /** Loopback destinations, where plaintext is a sidecar rather than a mistake. */
@@ -56,7 +62,7 @@ export function assertTransport(
  * Decide the redirect policy for a request.
  *
  * `false` means the wrapper does not follow redirects at all, which is the
- * default the moment a credential sits in a header the platform will not strip.
+ * default the moment a credential sits in a header this client will not strip.
  * An explicit `allowedHosts` array always wins, because naming the hosts is the
  * caller saying they have thought about it.
  */
@@ -68,9 +74,10 @@ export function resolveRedirectPolicy(
     return configured;
   }
 
-  // No configuration and every credential is in a header the platform strips:
+  // No configuration and every credential is in a header this client strips:
   // leave the client's own redirect handling alone. Re-implementing stripping
-  // would be worse than trusting three independent implementations that agree.
+  // would be worse than trusting five independent implementations that agree,
+  // and a client outside those five never reaches here with `false`.
   return hasUnstrippedCredential ? false : 'client';
 }
 
