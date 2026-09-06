@@ -91,9 +91,9 @@ describe('Constant-Time Comparison Security', () => {
     it('rejects comparands of every length without regard to timing', () => {
       const s = new SensitiveString(SECRET, 'credential');
 
-      // A length mismatch returns before the constant-time comparison, which
-      // the threat model documents as unavoidable leakage. What matters here is
-      // that the answer is still correct.
+      // A length mismatch takes the same path as any other mismatch: both
+      // operands are hashed to a fixed width before they are compared, so
+      // there is no length branch to return early from.
       expect(s.equals('short')).toBe(false);
       expect(s.equals('x'.repeat(64))).toBe(false);
       expect(s.equals('x'.repeat(128))).toBe(false);
@@ -106,6 +106,32 @@ describe('Constant-Time Comparison Security', () => {
       expect(s.equals('b' + 'a'.repeat(63))).toBe(false);
       expect(s.equals('a'.repeat(63) + 'b')).toBe(false);
       expect(s.equals('a'.repeat(32) + 'b' + 'a'.repeat(31))).toBe(false);
+    });
+
+    it('compares a fixed comparand against every stored length alike', () => {
+      // The direction the other cases do not cover. Above, the stored value is
+      // fixed and the comparand varies, which is the caller's own input and
+      // may cost what it likes. Here the comparand is fixed and the stored
+      // secret varies, which is the direction an attacker actually measures:
+      // whatever they send must cost the same whatever is on the other side,
+      // or the timing names the secret's length.
+      const comparand = 'x'.repeat(64);
+
+      for (const storedLength of [1, 8, 63, 64, 65, 512]) {
+        const stored = new SensitiveString('a'.repeat(storedLength), 'credential');
+        expect(stored.equals(comparand)).toBe(false);
+      }
+
+      const matching = new SensitiveString(comparand, 'credential');
+      expect(matching.equals(comparand)).toBe(true);
+    });
+
+    it('compares an empty value without a special case', () => {
+      const empty = new SensitiveString('', 'credential');
+
+      expect(empty.equals('')).toBe(true);
+      expect(empty.equals('a')).toBe(false);
+      expect(new SensitiveString('a', 'credential').equals('')).toBe(false);
     });
   });
 

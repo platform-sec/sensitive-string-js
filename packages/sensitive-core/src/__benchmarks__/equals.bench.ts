@@ -8,7 +8,10 @@
  * The mismatch positions in the second group exist to be compared with each
  * other rather than with a target: constant-time comparison is exactly the
  * property that an early mismatch must not be measurably cheaper than a late
- * one. These numbers are indicative only. The statistical version of that
+ * one. `length differs` belongs in that group for the same reason and not as
+ * a separate case: since both operands are hashed to a fixed width before
+ * they are compared, a wrong length is a mismatch like any other and should
+ * price like one. These numbers are indicative only. The statistical version of that
  * question, with interleaving and a noise floor, is
  * `__tests__/timing-analysis.timing.test.ts`, run through `pnpm test:timing`.
  */

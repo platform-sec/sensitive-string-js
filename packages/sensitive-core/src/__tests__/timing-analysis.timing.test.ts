@@ -115,6 +115,51 @@ function measure(
   return fastest;
 }
 
+interface StoredGroup {
+  readonly name: string;
+  readonly stored: SensitiveString<'credential'>;
+}
+
+/**
+ * The same measurement in the other direction: one fixed comparand, timed
+ * against stored values of different lengths. This is the direction an
+ * attacker controls, since they choose what they send and not what it is
+ * compared against.
+ */
+function measureStored(comparand: string, groups: readonly StoredGroup[]): Map<string, number> {
+  const samples = new Map<string, number[]>(groups.map((group) => [group.name, []]));
+
+  for (const group of groups) {
+    for (let i = 0; i < BATCH; i += 1) {
+      sink ^= group.stored.equals(comparand) ? 1 : 0;
+    }
+  }
+
+  for (let sample = 0; sample < SAMPLES; sample += 1) {
+    for (let offset = 0; offset < groups.length; offset += 1) {
+      const group = groups[(sample + offset) % groups.length];
+      if (group === undefined) {
+        continue;
+      }
+
+      const start = process.hrtime.bigint();
+      for (let i = 0; i < BATCH; i += 1) {
+        sink ^= group.stored.equals(comparand) ? 1 : 0;
+      }
+      const end = process.hrtime.bigint();
+
+      samples.get(group.name)?.push(Number(end - start) / BATCH);
+    }
+  }
+
+  const fastest = new Map<string, number>();
+  for (const [name, times] of samples) {
+    fastest.set(name, Math.min(...times));
+  }
+
+  return fastest;
+}
+
 function spread(values: readonly number[]): number {
   return Math.max(...values) - Math.min(...values);
 }
@@ -194,20 +239,26 @@ describe('constant-time comparison timing analysis', () => {
     console.log('  late mismatch: ', (fastest.get('late') ?? Number.NaN).toFixed(1));
   });
 
-  it('reports length-based timing, which is documented to leak', () => {
-    const value = new SensitiveString(SECRET, 'credential');
+  it('reports timing across stored lengths, which should show no signal', () => {
+    // One comparand, several stored lengths. Before both operands were hashed
+    // to a fixed width, a length mismatch returned before any byte was
+    // examined, so the group whose stored length matched the comparand cost
+    // visibly more and named the secret's length. These groups should now sit
+    // within the noise floor of each other.
+    const comparand = 'x'.repeat(64);
 
-    const fastest = measure(value, [
-      { name: 'short', comparand: 'short' },
-      { name: 'same', comparand: 'x'.repeat(64) },
-      { name: 'long', comparand: 'x'.repeat(128) },
+    const fastest = measureStored(comparand, [
+      { name: 'short', stored: new SensitiveString('a'.repeat(5), 'credential') },
+      { name: 'same', stored: new SensitiveString('a'.repeat(64), 'credential') },
+      { name: 'long', stored: new SensitiveString('a'.repeat(128), 'credential') },
     ]);
 
-    // No assertion. A length mismatch returns before the constant-time
-    // comparison, which the threat model documents as unavoidable.
-    console.log('Timing analysis (length, documented to leak):');
+    // No assertion, for the reason every test in this file has none: a wall
+    // clock verdict depends on how busy the machine is.
+    console.log('Timing analysis (stored length, should not leak):');
     console.log('  5 characters:  ', (fastest.get('short') ?? Number.NaN).toFixed(1));
     console.log('  64 characters: ', (fastest.get('same') ?? Number.NaN).toFixed(1));
     console.log('  128 characters:', (fastest.get('long') ?? Number.NaN).toFixed(1));
+    console.log('  spread:        ', spread([...fastest.values()]).toFixed(1));
   });
 });

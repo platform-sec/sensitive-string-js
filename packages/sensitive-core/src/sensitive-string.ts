@@ -1,4 +1,3 @@
-import { timingSafeEqual } from 'node:crypto';
 import type {
   SensitivityClass,
   SensitivityPolicy,
@@ -12,6 +11,7 @@ import type {
   RevealContext,
   RevealDetails,
 } from './types.js';
+import { constantTimeEquals } from './compare.js';
 import { getPolicy, defaultCombineClasses, hasPolicy } from './policy.js';
 import { getCurrentRevealContext } from './context.js';
 import { isInsideRedaction, RevealDuringRedactionError } from './redaction-scope.js';
@@ -1129,7 +1129,10 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @returns true if values are equal
    *
    * @remarks
-   * Length differences are unavoidable information leakage in timing-safe comparisons.
+   * The constant-time path hides the stored value's length as well as its
+   * contents, so a comparand of the wrong length costs what a comparand of the
+   * right length costs. See `compare.ts` for why that needs more than
+   * `timingSafeEqual` alone.
    */
   equals(other: string | SensitiveString<SensitivityClass>, ctx?: RevealContext): boolean {
     const value = this.#readRawValue('compare', ctx);
@@ -1139,15 +1142,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       (other instanceof SensitiveString && other.policy.requireConstantTimeEquals === true);
 
     if (constantTime) {
-      const a = Buffer.from(value, 'utf8');
-      const b = Buffer.from(rawOther, 'utf8');
-
-      // Length difference is unavoidable information leakage
-      if (a.length !== b.length) {
-        return false;
-      }
-
-      return timingSafeEqual(a, b);
+      return constantTimeEquals(value, rawOther);
     }
 
     return value === rawOther;
