@@ -284,6 +284,7 @@ is audited under the child, so those tags arrive here rather than through `getCu
 which reports where the caller stood. It carries `name`, `reason` and `tags` and no `auditReveal`,
 and it is the live context object rather than a copy, so a sink copies out what it means to keep
 instead of writing to `tags`.
+
 ---
 
 ## Threat Model
@@ -1622,7 +1623,11 @@ getCurrentRevealContext(): RevealContext | null;
 createChildContext(overrides: Partial<RevealContext> & { name: string }): RevealContext;
 
 // Convenience for auditing
-withAuditedReveals<T>(name: string, auditFn: (value) => void, fn: () => T): T;
+withAuditedReveals<T>(
+  name: string,
+  auditFn: (value, details: RevealDetails, context: AuditContext) => void,
+  fn: () => T
+): T;
 ```
 
 ### Worker Handoff

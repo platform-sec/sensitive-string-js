@@ -4,7 +4,7 @@ import {
   resetPolicies,
   withRevealContext,
 } from '@platform-sec/sensitive-string-core';
-import type { RevealDetails } from '@platform-sec/sensitive-string-core';
+import type { ISensitiveString, RevealDetails } from '@platform-sec/sensitive-string-core';
 import { createMockAuditLog, mockRevealContext } from './mocks.js';
 import type { AuditRevealFn } from './mocks.js';
 import { createTestSecret } from './create-test-secret.js';
@@ -86,6 +86,22 @@ describe('mockRevealContext', () => {
 
     expect(ctx.calls[0]?.context.name).toBe('db-write');
     expect(ctx.calls[0]?.context.tags).toEqual({ column: 'users.email' });
+  });
+
+  it('records a call from a caller that forwards the hook with two arguments', () => {
+    const ctx = mockRevealContext('request-scope');
+    const secret = createTestSecret('sensitive', 'email');
+
+    // What a forwarder compiled against the two-argument hook does, and what
+    // core itself did before it carried the context. It runs inside the reveal
+    // gate, so throwing here would surface as a failing reveal in someone
+    // else's test rather than as a missing tag.
+    const forwarded = ctx.auditReveal as (value: ISensitiveString, details: RevealDetails) => void;
+    forwarded(secret, { operation: 'reveal' });
+
+    expect(ctx.calls).toHaveLength(1);
+    expect(ctx.calls[0]?.context.name).toBe('request-scope');
+    expect(ctx.calls[0]?.context.tags).toBeUndefined();
   });
 
   it('holds the instance rather than the raw value', () => {
@@ -252,6 +268,22 @@ describe('createMockAuditLog', () => {
     });
 
     expect(audit.entries[0]?.contextName).toBe('card-gateway');
+  });
+
+  it('names itself when a two-argument caller forwards the hook', () => {
+    const audit = createMockAuditLog('payment-handler');
+    const secret = createTestSecret('credential', 'api_key');
+
+    // Called through the context, which is what a forwarder does and what core
+    // itself did: `ambient.auditReveal?.(value, details)`.
+    const forwarder = audit.context as unknown as {
+      auditReveal: (value: ISensitiveString, details: RevealDetails) => void;
+    };
+
+    forwarder.auditReveal(secret, { operation: 'reveal' });
+
+    expect(audit.entries).toHaveLength(1);
+    expect(audit.entries[0]?.contextName).toBe('payment-handler');
   });
 
   it('records a mask and a renewal alongside a reveal', () => {

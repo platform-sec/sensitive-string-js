@@ -266,7 +266,7 @@ bucket per column:
 await withRevealContext(
   {
     name: 'req-42',
-    auditReveal: (value, details, context) =>
+    auditReveal: (value, _details, context) =>
       logger.info('reveal', { klass: value.klass, ...context.tags }),
   },
   async () => repo.insert(row)

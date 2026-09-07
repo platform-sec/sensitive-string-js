@@ -273,6 +273,12 @@ It is a copy of the descriptive fields rather than the context itself, one level
 deep. A record pointing at the live mock context would close a cycle through
 `calls`, which neither `JSON.stringify` nor a snapshot assertion could walk.
 
+Both helpers degrade rather than throw when something forwards the hook with the
+two arguments it used to take: the record carries the mock's own name and no
+tags, which is what a two-argument caller means. They run inside the reveal gate,
+where a `TypeError` would surface as a failing reveal rather than as a missing
+tag.
+
 For assertions about a whole call path rather than a single operation:
 
 ```typescript

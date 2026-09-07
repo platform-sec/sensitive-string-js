@@ -51,6 +51,9 @@ export interface AuditCall {
    * `JSON.stringify` nor a snapshot assertion could walk. `tags` is copied one
    * level, so a later reveal under the same context cannot rewrite what an
    * earlier record says.
+   *
+   * A caller that forwards the hook with two arguments names no context, and
+   * the record then carries this context's own name and no tags.
    */
   readonly context: AuditContext;
 }
@@ -102,7 +105,7 @@ export function mockRevealContext(
   const calls: AuditCall[] = [];
 
   const record: AuditRevealFn = (value, details, context) => {
-    calls.push({ timestamp: new Date(), value, details, context: snapshot(context) });
+    calls.push({ timestamp: new Date(), value, details, context: snapshot(context, name) });
   };
 
   const auditReveal = options.fn ? options.fn(record) : record;
@@ -143,7 +146,9 @@ export interface AuditEntry {
    * Name of the context the access was made under.
    *
    * Read from the context core reports, so a reveal made under a child context
-   * is recorded under the child's name rather than this log's.
+   * is recorded under the child's name rather than this log's. A caller that
+   * forwards the hook with two arguments names no context, and the entry then
+   * carries this log's own name.
    */
   readonly contextName: string;
   /** `reveal`, `mask`, or `renew`. */
@@ -186,12 +191,19 @@ export function createMockAuditLog(name = 'mock-audit-log'): MockAuditLog {
 
   const context: RevealContext = {
     name,
-    auditReveal(value, details, auditedUnder) {
+    // An arrow rather than a method, deliberately: this hook exists to be
+    // handed to `withRevealContext()` and forwarded on, and a method that is
+    // detached from its object loses `this`. It reads none, and this way it
+    // cannot start to.
+    auditReveal: (value, details, auditedUnder) => {
       entries.push({
         timestamp: new Date(),
         klass: value.klass,
         label: value.label,
-        contextName: auditedUnder.name,
+        // Falls back for the same reason `snapshot()` does: a caller
+        // forwarding this hook with two arguments names no context, and this
+        // one is then the context the operation ran under.
+        contextName: contextNameOr(auditedUnder, name),
         operation: details.operation,
         details,
       });
@@ -218,8 +230,19 @@ export function createMockAuditLog(name = 'mock-audit-log'): MockAuditLog {
  *
  * The descriptive fields only, one level deep. See `AuditCall.context` for why
  * this is a copy.
+ *
+ * `undefined` is not a shape core produces, and it is the shape a caller
+ * forwarding the hook itself produces: a two-argument call, which is what core
+ * made before it carried the context and what a consumer's own forwarder still
+ * makes. This runs inside the raw-value gate, where a `TypeError` would surface
+ * as a failing reveal in somebody's test rather than as a missing tag, so the
+ * answer is the context the hook was installed on. For a two-argument caller
+ * that is the truthful one: it is the context the operation ran under, and the
+ * argument exists only because a nested child can now say otherwise.
  */
-function snapshot(context: AuditContext): AuditContext {
+function snapshot(context: AuditContext | undefined, installedOn: string): AuditContext {
+  if (context === undefined) return { name: installedOn };
+
   const copy: { name: string; reason?: string; tags?: Record<string, unknown> } = {
     name: context.name,
   };
@@ -228,6 +251,14 @@ function snapshot(context: AuditContext): AuditContext {
   if (context.tags !== undefined) copy.tags = { ...context.tags };
 
   return copy;
+}
+
+/**
+ * The name of the context an operation ran under, falling back to the context
+ * holding the hook when a two-argument caller named none. See `snapshot()`.
+ */
+function contextNameOr(context: AuditContext | undefined, installedOn: string): string {
+  return context === undefined ? installedOn : context.name;
 }
 
 /**

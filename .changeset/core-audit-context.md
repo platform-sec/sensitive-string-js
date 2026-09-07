@@ -36,4 +36,7 @@ forwarded sink sees the work the sender named.
 In `sensitive-string-testing`, `AuditCall` gains `context` and `AuditEntry.contextName` is read from
 what core reports rather than from the log's own name, so an entry made under a nested child is
 recorded under the child. The recorded context is a one-level copy: a record pointing at the live
-mock context would close a cycle through `calls` that `JSON.stringify` could not walk.
+mock context would close a cycle through `calls` that `JSON.stringify` could not walk. Both helpers
+degrade rather than throw when a caller forwards the hook with two arguments, recording the mock's
+own name; they run inside the reveal gate, where a `TypeError` would surface as a failing reveal in
+somebody's suite rather than as a missing tag.
