@@ -1,0 +1,71 @@
+{
+  "name": "@platform-sec/sensitive-string-drizzle",
+  "version": "0.1.0",
+  "description": "Drizzle ORM integration for SensitiveString - classified columns are declared in the schema and read back wrapped, writes unwrap through an audited reveal, and the parameter paths the column never sees are refused",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./pg": {
+      "types": "./dist/pg.d.ts",
+      "default": "./dist/pg.js"
+    },
+    "./mysql": {
+      "types": "./dist/mysql.d.ts",
+      "default": "./dist/mysql.js"
+    },
+    "./sqlite": {
+      "types": "./dist/sqlite.d.ts",
+      "default": "./dist/sqlite.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run --root ../.. packages/sensitive-drizzle/",
+    "test:watch": "vitest --root ../.. packages/sensitive-drizzle/"
+  },
+  "keywords": [
+    "drizzle",
+    "drizzle-orm",
+    "orm",
+    "database",
+    "security",
+    "sensitive-data",
+    "redaction",
+    "typescript"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "peerDependencies": {
+    "@platform-sec/sensitive-string-core": "^0.5.0",
+    "@platform-sec/sensitive-string-scrub": "^0.1.0",
+    "drizzle-orm": ">=0.30.0 <1"
+  },
+  "peerDependenciesMeta": {
+    "@platform-sec/sensitive-string-scrub": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@platform-sec/sensitive-string-core": "workspace:*",
+    "@platform-sec/sensitive-string-scrub": "workspace:*",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22.20.1",
+    "@types/pg": "^8.15.6",
+    "better-sqlite3": "^12.11.1",
+    "drizzle-orm": "^0.45.2",
+    "mysql2": "^3.24.3",
+    "pg": "^8.23.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

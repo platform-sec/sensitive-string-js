@@ -87,6 +87,28 @@ This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under 
   `mysql2` through the functions that do the binding, which is why both are devDependencies and why
   `types/pg-utils.d.ts` exists. See
   `scratch/docs/adrs/ADR-004-typeorm-needs-a-guard-the-transformer-cannot-be.md`.
+- `packages/sensitive-drizzle/src/` contains the Drizzle integration: the column factories in
+  `pg.ts`, `mysql.ts` and `sqlite.ts`, and `sensitiveLogger`, `checkSchema`, `sanitizeQueryError` and
+  `hydrateRawRows` at the root. Reads and writes are one `customType` mapping, shared across the
+  three dialects by `column.ts`, and it covers far more of this ORM than the TypeORM transformer
+  covers of that one. The thing to know before editing anything here is that **the logger is the
+  parameter guard**, not a diagnostic. Two paths reach the driver without a column behind them, a
+  value interpolated into a `sql` template and a prepared statement whose predicate is
+  `eq(col, sql.placeholder('x'))`, and `logQuery(sql, params)` is the only seam that sees a
+  statement's parameters after the placeholders are filled and before the driver runs. Do not move
+  the guard to `session.prepareQuery`: it is the obvious place, it matches `sensitive-typeorm`, and
+  it is wrong twice, because a placeholder's value does not exist yet at that point and because
+  `node-postgres` builds a fresh session for a transaction on a pool, so a wrapper there is invisible
+  to everything inside `db.transaction()` and a suite written on `better-sqlite3` would never show
+  it. For the same reason the logger cannot be installed after construction. `sanitize.ts` covers
+  `DrizzleQueryError`, which carries the revealed parameters three times: `params`, `message`, and
+  the header of `stack`, which V8 composes once at construction, so rewriting the message alone moves
+  the leak rather than removing it. `checkSchema` reads a column's classification by running its own
+  `mapFromDriverValue` over a sentinel rather than by reaching for the `customType` parameters
+  Drizzle keeps in TypeScript-private fields, and it reads the session off `db.session` rather than
+  `db._.session`, which is in the published type and not populated at runtime. The root entry point
+  imports no `drizzle-orm` at all, asserted by a test, so only the three dialect files do. See
+  `scratch/docs/adrs/ADR-005-drizzle-the-logger-is-the-parameter-guard.md`.
 - `packages/sensitive-scrub/src/` contains the shared layer under the error tracking and APM
   integrations: the staged payload walk over `redactCopy`, `DEFAULT_DENY_KEYS` and its matcher, the
   never-throw wrapper, and the canary harness vendor suites import from `./testing`. It has no
