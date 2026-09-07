@@ -35,20 +35,36 @@ with the receiver's credentials, against a path a sender chose, which is the sha
 deputy: unconstrained, it lets anything that can enqueue a job read any secret the receiver's role
 can read, using the receiver as the oracle. So the allowlist is required, there is no permissive
 default, and the empty list is legal and resolves nothing. The checks run in order and each precedes
-the fetch: the shape and the format version, the store identity compared exactly, a path carrying a
-traversal, an empty segment, a leading slash or a control character, a version outside
-`[A-Za-z0-9._:-]{1,128}`, an entry covering the path, and an entry that resolves this kind of
-reference and declares this field. Then the class, as the more restrictive of the entry's and the
-reference's: a class on the wire may tighten what the receiver does and may never loosen it, because
+the fetch: the caller's own context, then the shape and the format version, the store identity
+compared exactly, a path carrying a traversal, an empty segment, a leading slash or a control
+character, a version outside `[A-Za-z0-9._:-]{1,128}`, an entry covering the path, and an entry that
+resolves this kind of reference and declares this field. Then the class, as the strictest among the
+covering entries and then the more restrictive of that and the reference's: a class on the wire may tighten what the receiver does and may never loosen it, because
 a receiver that took `klass` from a payload would let a sender turn off constant-time comparison for
 a credential, lift the refusal on partial queries, and let `mask()` disclose a prefix.
 
 A path is refused rather than normalized. Normalizing would mean this library and the provider each
 holding an opinion about what `kv/a/../b` means, and a disagreement between two normalizers is how a
-path that fails the allowlist reaches the store anyway. A version is checked against a charset
-rather than escaped, because providers put it into a URL path or a query string. Patterns are a
-trailing `*` on a segment boundary and nothing else, with no regex, and a malformed one throws at
-construction rather than silently matching nothing.
+path that fails the allowlist reaches the store anyway. It is also refused for carrying `%`, `\`,
+`?` or `#`, which is a stronger rule than "no `..` segment" and a measured one rather than a
+cautious one: a provider builds its request as `new URL(base + path)`, which is what
+`sensitive-vault` does, and on Node 22.15.0 the WHATWG parser applies its double-dot rule to the
+percent-decoded segment and reads a backslash as a separator, so both
+`kv/payments/%2e%2e/%2e%2e/auth/token/lookup-self` and `kv/payments/..\..\auth/token/lookup-self`
+leave an allowlisted subtree while passing a check over `/`-split segments, and the second carries
+no percent sign at all. A `?` turns a read of a permitted secret into a different request against
+the same store. The suite pins that parser behaviour next to the refusals, so the rule keeps its
+reason attached. A version is checked against a charset rather than escaped, for the same reason.
+Patterns are a trailing `*` on a segment boundary and nothing else, with no regex, and a malformed
+one throws at construction rather than silently matching nothing.
+
+Where entries overlap, the class is the strictest among them rather than the first one's. A subtree
+rule and a rule for one path under it are how an operator writes an allowlist, and taking the first
+would make `[{ path: 'kv/*', klass: 'sensitive' }, { path: 'kv/payments/stripe', klass:
+'credential' }]` resolve the Stripe key as `sensitive`, which is a security control whose answer
+depends on the order two lines were written in. The allowlist is copied entry by entry and frozen at
+construction for the same kind of reason, so a caller holding the array or an entry cannot widen a
+live resolver afterwards.
 
 A refusal is a `ReferenceRefusedError` carrying `reason`, and the path is on `error.path` and never
 in `error.message`: a refusal is the case where the sender is least likely to be one this receiver
@@ -66,9 +82,12 @@ assertions are positive in the suite rather than absent from it, so a later chan
 everything with a `__sensitive`-shaped marker fails a test instead of shipping.
 
 Two smaller decisions worth recording. `resolve()` requires its own `RevealContext`, for the reason
-`PutOptions.context` does on the write path, and installs it as a child of the ambient one, so an
-application's `auditReveal` is inherited rather than dropped and a provider that reveals its own
-token to authenticate the request records that reveal under the caller's name. And `pinVersion`
+`PutOptions.context` does on the write path, and checks for it before it looks at the reference at
+all, because a receiver that forgot its context has a mistake of its own and reporting that as a
+fault in what arrived would point whoever reads the log at the wrong party. That context is
+installed as a child of the ambient one, so an application's `auditReveal` is inherited rather than
+dropped and a provider that reveals its own token to authenticate the request records that reveal
+under the caller's name. And `pinVersion`
 defaults to true, since a reference stands in for a value and a value does not change between the
 send and the receive, with the cost stated where the option is: a pinned reference outlives the
 rotation that was meant to retire the old version, and queue retention shorter than the rotation

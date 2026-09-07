@@ -301,34 +301,66 @@ The rules, in the order they run, each refusing before the store is touched:
 
 | # | Rule | `reason` |
 |---|---|---|
-| 1 | It is a reference, and carries every member the format requires | `shape` |
-| 2 | The format version is one this build reads | `format` |
-| 3 | `ref.store` equals the resolver's store, compared exactly | `store` |
-| 4 | The path has no `.` or `..` segment, no empty segment, no leading slash, no control character | `path` |
-| 5 | The version matches `[A-Za-z0-9._:-]{1,128}` | `version` |
-| 6 | Some allowlist entry covers the path | `path` |
-| 7 | A matching entry resolves this kind of reference, and declares this field | `field` |
-| 8 | A `RevealContext` was supplied | `no-context` |
+| 1 | A `RevealContext` was supplied | `no-context` |
+| 2 | It is a reference, and carries every member the format requires | `shape` |
+| 3 | The format version is one this build reads | `format` |
+| 4 | `ref.store` equals the resolver's store, compared exactly | `store` |
+| 5 | The path has no `.` or `..` segment, no empty segment, no leading slash, no control character, and no `%`, `\`, `?` or `#` | `path` |
+| 6 | The version matches `[A-Za-z0-9._:-]{1,128}` | `version` |
+| 7 | Some allowlist entry covers the path | `path` |
+| 8 | A covering entry resolves this kind of reference, and declares this field | `field` |
 
-Then the class: the more restrictive of the entry's and the reference's, so a class on the wire may
-tighten what the receiver does and may never loosen it. A receiver that took `klass` from the wire
-would let a sender ask it to treat a credential as `sensitive`, which turns off constant-time
-comparison, lifts the refusal on partial queries, and lets `mask()` disclose a prefix. The label is
-derived here too, under the label rule; the one on the wire is advisory and unread.
+The context is checked first because it is the caller's own precondition: a receiver that forgot it
+has a mistake of its own, and reporting that as a fault in what arrived would point whoever reads
+the log at the wrong party. Rule 2 also refuses a reference naming a sensitivity class this process
+has no policy for, since a class it cannot act on is not one to silently ignore, and the field is
+there to tighten the receiver's rule.
+
+Then the class: the most restrictive among every entry covering the reference, and then the more
+restrictive of that and the reference's own. A class on the wire may tighten what the receiver does
+and may never loosen it, because a receiver that took `klass` from the wire would let a sender ask
+it to treat a credential as `sensitive`, which turns off constant-time comparison, lifts the refusal
+on partial queries, and lets `mask()` disclose a prefix. The label is derived here too, under the
+label rule; the one on the wire is advisory and unread.
 
 Only then does the resolver call `get` or `getJson`, which is where caching, the load event,
 lifetime binding and the decode guard already live. Resolving a reference is a load, so it emits the
 load event a direct `get` for the same ref would emit, and it fires no reveal hook, because nothing
 in it reads a raw value.
 
-Four things about that list are worth stating outright.
+Six things about that list are worth stating outright.
 
 **A path is refused rather than normalized.** Normalizing would mean this library and the provider
 each holding an opinion about what `kv/a/../b` means, and a disagreement between two normalizers is
 how a path that fails the allowlist reaches the store anyway.
 
+**A path may not carry a character a URL parser reads as structure**, which is a stronger rule than
+"no `..` segment" and the reason is measured rather than theoretical. A provider builds its request
+as `new URL(base + path)`, and on Node 22.15.0 the WHATWG parser applies its double-dot rule to the
+percent-decoded segment and treats a backslash as a separator:
+
+| Sent | Requested |
+|---|---|
+| `kv/payments/%2e%2e/%2e%2e/auth/token/lookup-self` | `/v1/auth/token/lookup-self` |
+| `kv/payments/..\..\auth/token/lookup-self` | `/v1/auth/token/lookup-self` |
+| `kv/payments/stripe?list=true` | `/v1/kv/payments/stripe?list=true` |
+
+The first two are the escape the allowlist exists to prevent, reached from a path that a check over
+`/`-split segments calls well formed, and the second one contains no percent sign at all. The third
+turns a read of a permitted secret into a different request. No store this layer supports allows one
+of these characters in a secret name, and a caller sends the logical path rather than a pre-encoded
+one, so nothing legitimate is refused. The suite pins the parser behaviour next to the refusals.
+
 **A version is checked, not escaped.** It is attacker-chosen exactly as a path is, and providers put
 it into a URL path or a query string.
+
+**Overlapping entries take the strictest class, not the first.** A subtree rule and a rule for one
+path under it are how an operator writes this, and taking the first would make
+`[{ path: 'kv/*', klass: 'sensitive' }, { path: 'kv/payments/stripe', klass: 'credential' }]`
+resolve the Stripe key as `sensitive`, which is a security control whose answer depends on the order
+two lines were written in. An entry may make the class stricter than another covering the same path
+and never looser; an operator who wants a narrow exception to be looser narrows the broad rule
+instead, where a reviewer can see it.
 
 **Patterns are a trailing `*` on a segment boundary and nothing else.** `kv/payments/*` covers the
 subtree below `kv/payments/` and does not match `kv/paymentsx/stripe`. There is no regex, because a
@@ -339,6 +371,12 @@ to be found. A malformed pattern throws at construction rather than silently mat
 ever hand out. It does not say whether the particular sender was entitled to this particular secret.
 A system where different callers deserve different secrets constructs a resolver per scope, from the
 caller's identity.
+
+The allowlist is copied entry by entry and frozen at construction, so a caller that keeps a
+reference to the array or to an entry cannot widen a live resolver afterwards. Everything else that
+is the receiver's own configuration also fails there rather than at the first reference: a malformed
+pattern, an entry with neither or both of `klass` and `fields`, a class with no registered policy,
+and a `fields` entry against a source with no `getJson` to resolve it through.
 
 A refusal is a `ReferenceRefusedError` carrying `reason`. The path is on `error.path` and never in
 `error.message`: `ref.path` is text a sender chose, a refusal is the case where the sender is least

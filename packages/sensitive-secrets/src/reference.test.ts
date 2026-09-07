@@ -284,6 +284,52 @@ describe('createReferenceResolver, construction', () => {
 
     expect((await refusal(instance.resolve(reference(), { context }))).reason).toBe('path');
   });
+
+  it('copies each entry too, so editing one cannot widen a live resolver', async () => {
+    const allow: ReferenceAllowEntry[] = [{ path: 'kv/analytics/db', klass: 'credential' }];
+    const instance = createReferenceResolver({
+      store: 'vault-prod',
+      source: untouchedSource(),
+      allow,
+    });
+
+    // Copying the array alone would leave the caller holding the entries, and
+    // an allowlist a caller can still edit is not one the resolver owns.
+    const entry = allow[0];
+
+    if (entry !== undefined) {
+      (entry as { path: string }).path = '*';
+    }
+
+    expect((await refusal(instance.resolve(reference(), { context }))).reason).toBe('path');
+  });
+
+  it('refuses a fields allowlist against a source that has no getJson', () => {
+    const withoutGetJson: Record<string, unknown> = { ...untouchedSource() };
+    delete withoutGetJson['getJson'];
+
+    // A field entry resolves through getJson, so the fault is configuration and
+    // belongs at construction rather than at the first field reference.
+    expect(() =>
+      createReferenceResolver({
+        store: 'vault-prod',
+        source: withoutGetJson as unknown as SecretSource,
+        allow: [{ path: 'kv/analytics/db', fields: { password: 'credential' } }],
+      })
+    ).toThrow(/getJson/);
+  });
+
+  it('names an empty field name as what it is', () => {
+    expect(() =>
+      resolver(untouchedSource(), [{ path: 'a/b', fields: { '': 'credential' } }])
+    ).toThrow(/empty name/);
+  });
+
+  it("refuses '/*', which would be an entry that can never match", () => {
+    expect(() => resolver(untouchedSource(), [{ path: '/*', klass: 'credential' }])).toThrow(
+      /starts with a slash/
+    );
+  });
 });
 
 describe('resolve, the refusals that precede the store', () => {
@@ -336,8 +382,12 @@ describe('resolve, the refusals that precede the store', () => {
       'kv/./payments/stripe',
       'kv//payments/stripe',
       '/kv/payments/stripe',
-      'kv/payments/strip e',
-      'kv/payments/stripe',
+      // Built rather than typed: a newline in a path is what turns one refused
+      // line in a log into two, one of which reads as a record the receiver
+      // wrote, and a source file that holds the byte itself is worse than the
+      // test it enables.
+      `kv/payments/strip${String.fromCharCode(10)}e`,
+      `kv/payments/${String.fromCharCode(0)}stripe`,
     ];
 
     for (const path of paths) {
@@ -346,6 +396,60 @@ describe('resolve, the refusals that precede the store', () => {
       expect(error.reason).toBe('path');
       expect(error.path).toBe(path);
     }
+  });
+
+  /**
+   * The escape a segment check does not catch on its own.
+   *
+   * Splitting on `/` and refusing a `..` segment is the obvious rule and it is
+   * not enough, because the parser downstream sees a different set of segments
+   * than this library does. The pin below measures that rather than asserting
+   * it, and the refusals underneath are what keeps such a path from ever
+   * reaching a provider.
+   */
+  it('pins the URL parsing this rule exists for', () => {
+    const parse = (path: string) => new URL(`https://vault.internal:8200/v1/${path}`).pathname;
+
+    expect(parse('kv/payments/%2e%2e/%2e%2e/auth/token/lookup-self')).toBe(
+      '/v1/auth/token/lookup-self'
+    );
+    expect(parse('kv/payments/%2E%2E/%2E%2E/auth/token/lookup-self')).toBe(
+      '/v1/auth/token/lookup-self'
+    );
+    expect(parse(String.raw`kv/payments/..\..\auth/token/lookup-self`)).toBe(
+      '/v1/auth/token/lookup-self'
+    );
+    expect(new URL('https://h/v1/kv/payments/stripe?list=true').search).toBe('?list=true');
+  });
+
+  it('refuses a path carrying a character a URL parser reads as structure', async () => {
+    const instance = resolver(untouchedSource(), [{ path: 'kv/payments/*', klass: 'credential' }]);
+
+    const paths = [
+      // A percent-encoded traversal: no `..` segment for the split to find,
+      // and an arbitrary read once the provider builds a URL from it.
+      'kv/payments/%2e%2e/%2e%2e/auth/token/lookup-self',
+      'kv/payments/%2E%2E/%2E%2E/auth/token/lookup-self',
+      // The same escape with no percent sign in it at all.
+      String.raw`kv/payments/..\..\auth/token/lookup-self`,
+      // A permitted read turned into a different request against the store.
+      'kv/payments/stripe?list=true',
+      'kv/payments/stripe#/../../auth',
+    ];
+
+    for (const path of paths) {
+      const error = await refusal(instance.resolve(reference({ path }), { context }));
+
+      expect(error.reason).toBe('path');
+      expect(error.path).toBe(path);
+      expect(error.message).not.toContain('auth');
+    }
+  });
+
+  it('refuses an allowlist pattern carrying one, so the rule cannot be opted out of', () => {
+    expect(() =>
+      resolver(untouchedSource(), [{ path: 'kv/payments/%2e%2e/*', klass: 'credential' }])
+    ).toThrow(/URL parser/);
   });
 
   it('refuses a version outside the charset, which is where an injection would go', async () => {
@@ -365,6 +469,20 @@ describe('resolve, the refusals that precede the store', () => {
     const instance = resolver(untouchedSource());
     const error = await refusal(
       instance.resolve(reference(), {} as unknown as { context: { name: string } })
+    );
+
+    expect(error.reason).toBe('no-context');
+    // Nothing from the reference, because nothing from it was read.
+    expect(error.path).toBe('');
+  });
+
+  it('reports the missing context before anything about the reference', async () => {
+    const instance = resolver(untouchedSource());
+
+    // The receiver's own mistake outranks the sender's, so a caller who forgot
+    // the context is told that once rather than after fixing the payload too.
+    const error = await refusal(
+      instance.resolve({ nonsense: true }, {} as unknown as { context: { name: string } })
     );
 
     expect(error.reason).toBe('no-context');
@@ -481,6 +599,46 @@ describe('resolve, the allowlist', () => {
 
     expect(whole.klass).toBe('credential');
     expect(field.klass).toBe('sensitive');
+  });
+
+  it('takes the strictest class among the entries covering a path, in either order', async () => {
+    const broad: ReferenceAllowEntry = { path: 'kv/*', klass: 'sensitive' };
+    const specific: ReferenceAllowEntry = { path: 'kv/payments/stripe', klass: 'credential' };
+
+    // A subtree rule and a rule for one path under it are how an operator
+    // writes this, and taking the first would make the class a function of the
+    // order the two lines were written in.
+    for (const allow of [
+      [broad, specific],
+      [specific, broad],
+    ]) {
+      const value = await resolver(paymentsSource(), allow).resolve(reference(), { context });
+
+      expect(value.klass).toBe('credential');
+    }
+  });
+
+  it('takes the strictest class among the entries declaring a field, in either order', async () => {
+    const broad: ReferenceAllowEntry = {
+      path: 'kv/analytics/*',
+      fields: { password: 'sensitive' },
+    };
+    const specific: ReferenceAllowEntry = {
+      path: 'kv/analytics/db',
+      fields: { password: 'credential' },
+    };
+
+    for (const allow of [
+      [broad, specific],
+      [specific, broad],
+    ]) {
+      const value = await resolver(paymentsSource(), allow).resolve(
+        reference({ path: 'kv/analytics/db', version: '3', field: 'password' }),
+        { context }
+      );
+
+      expect(value.klass).toBe('credential');
+    }
   });
 });
 

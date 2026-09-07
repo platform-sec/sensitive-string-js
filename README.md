@@ -1836,6 +1836,12 @@ traversal or an empty segment is refused rather than normalized, a version outsi
 tighten the receiver's rule and may never loosen it, because a receiver that took `klass` from a
 payload would let a sender turn off constant-time comparison for a credential.
 
+A path may also not carry `%`, `\`, `?` or `#`, which is a stronger rule than "no `..` segment" and
+a measured one: a provider builds its request as `new URL(base + path)`, and the WHATWG parser
+applies its double-dot rule to the percent-decoded segment and reads a backslash as a separator, so
+`kv/payments/%2e%2e/%2e%2e/auth/token/lookup-self` and `kv/payments/..\..\auth/token/lookup-self`
+both leave the allowlisted subtree while passing a check over `/`-split segments.
+
 There is no `token.toReference()`. A derived instance inherits its sources' state, so a substring
 would mint a pointer to the whole credential, and the label rule deliberately strips the account, so
 an instance knows a path and not which store it is in. Minting takes the record.

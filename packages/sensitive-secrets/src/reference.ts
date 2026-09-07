@@ -208,6 +208,16 @@ function hasControlCharacter(text: string): boolean {
 }
 
 /**
+ * Characters a URL parser reads as structure rather than as text.
+ *
+ * A percent sign, because the WHATWG URL parser applies its double-dot rule to
+ * the percent-decoded segment. A backslash, because it separates segments for
+ * a special scheme exactly as a slash does. A question mark and a hash,
+ * because they end the path and begin a query or a fragment.
+ */
+const URL_SIGNIFICANT = ['%', '\\', '?', '#'];
+
+/**
  * What is wrong with the shape of a path, if anything.
  *
  * A path with a `.` or `..` segment is refused rather than normalized.
@@ -215,6 +225,26 @@ function hasControlCharacter(text: string): boolean {
  * about what `kv/a/../b` means, and a disagreement between two normalizers is
  * how a path that fails an allowlist reaches the store anyway. Refusing is one
  * rule with no second opinion in it.
+ *
+ * Refusing the literal `..` alone is not enough, and this was measured rather
+ * than reasoned about. A provider builds a request as `new URL(base + path)`,
+ * which is what `sensitive-vault` does, and on Node 22.15.0:
+ *
+ * ```
+ * kv/payments/%2e%2e/%2e%2e/auth/token/lookup-self -> /v1/auth/token/lookup-self
+ * kv/payments/..\..\auth/token/lookup-self        -> /v1/auth/token/lookup-self
+ * kv/payments/stripe?list=true                     -> /v1/kv/payments/stripe?list=true
+ * ```
+ *
+ * The first two are the escape an allowlist exists to prevent, reached from a
+ * path that this function, checking segments split on `/`, would otherwise
+ * have called well formed, and the second one contains no percent sign at all.
+ * The third turns a read of a permitted secret into a different request
+ * against the same store. So the rule is not only "no traversal segment": it
+ * is that a path may not carry a character the parser downstream reads as
+ * structure. No store this library supports allows one in a secret name, and a
+ * caller sends the logical path rather than a pre-encoded one, so nothing
+ * legitimate is refused by it.
  */
 function pathShapeFault(path: string): string | undefined {
   if (path.startsWith('/')) {
@@ -223,6 +253,12 @@ function pathShapeFault(path: string): string | undefined {
 
   if (hasControlCharacter(path)) {
     return 'a control character';
+  }
+
+  if (URL_SIGNIFICANT.some((character) => path.includes(character))) {
+    // Which one is not named, because the path is on the error already and a
+    // message is the one place a sender's bytes do not go.
+    return 'a character a URL parser reads as structure';
   }
 
   for (const segment of path.split('/')) {
@@ -409,15 +445,30 @@ export function createReferenceResolver(options: ReferenceResolverOptions): Refe
     throw new TypeError('A reference resolver needs a SecretSource to read with.');
   }
 
+  // A field entry resolves through `getJson`, so a source that does not have
+  // one fails here rather than at the first field reference. Every other
+  // configuration fault in this function is caught at construction, and a
+  // source is configuration.
+  if (allow.some((entry) => entry.fields !== undefined) && typeof source.getJson !== 'function') {
+    throw new TypeError(
+      'This allowlist declares fields, which resolve through getJson(), and the source has none.'
+    );
+  }
+
   return {
     async resolve(
       reference: unknown,
       resolveOptions: ResolveOptions
     ): Promise<SensitiveString<SensitivityClass>> {
+      // The caller's own precondition, checked before anything about the
+      // reference is examined. A receiver that forgot its context has a
+      // mistake of its own, and reporting that as a fault in what arrived
+      // would point whoever reads the log at the wrong party.
+      const context = requireContext(resolveOptions);
+
       const ref = checkedReference(reference, store);
-      const context = requireContext(resolveOptions, ref);
-      const entry = matchingEntry(ref, allow);
-      const klass = tighten(classOf(entry, ref), ref.klass);
+      const entries = matchingEntries(ref, allow);
+      const klass = tighten(classOf(entries, ref), ref.klass);
       const secretRef: SecretRef =
         ref.version === undefined ? { path: ref.path } : { path: ref.path, version: ref.version };
 
@@ -504,17 +555,21 @@ function checkedReference(reference: unknown, store: string): SensitiveValueRefe
 }
 
 /**
- * The allowlist rules: path, then kind, then field.
+ * Every allowlist entry that covers a reference: path, then kind, then field.
  *
  * Three refusals rather than one, because they mean different things to whoever
  * reads the log. Nothing covers this path at all; something covers the path but
  * this resolver hands out whole secrets there and the sender asked for a field,
- * or the reverse; the entry resolves fields and does not declare this one.
+ * or the reverse; the entries resolve fields and none declares this one.
+ *
+ * All of them are returned rather than the first, because the first is a
+ * position in a list and the class must not depend on one. {@link classOf} is
+ * where that matters.
  */
-function matchingEntry(
+function matchingEntries(
   ref: SensitiveValueReference,
   allow: readonly ReferenceAllowEntry[]
-): ReferenceAllowEntry {
+): readonly ReferenceAllowEntry[] {
   const onPath = allow.filter((entry) => matchesPattern(entry.path, ref.path));
 
   if (onPath.length === 0) {
@@ -543,12 +598,14 @@ function matchingEntry(
   }
 
   const field = ref.field;
-  const matched =
-    field === undefined
-      ? onKind[0]
-      : onKind.find((entry) => Object.hasOwn(entry.fields ?? {}, field));
 
-  if (matched === undefined) {
+  if (field === undefined) {
+    return onKind;
+  }
+
+  const declaring = onKind.filter((entry) => Object.hasOwn(entry.fields ?? {}, field));
+
+  if (declaring.length === 0) {
     refuse(
       'field',
       'No allowlist entry covering that path declares the field it names. A field this ' +
@@ -558,21 +615,54 @@ function matchingEntry(
     );
   }
 
-  return matched;
+  return declaring;
 }
 
-/** The receiver's own class for what a reference points at, before any tightening. */
-function classOf(entry: ReferenceAllowEntry, ref: SensitiveValueReference): SensitivityClass {
-  if (ref.field === undefined) {
-    // An entry that reached here declares `klass`, because `matchingEntry`
-    // routed a whole-secret reference to one that does.
-    return entry.klass ?? 'credential';
-  }
+/**
+ * The receiver's own class for what a reference points at, before the wire is
+ * allowed to tighten it further.
+ *
+ * The most restrictive class among every entry that covers the reference, not
+ * the first one's. Overlapping entries are ordinary, since a subtree rule and a
+ * rule for one path under it are how an operator writes this, and taking the
+ * first would mean `[{ path: 'kv/*', klass: 'sensitive' }, { path:
+ * 'kv/payments/stripe', klass: 'credential' }]` resolving the Stripe key as
+ * `sensitive`: constant-time comparison off, partial queries allowed, `mask()`
+ * disclosing a prefix. A security control whose answer depends on the order two
+ * lines were written in is one nobody can review by reading it.
+ *
+ * The direction is the same one the wire field gets: an entry may make the
+ * class stricter and never looser. An operator who wants a narrow exception to
+ * be looser than a broad rule narrows the broad rule, which is a thing a
+ * reviewer can see.
+ */
+function classOf(
+  entries: readonly ReferenceAllowEntry[],
+  ref: SensitiveValueReference
+): SensitivityClass {
+  const field = ref.field;
 
-  return entry.fields?.[ref.field] ?? 'credential';
+  // Entries reached here through `matchingEntries`, so a whole-secret
+  // reference has only entries declaring `klass`, and a field reference has
+  // only entries declaring that field.
+  const classes = entries.map((entry) =>
+    field === undefined ? (entry.klass ?? 'credential') : (entry.fields?.[field] ?? 'credential')
+  );
+
+  return classes.reduce<SensitivityClass>(
+    (strictest, candidate) => tighten(strictest, candidate),
+    classes[0] ?? 'credential'
+  );
 }
 
-function requireContext(options: ResolveOptions, ref: SensitiveValueReference): RevealContext {
+/**
+ * The caller's own context, checked before the reference is looked at.
+ *
+ * Nothing from the reference is on this refusal, because nothing from the
+ * reference has been read yet, and the empty `path` says so honestly rather
+ * than reporting a path that was never validated.
+ */
+function requireContext(options: ResolveOptions): RevealContext {
   const context = (options as Partial<ResolveOptions> | undefined)?.context;
 
   if (context === undefined || typeof context.name !== 'string' || context.name === '') {
@@ -581,8 +671,7 @@ function requireContext(options: ResolveOptions, ref: SensitiveValueReference): 
       'Resolving a reference needs a reveal context, such as ' +
         "{ context: { name: 'charge-worker', reason: '...' } }. An operation that crosses a " +
         'boundary does not run under whatever context happens to be ambient.',
-      ref.path,
-      ref.version
+      ''
     );
   }
 
@@ -696,7 +785,11 @@ function checkAllowList(allow: readonly ReferenceAllowEntry[]): readonly Referen
       }
 
       for (const [field, klass] of fields) {
-        if (field === '' || !hasPolicy(klass)) {
+        if (field === '') {
+          throw new TypeError(`${where} declares a field with an empty name.`);
+        }
+
+        if (!hasPolicy(klass)) {
           throw new TypeError(
             `${where} field '${field}' names sensitivity class '${String(klass)}', which has ` +
               `no registered policy.`
@@ -706,7 +799,17 @@ function checkAllowList(allow: readonly ReferenceAllowEntry[]): readonly Referen
     }
   });
 
-  return [...allow];
+  // Copied a member at a time and frozen, rather than spread. A spread of the
+  // array alone keeps the caller's entry objects, and an allowlist a caller can
+  // still edit through a reference it kept is not an allowlist the resolver
+  // owns: `entries[0].path = '*'` would widen a live one.
+  return allow.map((entry) =>
+    Object.freeze({
+      path: entry.path,
+      ...(entry.klass === undefined ? {} : { klass: entry.klass }),
+      ...(entry.fields === undefined ? {} : { fields: Object.freeze({ ...entry.fields }) }),
+    })
+  );
 }
 
 /**
@@ -728,6 +831,16 @@ function checkPattern(pattern: string, where: string): void {
     throw new TypeError(
       `${where} path '${pattern}' is not a supported pattern. A trailing '*' on a segment ` +
         `boundary is the only one, as in 'kv/payments/*', and it covers the subtree below it.`
+    );
+  }
+
+  // Before the wildcard is stripped, because `'/*'` would otherwise reduce to
+  // the empty literal and be accepted as an entry that can never match: a path
+  // with a leading slash is refused two checks earlier.
+  if (pattern.startsWith('/')) {
+    throw new TypeError(
+      `${where} path '${pattern}' starts with a slash. An allowlist entry is written as a ` +
+        `logical path within the store, and a path that starts with one is refused on arrival.`
     );
   }
 
