@@ -150,17 +150,30 @@ describe('require-reveal-context', () => {
      * tells them apart, so both are declared here and both are exercised.
      */
     const DECLARATIONS = [
-      'declare class SensitiveString {',
+      // Generic, as the real class is: an instantiation still answers to the
+      // name, and a project that aliases one answers to both.
+      "declare class SensitiveString<C extends string = 'sensitive'> {",
+      '  readonly klass: C;',
       '  reveal(ctx?: unknown): string;',
-      '  hash(algorithm: string, options?: unknown, ctx?: unknown): SensitiveString;',
-      '  hmac(algorithm: string, key: unknown, options?: unknown, ctx?: unknown): SensitiveString;',
+      "  hash(algorithm: string, options?: unknown, ctx?: unknown): SensitiveString<'credential'>;",
+      '  hmac(',
+      '    algorithm: string,',
+      '    key: unknown,',
+      '    options?: unknown,',
+      '    ctx?: unknown',
+      "  ): SensitiveString<'credential'>;",
       '}',
       'declare class ApiKey extends SensitiveString {}',
+      "type Token = SensitiveString<'credential'>;",
       'declare const secret: SensitiveString;',
       'declare const derived: ApiKey;',
+      'declare const aliased: Token;',
       'declare const maybe: SensitiveString | undefined;',
       'declare const bcrypt: { hash(value: string, rounds: number): Promise<string> };',
       'declare const holder: { token: SensitiveString; hash(value: string): string };',
+      'declare const untyped: any;',
+      'declare const magician: { reveal(): void };',
+      "declare function getToken(): SensitiveString<'credential'>;",
       'declare const key: Uint8Array;',
       'declare const ctx: { name: string };',
       'declare const args: [string];',
@@ -183,6 +196,11 @@ describe('require-reveal-context', () => {
         // Not a wrapper, whatever the method is called.
         code('bcrypt.hash(password, 12);'),
         code("holder.hash('sha256');"),
+
+        // A receiver the checker knows nothing about. The rule would rather
+        // say nothing than report every `.hash()` in a file that lost its
+        // types to an `any`.
+        code("untyped.hash('sha256');"),
 
         // A configured list that does not name the library's type narrows the
         // rule to nothing, the same way it does for the type-aware rules.
@@ -262,6 +280,38 @@ describe('require-reveal-context', () => {
           code: code("secret.hash('sha256', {}, { name: 'lookup' });"),
           options: [{ requireReason: true }],
           errors: [{ messageId: 'missingReason', data: { method: 'hash' } }],
+        },
+        // An instantiation reached through an alias answers to both names.
+        {
+          code: code("aliased.hash('sha256');"),
+          errors: [
+            {
+              messageId: 'missingContext',
+              data: { method: 'hash', contextFunction: 'withRevealContext' },
+            },
+          ],
+        },
+        // The receiver need not be a name.
+        {
+          code: code("getToken().hash('sha256');"),
+          errors: [
+            {
+              messageId: 'missingContext',
+              data: { method: 'hash', contextFunction: 'withRevealContext' },
+            },
+          ],
+        },
+        // Types do not narrow `reveal()`, deliberately: it is matched by name
+        // in every configuration, and losing that where a program happens to
+        // exist would be a silent hole rather than a precision gain.
+        {
+          code: code('magician.reveal();'),
+          errors: [
+            {
+              messageId: 'missingContext',
+              data: { method: 'reveal', contextFunction: 'withRevealContext' },
+            },
+          ],
         },
         {
           code: code('secret.reveal();'),

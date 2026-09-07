@@ -66,6 +66,11 @@ In a file with no program the rule stays on and checks `reveal()` alone. It does
 not report the missing type information the way `no-stringify-sensitive` does,
 because it is not reduced to silence: most of its job needs no types.
 
+The same goes for a receiver the checker knows nothing about. A value typed
+`any` is not a wrapper as far as this rule can tell, so a `.hash()` on one is
+not reported. That is the direction to miss in: the alternative is reporting
+every `.hash()` call in a file that lost its types to one `any`.
+
 ## Options
 
 | Option | Default |

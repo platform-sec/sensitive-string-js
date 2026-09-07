@@ -29,35 +29,44 @@ const RULE_NAME = 'require-reveal-context';
  */
 const DEFAULT_CONTEXT_FUNCTIONS: readonly string[] = ['withRevealContext', 'withAuditedReveals'];
 
+/** Where a method takes its `RevealContext`, and what it takes to match it. */
+interface ContextArgument {
+  /** The argument the context is passed in. */
+  readonly index: number;
+  /**
+   * Whether the receiver's type has to confirm the match.
+   *
+   * `reveal` is rare enough in ordinary code that matching it by name is the
+   * documented tradeoff of an untyped rule, and `magician.reveal()` being
+   * reported is the accepted cost. `hash` is not in that category: `bcrypt`,
+   * `argon2` and `node:crypto` all have one, this repository calls two of
+   * them, and a rule that reported every `.hash()` in a codebase would be
+   * turned off within the hour. Those are checked only where the receiver's
+   * type can be read, and are skipped in a file that has no type information.
+   */
+  readonly typedOnly: boolean;
+}
+
 /**
- * The reads that take a `RevealContext`, and where it sits among the arguments.
+ * The reads that take a `RevealContext`.
  *
  * `hash()` and `hmac()` are here because the library audits them exactly as it
  * audits a reveal: they read the raw value, charge the reveal budget, and write
  * an audit record. A record saying a digest of a credential was taken, with
  * nothing about who took it or why, is the gap this rule exists to close.
  *
+ * One table rather than a list of names and a second list of the typed ones,
+ * so the two cannot come to disagree about a method that is in one and not the
+ * other.
+ *
  * `mask()` and `serialize()` take a context too and are the obvious next
  * candidates. They are not here yet.
  */
-const CONTEXT_ARGUMENT: ReadonlyMap<string, number> = new Map([
-  [REVEAL_METHOD, 0],
-  ['hash', 2],
-  ['hmac', 3],
+const CONTEXT_METHODS: ReadonlyMap<string, ContextArgument> = new Map([
+  [REVEAL_METHOD, { index: 0, typedOnly: false }],
+  ['hash', { index: 2, typedOnly: true }],
+  ['hmac', { index: 3, typedOnly: true }],
 ]);
-
-/**
- * The methods this rule will not match on the name alone.
- *
- * `reveal` is rare enough in ordinary code that matching it by name is the
- * documented tradeoff of an untyped rule, and `magician.reveal()` being
- * reported is the accepted cost. `hash` is not in that category: `bcrypt`,
- * `argon2` and `node:crypto` all have one, this repository calls two of them,
- * and a rule that reported every `.hash()` in a codebase would be turned off
- * within the hour. So these are checked only where the receiver's type can be
- * read, and are silently skipped in a file that has no type information.
- */
-const TYPED_ONLY: ReadonlySet<string> = new Set(['hash', 'hmac']);
 
 /**
  * Whether the reveal sits inside a call that installs a context.
@@ -142,21 +151,25 @@ export const requireRevealContext: RuleModule = {
           return;
         }
 
-        const index = CONTEXT_ARGUMENT.get(call.method);
-        if (index === undefined) {
+        const method = CONTEXT_METHODS.get(call.method);
+        if (method === undefined) {
+          return;
+        }
+
+        // The lexical check first: it is a walk up the ancestors, where the
+        // receiver check builds and searches a type.
+        if (insideContextCall(getAncestors(context, node), contextFunctions)) {
           return;
         }
 
         if (
-          TYPED_ONLY.has(call.method) &&
+          method.typedOnly &&
           (services === undefined || !isSensitiveWrapper(call.receiver, services, sensitiveTypes))
         ) {
           return;
         }
 
-        if (insideContextCall(getAncestors(context, node), contextFunctions)) {
-          return;
-        }
+        const index = method.index;
 
         const args = callArguments(node);
 
