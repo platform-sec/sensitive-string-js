@@ -35,9 +35,11 @@
  * @packageDocumentation
  */
 
-export { hashForStorage, verifyHash } from './storage.js';
+export { hashForStorage, needsRehash, verifyHash } from './storage.js';
 
 export { MissingKdfModuleError, UnknownStoredHashError } from './errors.js';
+
+export type { StoredParameters } from './parameters.js';
 
 export type {
   Argon2Options,

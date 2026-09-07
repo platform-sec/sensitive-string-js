@@ -105,6 +105,37 @@ scrypt hashes are written in the [PHC string format](https://github.com/P-H-C/ph
 which records `ln`, the base-two logarithm of the cost, rather than `N` itself. That is what the
 format specifies and what makes a hash written here readable by something that is not this package.
 
+## Rehashing a store that has outlived its parameters
+
+Verification reads the parameters from the stored string, so a password hashed
+years ago keeps verifying forever. `needsRehash` is how an application notices
+that it should not, at the one moment it holds the plaintext and can do
+something about it:
+
+```typescript
+const PASSWORD_HASHING = { algorithm: 'argon2id' } as const;
+
+if (await verifyHash(stored, body.password)) {
+  if (needsRehash(stored, PASSWORD_HASHING)) {
+    const rehashed = await hashForStorage(body.password, PASSWORD_HASHING);
+    await db.users.update({ where: { id }, data: { password: rehashed.reveal() } });
+  }
+}
+```
+
+Weaker, not different. A stored hash whose parameters are *above* what the
+options ask for does not report: rolling a configuration back, or reading a
+store some other service hashed more expensively, must not rehash a fleet of
+passwords down to the lower setting. A different algorithm family always
+reports, because moving a bcrypt store to Argon2id is the migration this exists
+for.
+
+It hashes nothing and loads no native module, which is what lets it answer for
+an algorithm this process cannot compute: every format writes its cost into the
+string ahead of the digest, so this reads it. Argon2's parallelism is
+deliberately not compared, since lanes divide the same memory rather than
+adding work.
+
 ## bcrypt and 72 bytes
 
 bcrypt hashes the first 72 bytes of a password and silently ignores the rest, so two passwords
@@ -136,6 +167,7 @@ PIN, and no choice of KDF rescues that.
 
 - `hashForStorage(value, options, ctx?)` returns `Promise<SensitiveString<'credential'>>`
 - `verifyHash(stored, input, ctx?)` returns `Promise<boolean>`
+- `needsRehash(stored, options, ctx?)` returns `boolean`, synchronously and without a KDF
 - `MissingKdfModuleError`, `UnknownStoredHashError`
 - The floors, defaults and ceilings, as named constants, so a caller can cite them rather than copy
   them

@@ -9,7 +9,7 @@ import {
 import type { RevealDetails } from '@platform-sec/sensitive-string-core';
 
 import { UnknownStoredHashError } from './errors.js';
-import { hashForStorage, verifyHash } from './index.js';
+import { hashForStorage, needsRehash, verifyHash } from './index.js';
 import { hasArgon2, hasBcrypt } from './__tests__/optional-modules.js';
 import type { StorageHashOptions } from './types.js';
 
@@ -210,6 +210,114 @@ describe('hashForStorage and verifyHash', () => {
 
       expect(await verifyHash(stored, long)).toBe(true);
       expect(await verifyHash(stored, `${long}x`)).toBe(false);
+    });
+  });
+
+  describe('needsRehash', () => {
+    /**
+     * A stored argon2 hash with the parameters a case is about.
+     *
+     * Composed rather than computed, so a case can describe a store this
+     * process could not produce, and with a digest of the real default length:
+     * a short one is itself a reason to rehash, which would quietly decide
+     * every comparison here.
+     */
+    function argon2Stored(parameters: string, digestBytes = 32): string {
+      const salt = b64(Buffer.alloc(16, 3));
+      const digest = b64(Buffer.alloc(digestBytes, 5));
+
+      return `$argon2id$v=19$${parameters}$${salt}$${digest}`;
+    }
+
+    it.skipIf(!hasArgon2)('reports a store hashed below what is asked for now', async () => {
+      const stored = await hashForStorage(PASSWORD, ARGON2_FAST);
+
+      expect(needsRehash(stored, ARGON2_FAST)).toBe(false);
+      expect(needsRehash(stored, { algorithm: 'argon2id', memoryCost: 65_536 })).toBe(true);
+      expect(needsRehash(stored, { algorithm: 'argon2id', memoryCost: 19_456, timeCost: 3 })).toBe(
+        true
+      );
+    });
+
+    it.skipIf(!hasArgon2)('does not report a store hashed above it', () => {
+      // Rolling a configuration back must not rehash a fleet of passwords down
+      // to the lower setting.
+      const strong = argon2Stored('m=131072,t=4,p=4');
+
+      expect(needsRehash(strong, { algorithm: 'argon2id' })).toBe(false);
+    });
+
+    it.skipIf(!hasArgon2)('ignores a difference in lanes, which is not less work', () => {
+      const stored = argon2Stored('m=65536,t=3,p=1');
+
+      expect(needsRehash(stored, { algorithm: 'argon2id', parallelism: 4 })).toBe(false);
+    });
+
+    it.skipIf(!hasArgon2)('reports a digest shorter than the one asked for', () => {
+      const short = argon2Stored('m=65536,t=3,p=4', 16);
+
+      expect(needsRehash(short, { algorithm: 'argon2id' })).toBe(true);
+    });
+
+    it.skipIf(!hasBcrypt)('reports a bcrypt store below the rounds asked for', async () => {
+      const stored = await hashForStorage(PASSWORD, BCRYPT_FAST);
+
+      expect(needsRehash(stored, BCRYPT_FAST)).toBe(false);
+      expect(needsRehash(stored, { algorithm: 'bcrypt' })).toBe(true);
+    });
+
+    it('reports a scrypt store below the cost asked for', async () => {
+      const stored = await hashForStorage(PASSWORD, SCRYPT);
+
+      expect(needsRehash(stored, SCRYPT)).toBe(false);
+      expect(needsRehash(stored, { algorithm: 'scrypt', N: 32_768 })).toBe(true);
+      expect(needsRehash(stored, { algorithm: 'scrypt', keyLength: 128 })).toBe(true);
+    });
+
+    it('reports any hash from another family, which is the migration it is for', async () => {
+      const stored = await hashForStorage(PASSWORD, SCRYPT);
+
+      expect(needsRehash(stored, { algorithm: 'argon2id' })).toBe(true);
+      expect(needsRehash(`$2b$12$${'a'.repeat(53)}`, SCRYPT)).toBe(true);
+    });
+
+    it('answers for an algorithm this process may not be able to compute', () => {
+      // No module is loaded and nothing is hashed: the parameters are in the
+      // string, which is what lets this answer at all.
+      // Written in the order the argon2 package writes it, which is not the
+      // order the specification lists.
+      const argon2 = argon2Stored('m=19456,p=1,t=2');
+
+      expect(needsRehash(argon2, { algorithm: 'argon2id' })).toBe(true);
+    });
+
+    it('refuses a stored hash it cannot read', () => {
+      expect(() => needsRehash('not a hash', SCRYPT)).toThrow(UnknownStoredHashError);
+    });
+
+    it('validates the options it is compared against', () => {
+      expect(() =>
+        needsRehash(`$2b$12$${'a'.repeat(53)}`, { algorithm: 'bcrypt', rounds: 4 })
+      ).toThrow(RangeError);
+    });
+
+    it('reads a protected hash through the gate, and never the password', async () => {
+      const records: string[] = [];
+      const stored = new SensitiveString(
+        (await hashForStorage(PASSWORD, SCRYPT)).reveal(),
+        'credential',
+        'password:stored'
+      );
+
+      // Not awaited: the callback is synchronous, because needsRehash is.
+      withRevealContext(
+        { name: 'login', auditReveal: (value) => void records.push(String(value.label)) },
+        () => {
+          expect(needsRehash(stored, { algorithm: 'argon2id' })).toBe(true);
+        }
+      );
+
+      expect(records).toEqual(['password:stored']);
     });
   });
 

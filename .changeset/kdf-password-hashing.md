@@ -34,6 +34,16 @@ Every parameter has a floor as well as a default, and a value below it is refuse
 quietly raised. bcrypt's rounds also has a ceiling, because it is an exponent: 20 is around thirty
 seconds per hash and 31, which bcrypt accepts, is measured in weeks.
 
+`needsRehash` is the other half of that. Verification reads the parameters out of the stored string,
+so a password hashed years ago keeps verifying forever; this is how an application notices that it
+should not, and rehashes at the one moment it holds the plaintext. It reports weaker, never
+different: rolling a configuration back must not rehash a fleet of passwords down to the lower
+setting, though a different algorithm family always reports, since that is the migration it exists
+for. It hashes nothing and loads no native module, which lets it answer for an algorithm the process
+cannot compute, and it cost one bug worth recording: the specification lists Argon2's parameters as
+`m,t,p` and the `argon2` package writes `m,p,t`, so a parser written from the format matches no hash
+in production. The parameters are read as a list rather than in a fixed order.
+
 Verification takes the algorithm and parameters from the stored hash rather than from anything
 configured today, so a store hashed under weaker parameters keeps verifying while new passwords use
 stronger ones. A wrong password answers `false`; a stored hash that cannot be read throws, because a

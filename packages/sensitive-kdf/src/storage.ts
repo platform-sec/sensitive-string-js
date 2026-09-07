@@ -5,7 +5,8 @@ import { hashArgon2, verifyArgon2 } from './argon2.js';
 import { hashBcrypt, verifyBcrypt } from './bcrypt.js';
 import { hashScrypt, verifyScrypt } from './scrypt.js';
 import { UnknownStoredHashError } from './errors.js';
-import { planStorageHash } from './options.js';
+import { planStorageHash, type StoragePlan } from './options.js';
+import { readStoredParameters, type StoredParameters } from './parameters.js';
 import type { StorageHashOptions } from './types.js';
 
 /**
@@ -146,6 +147,90 @@ export async function verifyHash(
   const raw = readValue(input, 'verifyHash: input', ctx);
 
   return verify(encoded, raw);
+}
+
+/**
+ * Whether a stored hash is weaker than what these options would produce.
+ *
+ * The counterpart to a store that has outlived its parameters. `verifyHash`
+ * reads the algorithm and cost out of the stored string, so a password hashed
+ * years ago keeps working forever; this is how an application notices that it
+ * should not, and rehashes on the next successful login while it briefly holds
+ * the plaintext.
+ *
+ * ```ts
+ * if (await verifyHash(stored, body.password)) {
+ *   if (needsRehash(stored, PASSWORD_HASHING)) {
+ *     await db.users.update({
+ *       where: { id },
+ *       data: { password: (await hashForStorage(body.password, PASSWORD_HASHING)).reveal() },
+ *     });
+ *   }
+ * }
+ * ```
+ *
+ * Weaker, not different. A parameter above what the options ask for does not
+ * report: rolling a configuration back, or reading a store some other service
+ * hashed more expensively, must not rehash a fleet of passwords down to the
+ * lower setting. A different algorithm family always reports, because moving
+ * from bcrypt to Argon2id is the migration this exists for.
+ *
+ * It hashes nothing and loads no native module. Every format writes its cost
+ * parameters into the string ahead of the digest, so this reads them, which is
+ * also what lets it answer for an algorithm this process could not compute.
+ *
+ * Reading a protected hash is an exposure of that hash, audited like any
+ * other. It is not an exposure of the password, which this never sees.
+ *
+ * @param stored - The hash, as produced by {@link hashForStorage}.
+ * @param options - The parameters this application would hash with today.
+ * @param ctx - Optional reveal context for authorization and auditing.
+ * @throws UnknownStoredHashError If `stored` is not a hash this package can read.
+ * @throws TypeError If the options name no known algorithm, or a parameter has the wrong type.
+ * @throws RangeError If a parameter is outside the documented bounds.
+ */
+export function needsRehash(
+  stored: SensitiveString<SensitivityClass> | string,
+  options: StorageHashOptions,
+  ctx?: RevealContext
+): boolean {
+  const plan = planStorageHash(options);
+  const parameters = readStoredParameters(readValue(stored, 'needsRehash: stored', ctx));
+
+  if (parameters.algorithm !== plan.algorithm) {
+    return true;
+  }
+
+  return isWeaker(parameters, plan);
+}
+
+/**
+ * Whether a stored hash's own family parameters fall short of the plan's.
+ *
+ * Reached only once the two agree on the algorithm, so each branch compares
+ * like with like. Argon2's `parallelism` is deliberately absent: lanes divide
+ * the same memory rather than adding work, so a hash with fewer of them is not
+ * a weaker hash, and reporting on it would rehash a store for nothing.
+ */
+function isWeaker(parameters: StoredParameters, plan: StoragePlan): boolean {
+  if (plan.algorithm === 'bcrypt') {
+    return (parameters.rounds ?? 0) < plan.rounds;
+  }
+
+  if (plan.algorithm === 'scrypt') {
+    return (
+      (parameters.N ?? 0) < plan.N ||
+      (parameters.r ?? 0) < plan.r ||
+      (parameters.p ?? 0) < plan.p ||
+      parameters.hashLength < plan.keyLength
+    );
+  }
+
+  return (
+    (parameters.memoryCost ?? 0) < plan.memoryCost ||
+    (parameters.timeCost ?? 0) < plan.timeCost ||
+    parameters.hashLength < plan.hashLength
+  );
 }
 
 /**
