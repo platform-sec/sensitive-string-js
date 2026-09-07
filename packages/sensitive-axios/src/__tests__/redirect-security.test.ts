@@ -62,6 +62,20 @@ describe('cross-origin redirects', () => {
     expect(second.requests).toHaveLength(0);
   });
 
+  it('refuses the hop by default when the credential came from the headers option', async () => {
+    // The option is merged before the policy is settled, so a credential there
+    // flips the default the same way one in the call does.
+    redirectTo(`${second.origin}/landing`);
+
+    const api = createSensitiveAxios(instance(origin), {
+      allowInsecureTransport: true,
+      headers: { 'x-api-key': apiKey(token()) },
+    });
+
+    await expect(api.get('/redirect')).rejects.toThrow(RedirectHostNotAllowedError);
+    expect(second.requests).toHaveLength(0);
+  });
+
   it('follows a hop to a host the caller named, and refuses one to a host they did not', async () => {
     redirectTo(`${second.origin}/landing`);
 
@@ -181,6 +195,29 @@ describe('allowedHosts: strip', () => {
     expect(second.transcript).not.toContain(CANARY);
     expect(second.requests[0]?.headers['x-api-key']).toBeUndefined();
     expect(origin.requests[0]?.headers['x-api-key']).toBe(CANARY);
+  });
+
+  it('strips a credential set on the headers option and does not refill it on a later hop', async () => {
+    // The typed way to give the instance a credential. It is merged before the
+    // dropped-name accounting, so once the name is removed at the first
+    // boundary it stays removed when a later hop rebuilds the request from
+    // the same option.
+    origin.replyOnce({ status: 302, headers: { location: `${second.origin}/bounce` }, body: '' });
+    second.reply({ status: 302, headers: { location: `${origin.origin}/landing` }, body: '' });
+
+    const api = createSensitiveAxios(instance(origin), {
+      allowInsecureTransport: true,
+      allowedHosts: 'strip',
+      headers: { 'x-api-key': apiKey(token()) },
+    });
+
+    await api.get('/redirect');
+
+    expect(origin.requests[0]?.headers['x-api-key']).toBe(CANARY);
+    expect(second.requests[0]?.headers['x-api-key']).toBeUndefined();
+    expect(origin.requests[1]?.headers['x-api-key']).toBeUndefined();
+    expect(origin.requests).toHaveLength(2);
+    expect(second.transcript).not.toContain(CANARY);
   });
 
   it('keeps the credential on a same-origin hop', async () => {

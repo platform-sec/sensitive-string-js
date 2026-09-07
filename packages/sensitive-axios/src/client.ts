@@ -12,8 +12,8 @@ import {
 } from '@platform-sec/sensitive-string-http';
 import type {
   PreparedRequest,
-  SensitiveClientOptions,
   SensitiveHeaders,
+  SensitiveInstanceOptions,
   SensitiveQuery,
 } from '@platform-sec/sensitive-string-http';
 import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
@@ -61,7 +61,7 @@ export type SensitiveAxiosResponse<T> = Omit<AxiosResponse<T>, 'request'> & {
   readonly request: undefined;
 };
 
-export type SensitiveAxiosOptions = SensitiveClientOptions;
+export type SensitiveAxiosOptions = SensitiveInstanceOptions;
 
 export interface SensitiveAxios {
   request<T = unknown>(config: SensitiveAxiosRequestConfig): Promise<SensitiveAxiosResponse<T>>;
@@ -123,17 +123,23 @@ function resolveUrl(client: AxiosInstance, url: string | undefined): string {
  * Measured: a `SensitiveString` on `defaults.headers.common` reaches the wire
  * as `[REDACTED:credential]` exactly like a per-request one, and the wrapper
  * would never see it if it only read the call's own headers.
+ *
+ * The wrapper's own `headers` option sits over axios's defaults and under the
+ * call. It exists because axios types its defaults as strings and a wrapped
+ * value there does not compile, so a TypeScript caller has a typed place for
+ * the credential and a JavaScript caller keeps the one they had.
  */
 function withDefaultHeaders(
   client: AxiosInstance,
   method: string,
+  instance: SensitiveHeaders | undefined,
   headers: SensitiveHeaders | undefined
 ): SensitiveHeaders {
   const defaults = client.defaults.headers as unknown as Record<string, SensitiveHeaders>;
   const common = defaults['common'] ?? {};
   const perMethod = defaults[method.toLowerCase()] ?? {};
 
-  return { ...common, ...perMethod, ...(headers ?? {}) };
+  return { ...common, ...perMethod, ...(instance ?? {}), ...(headers ?? {}) };
 }
 
 /** The predicate axios would have used, with `null` meaning "accept everything". */
@@ -245,7 +251,7 @@ export function createSensitiveAxios(
           method: currentMethod,
           url,
           headers: headersWithout(
-            withDefaultHeaders(client, currentMethod, config.headers),
+            withDefaultHeaders(client, currentMethod, options.headers, config.headers),
             dropped
           ),
           // Merged on the first hop only; `prepareRequest` drops it for the

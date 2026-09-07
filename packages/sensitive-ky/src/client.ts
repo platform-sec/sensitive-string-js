@@ -13,8 +13,8 @@ import {
 } from '@platform-sec/sensitive-string-http';
 import type {
   PreparedRequest,
-  SensitiveClientOptions,
   SensitiveHeaders,
+  SensitiveInstanceOptions,
   SensitiveQuery,
 } from '@platform-sec/sensitive-string-http';
 import type { KyInstance, Options } from 'ky';
@@ -51,7 +51,7 @@ export interface SensitiveKyRequestConfig extends Omit<
   form?: SensitiveQuery;
 }
 
-export type SensitiveKyOptions = SensitiveClientOptions;
+export type SensitiveKyOptions = SensitiveInstanceOptions;
 
 /**
  * ky's own ergonomics: a promise for the `Response`, with the body accessors
@@ -126,6 +126,23 @@ function prefixUrlOf(client: KyInstance): string {
   return prefixes.get(client) ?? '';
 }
 
+/**
+ * The wrapper's own `headers` option, under the call's headers.
+ *
+ * The only instance-level layer here. ky does not expose an extended
+ * instance's defaults, so a wrapped value in `ky.extend({ headers })` is never
+ * seen by the wrapper (and does not compile, since ky types it as a string);
+ * this option is where an instance credential goes. Merged before the
+ * `'strip'` accounting in the hop loop, so a name dropped at a boundary is
+ * not refilled from here on the next hop.
+ */
+function withInstanceHeaders(
+  instance: SensitiveHeaders | undefined,
+  headers: SensitiveHeaders | undefined
+): SensitiveHeaders | undefined {
+  return instance === undefined ? headers : { ...instance, ...(headers ?? {}) };
+}
+
 export function createSensitiveKy(
   client: KyInstance,
   options: SensitiveKyOptions & { prefix?: string } = {}
@@ -155,7 +172,7 @@ export function createSensitiveKy(
         {
           method: currentMethod,
           url: currentUrl,
-          headers: headersWithout(config.headers, dropped),
+          headers: headersWithout(withInstanceHeaders(options.headers, config.headers), dropped),
           // Merged on the first hop only; `prepareRequest` drops it for the
           // hops that follow.
           query: config.searchParams,

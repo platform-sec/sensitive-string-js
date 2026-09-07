@@ -37,6 +37,25 @@ const res = await api.post('/charges', { amount, card: { number: cardNumber } },
 res.data.customer.email; // SensitiveString<'sensitive'>, not a plain string
 ```
 
+## Giving the instance a credential
+
+axios types an instance's default headers as strings, so a wrapped value or an `apiKey()` descriptor
+in `axios.create({ headers })` or on `defaults.headers.common` does not compile. The wrapper's own
+`headers` option is the typed place for it:
+
+```typescript
+const api = createSensitiveAxios(axios.create({ baseURL: 'https://api.example.com' }), {
+  headers: { 'x-api-key': apiKey(apiToken) },
+  allowedHosts: ['api.example.com'],
+});
+```
+
+It sits over `defaults.headers` and under each call's headers, and it goes through the same pipeline
+as a call's header: revealed once per attempt, recorded in the plan, scrubbed on both settlement
+paths, and under `allowedHosts: 'strip'` dropped at the origin boundary and not refilled on a later
+hop. A wrapped value that reaches `defaults.headers.common` at run time anyway, from JavaScript or
+through a cast, is still read from there and handled the same way.
+
 ## What it protects against
 
 Measured on axios 1.20.0 against a local recording server. Each row fails against a bare axios today,

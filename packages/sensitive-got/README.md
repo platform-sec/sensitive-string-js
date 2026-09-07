@@ -36,6 +36,25 @@ const res = await api.post('/charges', { amount, card: { number: cardNumber } },
 });
 ```
 
+## Giving the instance a credential
+
+got types an instance's default headers as strings, so a wrapped value or an `apiKey()` descriptor
+in `got.extend({ headers })` does not compile. The wrapper's own `headers` option is the typed place
+for it:
+
+```typescript
+const api = createSensitiveGot(got.extend({ prefixUrl: 'https://api.example.com' }), {
+  headers: { 'x-api-key': apiKey(apiToken) },
+  allowedHosts: ['api.example.com'],
+});
+```
+
+It sits over got's own defaults and under each call's headers, and it goes through the same
+pipeline as a call's header: revealed once per attempt, recorded in the plan, scrubbed on both
+settlement paths, and under `allowedHosts: 'strip'` deleted at the origin boundary. A wrapped value
+that reaches `got.extend({ headers })` at run time anyway, from JavaScript or through a cast, is
+still read from `defaults.options.headers` and handled the same way.
+
 ## What it protects against
 
 Measured on got 16.0.0 against a local recording server.

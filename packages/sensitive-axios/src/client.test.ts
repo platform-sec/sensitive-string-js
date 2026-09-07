@@ -5,7 +5,7 @@ import { startRecordingServer } from '@platform-sec/sensitive-string-http/testin
 import type { RecordingServer } from '@platform-sec/sensitive-string-http/testing';
 
 import { createSensitiveAxios } from './client.js';
-import { token } from './__tests__/fixtures.js';
+import { CANARY, token } from './__tests__/fixtures.js';
 
 let server: RecordingServer;
 
@@ -104,5 +104,33 @@ describe('createSensitiveAxios', () => {
     });
 
     expect(response.status).toBe(404);
+  });
+});
+
+describe('the headers option', () => {
+  it("sits over axios's own defaults and under the call", async () => {
+    // axios types its defaults as strings, so a wrapped value in
+    // `axios.create({ headers })` or on `defaults.headers.common` does not
+    // compile; this is the typed place for it. The plain-string defaults axios
+    // does accept still pass underneath.
+    const bare = axios.create({ baseURL: server.origin });
+    bare.defaults.headers.common['x-tenant'] = 'from-axios';
+    bare.defaults.headers.common['x-region'] = 'eu';
+
+    const client = createSensitiveAxios(bare, {
+      allowInsecureTransport: true,
+      headers: { 'x-api-key': apiKey(token()), 'x-tenant': 'from-wrapper' },
+    });
+
+    await client.get('/a');
+    await client.get('/b', { headers: { 'x-tenant': 'from-call' } });
+
+    expect(server.requests[0]?.headers['x-api-key']).toBe(CANARY);
+    expect(server.requests[0]?.headers['x-tenant']).toBe('from-wrapper');
+    expect(server.requests[0]?.headers['x-region']).toBe('eu');
+    expect(server.requests[1]?.headers['x-api-key']).toBe(CANARY);
+    expect(server.requests[1]?.headers['x-tenant']).toBe('from-call');
+    expect(server.transcript).not.toContain('[REDACTED');
+    expect(server.transcript).not.toContain('[object Object]');
   });
 });

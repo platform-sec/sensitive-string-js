@@ -46,8 +46,20 @@ an extended instance and the wrapper needs the destination host **before** it re
 
 The same opacity means a wrapped value placed in `ky.extend({ headers })` is never seen by the
 wrapper: measured, it reaches the wire as `[REDACTED:credential]` on every hop, revealed nowhere and
-stripped by nothing. Put a wrapped credential in the call's `headers`, where it is revealed, recorded
-and scrubbed; the got and axios packages read their clients' instance defaults, and this one cannot.
+stripped by nothing. It does not compile either, since ky types those headers as strings. The
+wrapper's own `headers` option is where an instance credential goes:
+
+```typescript
+const api = createSensitiveKy(ky, {
+  prefix: 'https://api.example.com',
+  headers: { 'x-api-key': apiKey(apiToken) },
+});
+```
+
+It is merged under each call's headers and goes through the same pipeline: revealed once per
+attempt, recorded in the plan, scrubbed, and under `allowedHosts: 'strip'` dropped at the origin
+boundary and not refilled on a later hop. The got and axios packages read their clients' instance
+defaults as well; this one cannot, so here the option is the only instance-level layer there is.
 
 ## What it protects against
 

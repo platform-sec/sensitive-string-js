@@ -140,6 +140,37 @@ export interface SensitiveClientOptions {
   readonly retries?: number;
 }
 
+/**
+ * The options a wrapper built around a client instance accepts: the shared
+ * set, plus what the instance carries into every call made through it.
+ *
+ * got, axios and ky take one. `fetch` and undici have no instance to wrap, so
+ * their per-call bag is the whole surface and this adds nothing to it.
+ */
+export interface SensitiveInstanceOptions extends SensitiveClientOptions {
+  /**
+   * Headers every request through this wrapper carries, merged under the
+   * call's own.
+   *
+   * The typed way to give an instance a credential. Each of the three clients
+   * types an instance's default headers as strings, measured: a wrapped value
+   * or an `apiKey()` descriptor placed in `got.extend({ headers })`,
+   * `axios.create({ headers })` or `ky.create({ headers })` is a compile error,
+   * and the types are aliases nothing can widen from outside. The got and axios
+   * wrappers still read their client's defaults at run time, so a JavaScript
+   * caller keeps what they had. ky never exposes an extended instance's
+   * defaults, so for ky this is the only instance-level layer the wrapper sees.
+   *
+   * Layered over the client's own defaults, where the wrapper can read them,
+   * and under the call's headers: the wrapper was built around the client, so
+   * it sits above the client and beneath the call. Merged before the `'strip'`
+   * accounting, so a name dropped at a cross-origin hop is not refilled from
+   * here on the next one. A credential here flips the redirect default to
+   * refusing, the same as one in the call.
+   */
+  readonly headers?: SensitiveHeaders;
+}
+
 /** What a client package hands the shared pipeline. */
 export interface OutgoingRequest {
   readonly method: string;

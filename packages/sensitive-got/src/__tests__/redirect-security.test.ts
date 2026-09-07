@@ -57,6 +57,22 @@ describe('cross-origin redirects', () => {
     expect(second.requests).toHaveLength(0);
   });
 
+  it('refuses the hop by default when the credential came from the headers option', async () => {
+    // The option is merged before the policy is settled, so a credential there
+    // flips the default the same way one in the call does.
+    origin.reply({ status: 302, headers: { location: `${second.origin}/landing` } });
+
+    const api = createSensitiveGot(instance(origin), {
+      allowInsecureTransport: true,
+      headers: { 'x-api-key': apiKey(token()) },
+    });
+
+    const error = await api.get('/redirect').catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(RedirectHostNotAllowedError);
+    expect(second.requests).toHaveLength(0);
+  });
+
   it('follows a hop to a host the caller named', async () => {
     origin.reply({ status: 302, headers: { location: `${second.origin}/landing` } });
 
@@ -140,7 +156,7 @@ describe('allowedHosts: strip', () => {
     origin.reply({ status: 302, headers: { location: `${second.origin}/landing` } });
 
     // got's own header type takes strings, so the descriptor is cast past it
-    // the way the undici wire test hands a raw instance to a bare client.
+    // here; the wrapper's `headers` option, tested next, is the typed way in.
     const api = createSensitiveGot(
       instance(origin).extend({ headers: { 'x-api-key': apiKey(token()) as unknown as string } }),
       { allowInsecureTransport: true, allowedHosts: 'strip' }
@@ -154,6 +170,25 @@ describe('allowedHosts: strip', () => {
     expect(second.transcript).not.toContain(CANARY);
     expect(origin.transcript).not.toContain('[REDACTED');
     expect(origin.transcript).not.toContain('[object Object]');
+  });
+
+  it('strips a credential set on the headers option, the typed way to give the instance one', async () => {
+    // Same accounting as a got default: revealed on the first hop, in the
+    // plan, and deleted at the boundary.
+    origin.reply({ status: 302, headers: { location: `${second.origin}/landing` } });
+
+    const api = createSensitiveGot(instance(origin), {
+      allowInsecureTransport: true,
+      allowedHosts: 'strip',
+      headers: { 'x-api-key': apiKey(token()) },
+    });
+
+    await api.get('/redirect');
+
+    expect(origin.requests[0]?.headers['x-api-key']).toBe(CANARY);
+    expect(second.requests).toHaveLength(1);
+    expect(second.requests[0]?.headers['x-api-key']).toBeUndefined();
+    expect(second.transcript).not.toContain(CANARY);
   });
 
   it('refuses a cross-origin 307 that would re-send a body carrying a credential', async () => {

@@ -12,9 +12,9 @@ import {
 } from '@platform-sec/sensitive-string-http';
 import type {
   PreparedRequest,
-  SensitiveClientOptions,
   SensitiveHeaderValue,
   SensitiveHeaders,
+  SensitiveInstanceOptions,
   SensitiveQuery,
 } from '@platform-sec/sensitive-string-http';
 import type { Got, Response, StrictOptions } from 'got';
@@ -56,7 +56,7 @@ export interface SensitiveGotRequestConfig extends Omit<
   form?: SensitiveQuery;
 }
 
-export type SensitiveGotOptions = SensitiveClientOptions;
+export type SensitiveGotOptions = SensitiveInstanceOptions;
 
 export type SensitiveGotResponse<T> = Omit<Response, 'body'> & { body: T };
 
@@ -117,6 +117,7 @@ function resolveUrl(client: Got, url: string): string {
 /**
  * Default headers merged in, so an instance-level credential is revealed too.
  *
+ * Two layers sit under the call's own headers. The lower one is got's:
  * `got.extend({ headers })` is the ordinary way to give an instance a
  * credential, and got merges those under the call's headers at send time.
  * Measured: a wrapped value placed there reached the wire as
@@ -125,10 +126,20 @@ function resolveUrl(client: Got, url: string): string {
  * instance default is revealed, recorded in the plan, scrubbed on the way back
  * and, under `'strip'`, dropped at the origin boundary like any other.
  *
+ * The upper one is the wrapper's own `headers` option, which exists because
+ * got types its defaults as strings and a wrapped value there does not
+ * compile. It sits over got's defaults and under the call, so a TypeScript
+ * caller has a typed place for the credential and a JavaScript caller keeps
+ * the one they had.
+ *
  * got stores its defaults with lowercased names; a value got itself put there,
  * such as its `user-agent`, is a plain string and passes through unchanged.
  */
-function withDefaultHeaders(client: Got, headers: SensitiveHeaders | undefined): SensitiveHeaders {
+function withDefaultHeaders(
+  client: Got,
+  instance: SensitiveHeaders | undefined,
+  headers: SensitiveHeaders | undefined
+): SensitiveHeaders {
   const defaults = (client.defaults.options.headers ?? {}) as Readonly<Record<string, unknown>>;
   const merged: SensitiveHeaders = {};
 
@@ -140,7 +151,7 @@ function withDefaultHeaders(client: Got, headers: SensitiveHeaders | undefined):
     merged[name] = (Array.isArray(value) ? value.join(', ') : value) as SensitiveHeaderValue;
   }
 
-  return { ...merged, ...(headers ?? {}) };
+  return { ...merged, ...(instance ?? {}), ...(headers ?? {}) };
 }
 
 /** Whether got will send a body again on this hop: true after a 307 or 308, never after a 303. */
@@ -172,7 +183,7 @@ export function createSensitiveGot(client: Got, options: SensitiveGotOptions = {
       {
         method: String(config['method'] ?? 'GET'),
         url,
-        headers: withDefaultHeaders(client, config.headers),
+        headers: withDefaultHeaders(client, options.headers, config.headers),
         query: config.searchParams,
         body: config.json,
         form: config.form,

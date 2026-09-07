@@ -137,6 +137,7 @@ export type {
   SensitiveClientOptions,
   SensitiveHeaderValue,
   SensitiveHeaders,
+  SensitiveInstanceOptions,
   SensitiveQuery,
   SensitiveQueryValue,
 } from './types.js';
