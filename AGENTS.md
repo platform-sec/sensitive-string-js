@@ -61,15 +61,25 @@ This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under 
   `u.email = :e` is a SQL fragment and `:e` is a name, so there is no `ColumnMetadata` to consult and
   the instance goes to the driver, where `better-sqlite3` throws but `pg` and `mysql2` bind a
   redaction marker and the query silently matches nothing. `guard.ts` is the answer, and it wraps
-  `createQueryRunner` on the `DataSource` because that is the only seam that sees the parameter map;
-  the wrapper has to be idempotent per runner, since the SQLite family caches one query runner and
-  returns it from every call while `pg` builds a fresh one, so a missing marker would layer the
-  wrapper once per query and only ever show up on SQLite. It imports no driver and no `typeorm` at
+  `createQueryRunner` on the `DataSource` because that is the only seam that sees the parameter map.
+  Three things there are load bearing and each was got wrong first. The wrapper has to be idempotent
+  per runner, since the SQLite family caches one query runner and returns it from every call while
+  `pg` builds a fresh one, so a missing marker would layer the wrapper once per query and only ever
+  show up on SQLite. It has to check the **named parameter map** as well as the positional array,
+  because `ds.query(sql, { e: value })` hands the runner that object unchanged and `better-sqlite3`
+  rejects named placeholders, so an array-only check looks correct on the driver you develop against.
+  And the uninstall flips a shared flag rather than restoring each runner, because a guard that
+  remembered runners in order to restore them keeps every query runner the process ever made alive,
+  which on `pg` is one per query. It imports no driver and no `typeorm` at
   runtime: every TypeORM type it reads is restated structurally, which is also what keeps it correct
   in a process holding two copies of the ORM. Three more modules cover the plaintext a transformer
   cannot reach: `logger.ts` for the query log, `sanitize.ts` for `QueryFailedError.parameters`, and
   an unconditional cache refusal in `schema.ts`, because `cache: true` stores both the pre-transform
-  rows and the revealed predicate values in a second table. `operation` in the audit tags is always
+  rows and the revealed predicate values in a second table. `schema.check()` has a fourth drift direction that is easy to read as
+  optional and is not: an exact `fields` entry that no column matches is dead configuration, and it
+  is the failure that looks most like success, because nothing is wrapped and nothing says so. That
+  is the same class of defect ADR-003 records for `sensitive-prisma`, found there by a review pass
+  after the first commit and here by one too. `operation` in the audit tags is always
   `'unknown'` and cannot be anything else; do not add a stack read to fix that. Its suite runs
   against a real in-memory SQLite database rather than a mock, deliberately, because the whole
   finding is that the three drivers disagree about what to do with an object and a mock would agree

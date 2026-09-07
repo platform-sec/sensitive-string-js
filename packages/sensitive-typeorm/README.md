@@ -111,7 +111,10 @@ valid SQL assigning `` `klass` `` and `` `label` `` to columns that do not exist
 Two answers, and you want both:
 
 - `guardParameters(dataSource)` refuses an instance or a marker at the query runner, which is the
-  only place that sees the parameter map between the query builder and the driver.
+  only place that sees the parameter map between the query builder and the driver. It checks both
+  shapes TypeORM passes: the positional array, and the named parameter map that
+  `ds.query(sql, { e: value })` hands the runner unchanged. `better-sqlite3` rejects named
+  placeholders, so the map is one more thing the driver you develop against will not show you.
 - The find-options form runs the transformer normally, so it is the fix the refusal names:
 
 ```ts
@@ -173,8 +176,16 @@ and by identifier where a rule classified it; string parameters are replaced and
 (ids, timestamps, booleans) is kept, because a classified column's revealed value is always a string.
 Over-redaction is the correct failure direction for a log.
 
+Named parameter maps are redacted too, since `ds.query(sql, { e: value })` reaches the logger as that
+object even though TypeORM's own `Logger` types the argument as an array.
+
 It is opt-in through the `DataSource`'s own `logger` option, because a `DataSource` option cannot be
 reached from a transformer and this package does not patch prototypes.
+
+What it does not touch is the `error` argument of `logQueryError`. That is the driver's own error,
+and on Postgres its `detail` can hold the conflicting value for several constraint classes. Statement
+text is not rewritten either, so a `Raw()` fragment that inlined a literal is logged as written. Both
+are the scrub fragment's territory rather than the logger's.
 
 ### `QueryFailedError` carries the revealed parameters
 
@@ -191,8 +202,9 @@ try {
 
 It redacts in place where the property allows it and falls back to a copy with the same prototype
 where it does not, so `instanceof`, `name`, `message` and the stack all survive. It never throws: it
-works through property descriptors, so a getter that throws is never invoked, and a frozen error or a
-null prototype is handled rather than propagated.
+works through property descriptors, so a getter is never invoked, and a frozen error or a null
+prototype is handled rather than propagated. A `parameters` defined as an accessor is replaced by a
+single censor entry rather than read, so the parameter count is lost and the value is not.
 
 For an application already using `sensitive-scrub`, merge the fragment:
 
@@ -277,16 +289,26 @@ Coalesce on `{ sink, table, column }` if the volume is a problem.
 schema.check(dataSource);
 ```
 
-Both directions, because both failures are silent:
+Four directions, because all four failures are silent:
 
 - a column the specification classifies with no transformer on it stores plaintext and hands the
   application a string where the property type promises a `SensitiveString`;
 - a column carrying one of this package's transformers that the specification no longer classifies is
   a stale annotation nothing else reports;
 - a transformer built for a *different* path than the column it sits on. It works, and it audits every
-  reveal under the wrong column. That is what a copied `schema.column()` line looks like.
+  reveal under the wrong column. That is what a copied `schema.column()` line looks like;
+- **an exact `fields` entry that no column matches.** This is the quietest of the four and the one a
+  renamed table or a mistyped column name produces: the entry classifies nothing, no column is
+  wrapped, every read returns a plain string, and nothing else in the package is in a position to
+  notice. One wrong character turns the whole guarantee off. Pass
+  `{ allowUnmatchedFields: true }` for a specification deliberately shared across `DataSource`s,
+  which is the one case where an entry with no column here is correct.
 
-Every finding is reported at once, so one run fixes them all. Run it in the test suite
+A `rules` entry cannot be checked this way, because a pattern has no list of names behind it. That
+asymmetry is why the exact entries are worth writing out for the columns that matter.
+
+Every finding is reported at once, so one run fixes them all. Drift is reported before the cache is
+examined, so a `DataSource` with both problems reports the drift first. Run it in the test suite
 unconditionally; at boot it is one walk of `entityMetadatas`, against the risk that a boot-time throw
 in a security package is an outage in a deployment that was working a minute ago.
 
@@ -361,6 +383,12 @@ your own machine with `pnpm bench`, and use `vitest bench --outputJson` and `--c
 before-and-after: a single run of this benchmark has reported one wrapped column as *faster* than the
 unwrapped control, which is what a machine under load does to a sequential measurement.
 
+One deliberate false positive: the guard also refuses a bound string that *contains* a redaction
+marker, which is what catches `ds.query('UPDATE users SET email = ?', [marker])`. A user who types
+`[REDACTED:sensitive]` into a search box therefore gets a refusal rather than a result. That is the
+trade the containment check makes, and it is stated here rather than tuned away, because a marker in
+a bound parameter is otherwise indistinguishable from the corruption it exists to catch.
+
 `guardParameters` adds one type check per bound parameter, with no allocation on the path a scalar
 parameter takes. It does not separate from the noise on a trivial in-memory statement, and the
 statement it guards is about to cross a socket.
@@ -383,9 +411,10 @@ Every refusal extends `SensitiveStringError` and carries a `code`.
 | Export | What it is |
 |---|---|
 | `defineSchema(spec, defaults?)` | Compiles a specification; returns `classify`, `column`, `check`, `hydrateRaw` |
+| `schema.check(ds, options?)` | `allowCachedPlaintext` and `allowUnmatchedFields` are the two bypasses |
 | `sensitiveColumn(klass, options?)` | A transformer for one column, with no specification behind it |
 | `guardParameters(dataSource)` | Wraps the query runner; returns an uninstall function |
-| `assertParametersSafe(statement, parameters)` | The guard's check, for a caller with their own runner |
+| `assertParametersSafe(statement, parameters)` | The guard's check, for a caller with their own runner; takes an array or a named map |
 | `sensitiveLogger(inner, schema)` | A `Logger` that redacts the parameters of classified statements |
 | `sanitizeQueryFailedError(error)` | Removes `parameters` from a query error, in place or by copy |
 | `typeormScrubFragment` | A `sensitive-scrub` policy fragment for a captured query error |

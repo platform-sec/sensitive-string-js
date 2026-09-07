@@ -26,10 +26,19 @@ query API. `guardParameters()` refuses an instance or a marker at the query runn
 seam that sees the parameter map between the query builder and the driver, and it names the
 find-options form as the fix because that one does run the transformer.
 
+The guard checks both parameter shapes TypeORM passes. The positional array is the usual one; the
+named map is the other, because `ds.query(sql, { e: value })` hands the runner that object unchanged
+and `better-sqlite3` answers a named-placeholder statement with `Your driver does not support named
+placeholders`, so an array-only check looks correct on the driver most suites run against. The
+logger redacts both shapes for the same reason: TypeORM's own `Logger` types the argument as an
+array and a named map arrives as an object.
+
 The wrapper has to be idempotent per runner, and that is not tidiness. The SQLite family's driver
 caches a single query runner and returns it from every `createQueryRunner()` call, while `pg` builds
 a fresh one each time, so a wrapper without a marker would layer itself once per call and no test
-written against `pg` would ever have shown it.
+written against `pg` would ever have shown it. The uninstall flips a flag those wrappers share
+rather than restoring each runner, because a guard that remembered runners in order to restore them
+would keep every query runner the process ever made alive, which on `pg` is one per query.
 
 Three more surfaces carry plaintext beside the column and none is reachable from a transformer.
 `logging: ['query']`, which appears in most getting-started templates, prints every statement with
@@ -65,12 +74,21 @@ asserts that so the correction cannot silently regress.
 
 The package imports no `typeorm` and no driver at runtime. Every ORM type it reads is restated
 structurally, which keeps it correct in a process holding two copies of the ORM and is what lets the
-guard be right about a driver nobody has measured. `schema.check()` also catches configuration drift
-in three directions, including a transformer built for a different path than the column it sits on,
-which works and audits every reveal under the wrong column; that is what a copied `schema.column()`
-line looks like, and neither of the other two directions sees it. The DDL for a classified column is
-byte-identical to the DDL without it, measured, so adoption is a one-line diff per column with no
-migration.
+guard be right about a driver nobody has measured.
+
+`schema.check()` catches configuration drift in four directions, and the fourth is the one worth
+naming: an exact `fields` entry that no column on the `DataSource` matches. That is what a renamed
+table or a mistyped column name produces, and it is the failure that looks most like success,
+because the entry classifies nothing, no column is wrapped, every read returns a plain string where
+the property type promises an instance, and every other check passes. `allowUnmatchedFields` is the
+bypass for a specification deliberately shared across `DataSource`s. A `rules` entry cannot be
+checked this way, since a pattern has no list of names behind it, and the README says so. The other
+three are a classified column with no transformer, a transformer the specification no longer
+classifies, and a transformer built for a different path than the column it sits on, which works and
+audits every reveal under the wrong column.
+
+The DDL for a classified column is byte-identical to the DDL without it, measured, so adoption is a
+one-line diff per column with no migration.
 
 Named as uncovered in the README rather than implied: `ds.query()` and `getRawMany()` return
 plaintext, with `hydrateRaw()` as the audited bypass; `Raw()` builds SQL and binds nothing;

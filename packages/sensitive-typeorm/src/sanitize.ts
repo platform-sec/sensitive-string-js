@@ -38,7 +38,26 @@ function censor(value: unknown): unknown {
 function tryRedactInPlace(target: object, key: string): boolean {
   const descriptor = Object.getOwnPropertyDescriptor(target, key);
   if (descriptor === undefined) return true;
-  if (!('value' in descriptor)) return true;
+
+  // An accessor. The getter is never called, so there is no way to know how
+  // many parameters it would have produced, and leaving it in place would let
+  // whatever it returns out. It is replaced by a single censor entry: the count
+  // is lost and the value is gone, which is the right way round.
+  if (!('value' in descriptor)) {
+    if (descriptor.configurable !== true) return false;
+    try {
+      Object.defineProperty(target, key, {
+        value: [ERROR_PARAMETER_CENSOR],
+        writable: true,
+        enumerable: descriptor.enumerable ?? true,
+        configurable: true,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   if (!Array.isArray(descriptor.value)) return true;
   if (descriptor.writable !== true && descriptor.configurable !== true) return false;
   try {
@@ -55,17 +74,18 @@ function redactedCopy(error: object): object {
   for (const key of Reflect.ownKeys(error)) {
     const descriptor = Object.getOwnPropertyDescriptor(error, key);
     if (descriptor === undefined) continue;
-    if (
-      typeof key === 'string' &&
-      PARAMETER_KEYS.includes(key) &&
-      'value' in descriptor &&
-      Array.isArray(descriptor.value)
-    ) {
+    if (typeof key === 'string' && PARAMETER_KEYS.includes(key)) {
+      // Including an accessor, which is copied as a censored data property
+      // rather than carried across: copying the getter would copy the leak.
+      const value =
+        'value' in descriptor && Array.isArray(descriptor.value)
+          ? censor(descriptor.value)
+          : [ERROR_PARAMETER_CENSOR];
       Object.defineProperty(copy, key, {
-        ...descriptor,
+        enumerable: descriptor.enumerable ?? true,
         writable: true,
         configurable: true,
-        value: censor(descriptor.value),
+        value,
       });
       continue;
     }

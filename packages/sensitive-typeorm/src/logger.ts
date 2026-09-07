@@ -115,13 +115,11 @@ export function touchesClassifiedColumn(
  * prints as its own marker anyway; a marker means a column is already corrupt.
  * Neither should reach a log looking ordinary.
  */
-export function redactParameters(
-  parameters: unknown[] | undefined,
-  touched: boolean
-): unknown[] | undefined {
-  if (parameters === undefined || !Array.isArray(parameters)) return parameters;
+export function redactParameters(parameters: unknown, touched: boolean): unknown {
+  if (typeof parameters !== 'object' || parameters === null) return parameters;
+
   let changed = false;
-  const out = parameters.map((parameter) => {
+  const redactOne = (parameter: unknown): unknown => {
     if (parameter instanceof SensitiveString) {
       changed = true;
       return PARAMETER_CENSOR;
@@ -131,7 +129,24 @@ export function redactParameters(
       return PARAMETER_CENSOR;
     }
     return parameter;
-  });
+  };
+
+  if (Array.isArray(parameters)) {
+    const out: unknown[] = parameters.map(redactOne);
+    return changed ? out : parameters;
+  }
+
+  // A named parameter map. `DataSource.query(sql, { e: value })` reaches the
+  // logger as that object, so a redaction that only understood arrays would
+  // print every value in it. TypeORM's own `Logger` types the argument as an
+  // array, which is why this shape is easy to miss.
+  const proto: unknown = Object.getPrototypeOf(parameters);
+  if (proto !== Object.prototype && proto !== null) return parameters;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(parameters as Record<string, unknown>)) {
+    out[key] = redactOne(value);
+  }
   return changed ? out : parameters;
 }
 
@@ -161,8 +176,13 @@ export function redactParameters(
  */
 export function sensitiveLogger(inner: LoggerLike, schema: DataSchema): LoggerLike {
   const fieldIndex = indexFields(schema);
+  // The cast restates TypeORM's own type rather than widening it. `Logger`
+  // declares `parameters?: any[]`, and a named parameter map arrives here as a
+  // plain object, so the redacted value goes back out under the type the inner
+  // logger was written against.
   const scrub = (query: string, parameters?: unknown[]): unknown[] | undefined =>
-    redactParameters(parameters, touchesClassifiedColumn(query, schema, fieldIndex));
+    redactParameters(parameters, touchesClassifiedColumn(query, schema, fieldIndex)) as
+      unknown[] | undefined;
 
   return {
     logQuery(query, parameters, queryRunner) {

@@ -135,6 +135,19 @@ export interface CheckOptions {
    * and the plaintext of the values it filtered on, into a second table.
    */
   readonly allowCachedPlaintext?: boolean;
+  /**
+   * Accept exact `fields` entries that no column on this `DataSource` matches.
+   *
+   * Off by default, because an unmatched entry is normally a renamed table or a
+   * mistyped column and it turns the guarantee off in the quietest way
+   * available: the entry classifies nothing, the column stores plaintext, and
+   * every read returns a plain string where the property type promises an
+   * instance.
+   *
+   * Turn it on for a specification deliberately shared across `DataSource`s,
+   * which is the one case where an entry with no column here is correct.
+   */
+  readonly allowUnmatchedFields?: boolean;
 }
 
 /** Options for `hydrateRaw()`. */

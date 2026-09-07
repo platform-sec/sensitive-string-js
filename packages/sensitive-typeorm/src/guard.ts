@@ -3,7 +3,19 @@ import { TypeOrmParameterRefusedError } from './errors.js';
 import { containsRedactionMarker } from './marker.js';
 
 /**
- * Marks a query runner this package has already wrapped.
+ * Whether a guard is still installed, read by the wrappers it left on runners.
+ *
+ * A cell rather than a captured boolean because it is shared: the runner keeps
+ * it, and the guard's uninstall flips it. That is what lets the uninstall be
+ * O(1) and hold no reference to any runner. See `guardParameters`.
+ */
+interface GuardState {
+  active: boolean;
+}
+
+/**
+ * Marks a query runner this package has already wrapped, and carries the state
+ * that says whether the wrapper still checks anything.
  *
  * Required rather than tidy. The SQLite family's driver caches one query runner
  * and returns it from every `createQueryRunner()` call, measured on
@@ -20,11 +32,16 @@ const WRAPPED = Symbol.for('platform-sec.sensitive-string.typeorm.guarded-runner
  * `never[]` for the trailing arguments rather than `unknown[]`, so a real
  * `QueryRunner` is assignable to this: `stream` takes two optional callbacks,
  * and a parameter typed `unknown` would not accept a `Function`.
+ *
+ * `parameters` is `unknown` rather than `unknown[]` because TypeORM's own type
+ * is a lie about what arrives. `DataSource.query` declares
+ * `parameters?: any[] | ObjectLiteral` and hands the runner whichever it was
+ * given, so a named parameter map reaches this method as a plain object.
  */
 interface QueryRunnerLike {
-  query(query: string, parameters?: unknown[], ...rest: never[]): unknown;
-  stream?: (query: string, parameters?: unknown[], ...rest: never[]) => unknown;
-  [WRAPPED]?: true;
+  query(query: string, parameters?: unknown, ...rest: never[]): unknown;
+  stream?: (query: string, parameters?: unknown, ...rest: never[]) => unknown;
+  [WRAPPED]?: GuardState;
 }
 
 /**
@@ -47,13 +64,20 @@ function truncate(statement: string): string {
 }
 
 /**
- * Find the first parameter that must not reach the driver.
+ * Whether descending into this value could find anything.
  *
- * Walks arrays and plain objects, because a JSON column's parameter is an
- * object and an `IN (...)` binding is an array, and stops at anything else: a
- * `Date`, a `Buffer` or a driver's own wrapper holds no `SensitiveString`, and
- * walking a Buffer's indices would cost more than the statement does.
+ * Arrays and plain objects only. A `Date`, a `Buffer` or a driver's own wrapper
+ * holds no `SensitiveString`, and walking a `Buffer`'s indices would cost more
+ * than the statement it is about to be bound to. Checked before a walk starts,
+ * so the common parameter shapes allocate nothing.
  */
+function isWalkable(value: object): boolean {
+  if (Array.isArray(value)) return true;
+  const proto: unknown = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+/** Find the first value inside a container that must not reach the driver. */
 function findOffender(
   value: unknown,
   path: string,
@@ -65,9 +89,11 @@ function findOffender(
   }
   if (typeof value !== 'object' || value === null) return undefined;
   if (seen.has(value)) return undefined;
+  if (!isWalkable(value)) return undefined;
+
+  seen.add(value);
 
   if (Array.isArray(value)) {
-    seen.add(value);
     for (const [index, item] of value.entries()) {
       const found = findOffender(item, `${path}[${index}]`, seen);
       if (found !== undefined) return found;
@@ -75,10 +101,6 @@ function findOffender(
     return undefined;
   }
 
-  const proto: unknown = Object.getPrototypeOf(value);
-  if (proto !== Object.prototype && proto !== null) return undefined;
-
-  seen.add(value);
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
     const found = findOffender(item, `${path}.${key}`, seen);
     if (found !== undefined) return found;
@@ -87,8 +109,39 @@ function findOffender(
 }
 
 /**
+ * Check one bound value, allocating nothing unless it is a container.
+ *
+ * @throws TypeOrmParameterRefusedError If it is an instance or holds a marker.
+ */
+function checkParameter(value: unknown, path: string, statement: string): void {
+  if (value === null || value === undefined) return;
+  if (value instanceof SensitiveString) {
+    throw new TypeOrmParameterRefusedError(path, 'instance', truncate(statement));
+  }
+  if (typeof value === 'string') {
+    if (containsRedactionMarker(value)) {
+      throw new TypeOrmParameterRefusedError(path, 'marker', truncate(statement));
+    }
+    return;
+  }
+  if (typeof value !== 'object' || !isWalkable(value)) return;
+
+  const found = findOffender(value, path, new WeakSet<object>());
+  if (found !== undefined) {
+    throw new TypeOrmParameterRefusedError(found.path, found.kind, truncate(statement));
+  }
+}
+
+/**
  * Check one statement's bound parameters, and refuse the ones that would
  * corrupt or leak.
+ *
+ * Both shapes TypeORM passes are checked. The array is the usual one; the named
+ * parameter map is the other, because `DataSource.query(sql, { e: value })`
+ * hands the runner that object unchanged and a check that only understood
+ * arrays would let every value in it through. `better-sqlite3` rejects named
+ * placeholders, so this is one more case where the driver an application
+ * develops against is not the one that would have shown the hole.
  *
  * Exported so a caller who builds their own query runner, or who wants the
  * check somewhere else entirely, does not have to reimplement it.
@@ -96,30 +149,20 @@ function findOffender(
  * @throws TypeOrmParameterRefusedError On the first offending parameter.
  */
 export function assertParametersSafe(statement: string, parameters: unknown): void {
-  if (!Array.isArray(parameters)) return;
+  if (typeof parameters !== 'object' || parameters === null) return;
 
-  for (let index = 0; index < parameters.length; index += 1) {
-    const parameter: unknown = parameters[index];
+  if (Array.isArray(parameters)) {
+    for (let index = 0; index < parameters.length; index += 1) {
+      checkParameter(parameters[index], String(index), statement);
+    }
+    return;
+  }
 
-    // The two shapes that account for almost every parameter are handled
-    // without allocating anything. This runs once per bound parameter of every
-    // statement in the process, so the path string and the cycle set are built
-    // only on the branch that needs them.
-    if (parameter === null || parameter === undefined) continue;
-    if (parameter instanceof SensitiveString) {
-      throw new TypeOrmParameterRefusedError(String(index), 'instance', truncate(statement));
-    }
-    if (typeof parameter !== 'object') {
-      if (typeof parameter === 'string' && containsRedactionMarker(parameter)) {
-        throw new TypeOrmParameterRefusedError(String(index), 'marker', truncate(statement));
-      }
-      continue;
-    }
-
-    const found = findOffender(parameter, String(index), new WeakSet<object>());
-    if (found !== undefined) {
-      throw new TypeOrmParameterRefusedError(found.path, found.kind, truncate(statement));
-    }
+  // Anything else with a prototype of its own is not a parameter map TypeORM
+  // built, and descending into it would walk a driver's internals.
+  if (!isWalkable(parameters)) return;
+  for (const [key, value] of Object.entries(parameters as Record<string, unknown>)) {
+    checkParameter(value, key, statement);
   }
 }
 
@@ -147,10 +190,11 @@ export function assertParametersSafe(statement: string, parameters: unknown): vo
  * What it does not cover is a query runner created before it was installed and
  * held across the call. Install it immediately after `initialize()`.
  *
- * @returns A function that removes the wrapper and restores what was there,
- *   including on the runners already handed out. That matters on the SQLite
- *   family, where every call returns the same cached runner and leaving it
- *   wrapped would outlive the uninstall.
+ * @returns A function that stops the checking, on the `DataSource` and on every
+ *   runner already handed out. It deliberately does not unwrap those runners:
+ *   a guard that remembered them in order to restore them would keep every
+ *   query runner the process ever made alive, which on `pg` is one per query.
+ *   What is left behind is a wrapper that reads one boolean and delegates.
  *
  * @example
  * ```ts
@@ -163,39 +207,47 @@ export function guardParameters(dataSource: GuardableDataSource): () => void {
   const original = dataSource.createQueryRunner.bind(dataSource) as (
     ...args: unknown[]
   ) => QueryRunnerLike;
-  const restorers: (() => void)[] = [];
+
+  const state: GuardState = { active: true };
+  // Every cell this guard is answerable for: its own, plus any it adopted from
+  // a guard that wrapped the same runner earlier. Cells are two words each and
+  // reference no runner, so this holds one entry per guard rather than one per
+  // query.
+  const owned = new Set<GuardState>([state]);
 
   const wrapper = (...args: unknown[]): QueryRunnerLike => {
     const runner = original(...args);
-    if (runner[WRAPPED] === true) return runner;
 
-    const queryDescriptor = Object.getOwnPropertyDescriptor(runner, 'query');
+    const existing = runner[WRAPPED];
+    if (existing !== undefined) {
+      // Already wrapped, possibly by a guard that has since been uninstalled.
+      // Reactivating its cell is what makes a second install take effect on the
+      // runner the SQLite drivers hand back every time.
+      existing.active = true;
+      owned.add(existing);
+      return runner;
+    }
+
     const innerQuery = runner.query.bind(runner);
-    runner.query = (query: string, parameters?: unknown[], ...rest: never[]) => {
-      assertParametersSafe(query, parameters);
+    runner.query = (query: string, parameters?: unknown, ...rest: never[]) => {
+      if (state.active) assertParametersSafe(query, parameters);
       return innerQuery(query, parameters, ...rest);
     };
 
-    const streamDescriptor = Object.getOwnPropertyDescriptor(runner, 'stream');
     if (typeof runner.stream === 'function') {
       const innerStream = runner.stream.bind(runner);
-      runner.stream = (query: string, parameters?: unknown[], ...rest: never[]) => {
-        assertParametersSafe(query, parameters);
+      runner.stream = (query: string, parameters?: unknown, ...rest: never[]) => {
+        if (state.active) assertParametersSafe(query, parameters);
         return innerStream(query, parameters, ...rest);
       };
     }
 
     Object.defineProperty(runner, WRAPPED, {
-      value: true,
+      value: state,
       enumerable: false,
       configurable: true,
     });
 
-    restorers.push(() => {
-      restore(runner, 'query', queryDescriptor);
-      restore(runner, 'stream', streamDescriptor);
-      delete runner[WRAPPED];
-    });
     return runner;
   };
 
@@ -212,22 +264,6 @@ export function guardParameters(dataSource: GuardableDataSource): () => void {
     } else {
       Object.defineProperty(dataSource, 'createQueryRunner', own);
     }
-    for (const undo of restorers.splice(0)) undo();
+    for (const cell of owned) cell.active = false;
   };
-}
-
-/**
- * Put a method back the way it was: an own property is redefined, an inherited
- * one is deleted so the prototype's shows through again.
- */
-function restore(
-  target: object,
-  key: 'query' | 'stream',
-  descriptor: PropertyDescriptor | undefined
-): void {
-  if (descriptor === undefined) {
-    delete (target as Record<string, unknown>)[key];
-  } else {
-    Object.defineProperty(target, key, descriptor);
-  }
 }

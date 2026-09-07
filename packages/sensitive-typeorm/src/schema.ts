@@ -67,18 +67,21 @@ export interface DataSchema {
   /**
    * Check a live `DataSource` against the specification.
    *
-   * Two failures, both silent without this, and it catches them in both
-   * directions. A column the specification classifies with no transformer on it
-   * stores plaintext while the entity's property type says otherwise; a column
-   * carrying one of this package's transformers that the specification no
-   * longer classifies is a stale annotation. A transformer built for a
-   * different path than the column it sits on is the third, and it is the one a
-   * copied line produces.
+   * Four failures, every one of them silent without this. A column the
+   * specification classifies with no transformer on it stores plaintext while
+   * the entity's property type says otherwise. A column carrying one of this
+   * package's transformers that the specification no longer classifies is a
+   * stale annotation. A transformer built for a different path than the column
+   * it sits on works, and audits every reveal under the wrong column, which is
+   * what a copied line produces. And an exact `fields` entry that no column
+   * matches is dead configuration: it is the quietest failure of the four,
+   * because nothing is wrapped and nothing says so.
    *
    * Also refuses the query result cache. See `TypeOrmCacheRefusedError`.
    *
    * @throws TypeOrmDriftError With every finding at once, so one run fixes
-   *   them all.
+   *   them all. Drift is reported before the cache is examined, so a
+   *   `DataSource` with both problems reports the drift first.
    * @throws TypeOrmCacheRefusedError If the cache is on and anything is
    *   classified.
    */
@@ -203,6 +206,7 @@ export function defineSchema(
     check(dataSource: DataSourceLike, options: CheckOptions = {}): void {
       const findings: DriftFinding[] = [];
       const classified: string[] = [];
+      const usedFields = new Set<string>();
 
       for (const entity of dataSource.entityMetadatas) {
         for (const col of entity.columns) {
@@ -210,6 +214,14 @@ export function defineSchema(
           const expected = classification.classify(path, [col.databaseName, col.propertyName]);
           const klass = expected ?? spec.fallback;
           const brands = transformerBrands(col.transformer);
+
+          // Which exact entries a real column could have been answered by. A
+          // rule cannot be tracked this way, because it is a pattern with no
+          // names behind it, but an exact entry that nothing matched is dead
+          // configuration and is reported below.
+          for (const candidate of [path, col.databaseName, col.propertyName]) {
+            if (classification.fields.has(candidate)) usedFields.add(candidate);
+          }
 
           if (klass !== 'plain') {
             classified.push(path);
@@ -254,6 +266,28 @@ export function defineSchema(
               });
             }
           }
+        }
+      }
+
+      // A specification entry no column answered. This is the failure that
+      // looks most like success: the entry classifies nothing, no column is
+      // wrapped, every read returns a plain string where the property type
+      // promises an instance, and nothing else in the package is in a position
+      // to notice. One renamed table or one mistyped column turns the whole
+      // guarantee off silently, which is exactly what the drift check exists
+      // to prevent.
+      if (options.allowUnmatchedFields !== true) {
+        for (const [key, klass] of classification.fields) {
+          if (klass === 'plain' || usedFields.has(key)) continue;
+          findings.push({
+            path: key,
+            detail:
+              `is classified '${klass}' in the specification, but no column of any entity on ` +
+              `this DataSource is named by it. The entry protects nothing: whatever column it ` +
+              `was meant for is storing and returning plaintext. Check the table and column ` +
+              `names as the database spells them, or pass { allowUnmatchedFields: true } if ` +
+              `this specification deliberately covers more than one DataSource.`,
+          });
         }
       }
 

@@ -108,6 +108,26 @@ describe('sensitiveLogger', () => {
     expect(other).toEqual(['build', 'migrate', ['warn', 'careful']]);
   });
 
+  it('redacts a named parameter map as well as an array', () => {
+    // `DataSource.query(sql, { e: value })` reaches the logger as that object.
+    // TypeORM's own Logger types the argument as an array, which is what makes
+    // this shape easy to miss.
+    const { logger, entries } = recorder();
+    sensitiveLogger(logger, schema).logQuery('SELECT * FROM "users" WHERE "email" = :e', {
+      id: 7,
+      e: CANARY,
+    } as unknown as unknown[]);
+    expect(entries[0]?.parameters).toEqual({ id: 7, e: PARAMETER_CENSOR });
+  });
+
+  it('leaves a named parameter map alone when nothing is classified', () => {
+    const { logger, entries } = recorder();
+    sensitiveLogger(logger, schema).logQuery('SELECT * FROM "users" WHERE "name" = :n', {
+      n: 'ann',
+    } as unknown as unknown[]);
+    expect(entries[0]?.parameters).toEqual({ n: 'ann' });
+  });
+
   it('returns the same array when nothing changed', () => {
     const { logger, entries } = recorder();
     const parameters = ['ann'];

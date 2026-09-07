@@ -71,9 +71,30 @@ describe('assertParametersSafe', () => {
     }
   });
 
-  it('ignores a parameter list that is not an array', () => {
+  it('ignores a parameter list that is neither an array nor a map', () => {
     expect(() => assertParametersSafe(statement, undefined)).not.toThrow();
-    expect(() => assertParametersSafe(statement, { a: 1 })).not.toThrow();
+    expect(() => assertParametersSafe(statement, 'not a list')).not.toThrow();
+    expect(() => assertParametersSafe(statement, new Date())).not.toThrow();
+  });
+
+  it('checks a named parameter map, not just an array', () => {
+    // `DataSource.query(sql, { e: value })` hands the runner that object
+    // unchanged, so a check that only understood arrays would let every value
+    // in it through. `better-sqlite3` rejects named placeholders, which makes
+    // this one more hole the driver you develop against does not show you.
+    try {
+      assertParametersSafe(statement, { id: 1, e: new SensitiveString(CANARY, 'sensitive') });
+      expect.unreachable('should have refused');
+    } catch (error) {
+      expect(error).toBeInstanceOf(TypeOrmParameterRefusedError);
+      const refusal = error as TypeOrmParameterRefusedError;
+      expect(refusal.parameter).toBe('e');
+      expect(refusal.message).not.toContain(CANARY);
+    }
+    expect(() => assertParametersSafe(statement, { e: '[REDACTED:sensitive]' })).toThrow(
+      TypeOrmParameterRefusedError
+    );
+    expect(() => assertParametersSafe(statement, { id: 1, name: 'ann' })).not.toThrow();
   });
 });
 
@@ -168,6 +189,58 @@ describe('guardParameters', () => {
     expect((prototype as { createQueryRunner: unknown }).createQueryRunner).toBe(createBefore);
     expect(JSON.stringify(ds.options)).toBe(optionsBefore);
     uninstall();
+  });
+
+  it('refuses a named parameter map handed to ds.query()', async () => {
+    ds = await makeDataSource(testSchema());
+    guardParameters(ds);
+    await expect(
+      ds.query('SELECT * FROM users WHERE email = :e', {
+        e: new SensitiveString(CANARY, 'sensitive'),
+      })
+    ).rejects.toThrow(TypeOrmParameterRefusedError);
+  });
+
+  it('wraps every fresh runner, and one uninstall silences all of them', () => {
+    // A `pg`-shaped DataSource: a new query runner per call, rather than the
+    // single cached one the SQLite drivers hand back. This is the arm where
+    // retaining a restorer per runner would keep every query runner the process
+    // ever made alive, so the uninstall stops the checking through a shared
+    // flag instead of by restoring each one.
+    const fake = {
+      createQueryRunner: () => ({ query: (_sql: string, _parameters?: unknown) => 'ran' }),
+    };
+
+    const uninstall = guardParameters(fake);
+    const made = Array.from({ length: 5 }, () => fake.createQueryRunner());
+    expect(new Set(made).size).toBe(5);
+
+    for (const runner of made) {
+      expect(() => runner.query('SELECT ?', [new SensitiveString(CANARY, 'sensitive')])).toThrow(
+        TypeOrmParameterRefusedError
+      );
+    }
+
+    uninstall();
+
+    // Every one of them, including the first, which was created long before.
+    for (const runner of made) {
+      expect(runner.query('SELECT ?', [new SensitiveString(CANARY, 'sensitive')])).toBe('ran');
+    }
+  });
+
+  it('resumes checking when a second guard is installed after an uninstall', async () => {
+    // The runner the SQLite drivers cache is already wrapped, so a second
+    // install has to reactivate that wrapper rather than add another one.
+    ds = await makeDataSource(testSchema());
+    const uninstall = guardParameters(ds);
+    await ds.query('SELECT 1');
+    uninstall();
+
+    guardParameters(ds);
+    await expect(
+      ds.query('SELECT 1 WHERE ? = 1', [new SensitiveString(CANARY, 'sensitive')])
+    ).rejects.toThrow(TypeOrmParameterRefusedError);
   });
 
   it('stops checking after the uninstall, on runners it already handed out', async () => {

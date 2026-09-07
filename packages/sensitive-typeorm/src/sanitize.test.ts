@@ -96,6 +96,29 @@ describe('sanitizeQueryFailedError', () => {
     ]);
   });
 
+  it('replaces a parameters getter without ever calling it', () => {
+    // The getter is never invoked, so there is no way to know how many
+    // parameters it would have produced. Leaving it in place would let whatever
+    // it returns out, so it is replaced by a single censor: the count is lost
+    // and the value is gone, which is the right way round.
+    const error = new QueryFailedError('SELECT ?', [], new Error('driver'));
+    let called = 0;
+    Object.defineProperty(error, 'parameters', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        called += 1;
+        return [CANARY];
+      },
+    });
+
+    const safe = sanitizeQueryFailedError(error);
+
+    expect(called).toBe(0);
+    expect(inspect(safe)).not.toContain(CANARY);
+    expect((safe as { parameters: unknown[] }).parameters).toEqual([ERROR_PARAMETER_CENSOR]);
+  });
+
   it('redacts the driver error parameters too', () => {
     const driverError = { parameters: [CANARY], code: 'X' };
     const error = new QueryFailedError('SELECT ?', [CANARY], driverError as unknown as Error);

@@ -203,6 +203,63 @@ describe('schema.check', () => {
     expect(() => schema.check(ds)).not.toThrow();
   });
 
+  it('catches a specification entry that no column matches', () => {
+    // The quietest failure of the four, and the one a renamed table produces.
+    // Nothing is wrapped, every read of the column returns a plain string where
+    // the property type promises an instance, and no other check in this
+    // package is in a position to notice.
+    const ds = dataSource([{ table: 'accounts', property: 'email', database: 'email' }]);
+    try {
+      schema.check(ds);
+      expect.unreachable('should have reported the dead entry');
+    } catch (error) {
+      expect(error).toBeInstanceOf(TypeOrmDriftError);
+      const findings = (error as TypeOrmDriftError).findings;
+      expect(findings.some((f) => f.path === 'users.email')).toBe(true);
+    }
+  });
+
+  it('accepts a dead entry under allowUnmatchedFields', () => {
+    // The one case where an entry with no column here is correct: a
+    // specification deliberately shared across DataSources.
+    const ds = dataSource([{ table: 'accounts', property: 'email', database: 'email' }]);
+    expect(() => schema.check(ds, { allowUnmatchedFields: true })).not.toThrow();
+  });
+
+  it('counts an entry matched through the bare column or property name', () => {
+    // `fields` is keyed on `table.column`, but a column offers its database
+    // name and its property name as aliases, so an entry answered through
+    // either is not dead.
+    const bare = defineSchema({ fields: { email: 'sensitive' }, fallback: 'plain' });
+    const ds = dataSource([
+      {
+        table: 'users',
+        property: 'email',
+        database: 'email',
+        transformer: bare.column('email'),
+      },
+    ]);
+    expect(() => bare.check(ds)).not.toThrow();
+  });
+
+  it('says nothing about a plain entry that matches no column', () => {
+    // A 'plain' entry documents a decision rather than claiming coverage, so a
+    // stale one is untidy and not a security failure.
+    const withPlain = defineSchema({
+      fields: { 'users.id': 'plain', 'users.email': 'sensitive' },
+      fallback: 'plain',
+    });
+    const ds = dataSource([
+      {
+        table: 'users',
+        property: 'email',
+        database: 'email',
+        transformer: withPlain.column('users.email'),
+      },
+    ]);
+    expect(() => withPlain.check(ds)).not.toThrow();
+  });
+
   it('refuses an enabled query result cache', () => {
     const ds = dataSource(
       [
