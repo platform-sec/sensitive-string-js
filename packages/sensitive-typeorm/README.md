@@ -344,9 +344,14 @@ The reveal happens first going out and the wrap happens last coming in, so the e
 never sees a `SensitiveString` and this package never sees ciphertext.
 
 **The order is load bearing.** Reversed, the first transformer receives the instance, stringifies it
-through `toString()`, and what gets encrypted is the redaction marker. The write refusal does not
-catch that and cannot: the marker has already been transformed by the time this package sees it. A
-test in this package asserts the failure so the ordering rule is not just documentation.
+through `toString()`, and what gets encrypted is the redaction marker.
+
+Whether the write refusal catches that depends on what the other transform did to it, and the honest
+answer is "sometimes". The marker detector matches the `[REDACTED:` prefix, so a transform that
+leaves the prefix intact is refused: uppercasing is, and a test in this package asserts the refusal.
+A transform that renders the marker unrecognisable is not, and a real encryption transformer is
+exactly that, since ciphertext matches nothing. That case is also asserted, because it is the one
+the ordering rule exists for. Do not read the refusal as a substitute for getting the order right.
 
 ## Raw queries
 

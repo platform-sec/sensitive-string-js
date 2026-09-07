@@ -80,6 +80,134 @@ describe('a structured-only error', () => {
     expect(driver['constraint']).toBe('users_email_key');
   });
 
+  it('replaces a nested error that would not take the censor in place', () => {
+    // The worst of the three possible outcomes, and the one that looks like
+    // success: the outer error reads as sanitized while the nested one it
+    // carries by reference still holds the plaintext. Copying the nested error
+    // across by descriptor is what produces it.
+    const error = structuredError();
+    (error as unknown as { driverError: unknown }).driverError = Object.freeze({
+      code: '23505',
+      constraint: 'users_email_key',
+      parameters: [CANARY],
+    });
+
+    const out = sanitizeQueryError(error, structuredOnly) as typeof error & {
+      driverError: Record<string, unknown>;
+    };
+
+    expect(out.driverError['parameters']).toEqual([CENSOR]);
+    expect(JSON.stringify(out.driverError)).not.toContain(CANARY);
+    // The diagnosis survives the replacement.
+    expect(out.driverError['code']).toBe('23505');
+    expect(out.driverError['constraint']).toBe('users_email_key');
+  });
+
+  it('keeps the message and the stack on the total-failure path', () => {
+    // A shape with no `sanitizeMessage` is one whose message carries no value,
+    // measured for that ORM rather than assumed, so both are the diagnosis and
+    // both are worth keeping when everything else failed.
+    const error = structuredError();
+    Object.defineProperty(error, 'parameters', {
+      get: () => [CANARY],
+      configurable: false,
+    });
+    Object.freeze(error);
+
+    const out = sanitizeQueryError(error, structuredOnly) as Error;
+
+    expect(out).not.toBe(error);
+    expect(out.message).toBe('insert into "users" failed');
+    expect(out.stack ?? '').not.toContain(CANARY);
+    expect(out.name).toBe('QueryFailedError');
+  });
+
+  it('never throws, even when every property it would read throws', () => {
+    // The recovery path is not exempt from the contract it exists to keep. A
+    // property read there can invoke a throwing getter exactly as one in the
+    // main path can, and an exception escaping here would destroy the error
+    // the caller was trying to hand onwards.
+    const hostile = new Error('start') as Error & { query?: unknown; parameters?: unknown };
+    for (const key of ['name', 'message', 'stack', 'query', 'parameters']) {
+      Object.defineProperty(hostile, key, {
+        get() {
+          throw new Error('hostile getter');
+        },
+        configurable: false,
+        enumerable: true,
+      });
+    }
+
+    let out: unknown;
+    expect(() => {
+      out = sanitizeQueryError(hostile, structuredOnly);
+    }).not.toThrow();
+
+    // Read through descriptors, because the accessors this object was built
+    // with are carried across to the copy and are the caller's own behaviour.
+    // Only `parameters` is replaced, and it is replaced with data.
+    const descriptor = Object.getOwnPropertyDescriptor(out, 'parameters');
+    expect(descriptor).toBeDefined();
+    expect(descriptor?.value).toEqual([CENSOR]);
+  });
+
+  it('never throws from the recovery path either', () => {
+    // The fixture above is handled by the ordinary descriptor path and never
+    // reaches the `catch`. This one does: an exotic object whose descriptor
+    // trap throws puts the main path into recovery, and whose `get` trap then
+    // throws for every property the recovery path would read. Without a guard
+    // there, the exception escapes the function whose whole contract is that it
+    // does not throw while an error is already in flight.
+    // One property is hostile rather than all of them, which is what makes the
+    // per-read guard observable: the recovery path still recovers the name and
+    // the message, where an unguarded read would lose both to the one throw.
+    const target = structuredError();
+    const hostile = new Proxy(target, {
+      getOwnPropertyDescriptor(inner, key) {
+        if (key === 'parameters') throw new Error('hostile descriptor trap');
+        return Reflect.getOwnPropertyDescriptor(inner, key);
+      },
+      get(inner, key, receiver) {
+        if (key === 'stack') throw new Error('hostile get trap');
+        return Reflect.get(inner, key, receiver) as unknown;
+      },
+    });
+
+    let out: unknown;
+    expect(() => {
+      out = sanitizeQueryError(hostile, structuredOnly);
+    }).not.toThrow();
+
+    const recovered = out as Error;
+    expect(recovered).toBeInstanceOf(Error);
+    expect(recovered.name).toBe('QueryFailedError');
+    expect(recovered.message).toBe('insert into "users" failed');
+    expect(recovered.stack ?? '').not.toContain(CANARY);
+  });
+
+  it('never throws when every property of the recovery path is hostile', () => {
+    const target = structuredError();
+    const hostile = new Proxy(target, {
+      getOwnPropertyDescriptor(inner, key) {
+        if (key === 'parameters') throw new Error('hostile descriptor trap');
+        return Reflect.getOwnPropertyDescriptor(inner, key);
+      },
+      get() {
+        throw new Error('hostile get trap');
+      },
+    });
+
+    let out: unknown;
+    expect(() => {
+      out = sanitizeQueryError(hostile, structuredOnly);
+    }).not.toThrow();
+
+    const recovered = out as Error;
+    expect(recovered).toBeInstanceOf(Error);
+    expect(recovered.message).toBe(structuredOnly.fallbackMessage);
+    expect(recovered.stack ?? '').not.toContain(CANARY);
+  });
+
   it('leaves an unrecognised error entirely alone', () => {
     const error = new TypeError('not a query error');
     expect(sanitizeQueryError(error, structuredOnly)).toBe(error);

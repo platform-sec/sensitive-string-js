@@ -364,9 +364,12 @@ sensitiveText('email', { table: 'users', strictWrites: true, strictContext: true
 
 ## Cost
 
-The guard runs on every statement. It walks the parameter array once and, for each string in it,
-tests containment against the redaction markers the policy registry can currently produce, which is
-two for the default policies and is memoized against the registered class list. There is no SQL
+The guard runs on every statement. It walks the parameter bag once and, for each string in it, tests
+containment against the redaction markers the policy registry can currently produce. That set is
+core's, shared with every other guard in the library, and it is three entries under the default
+policies: the `[REDACTED:` prefix, which is tested first and covers both, plus one per registered
+class. It is memoized against the policy registry's version, so a policy replaced under a name that
+already existed is picked up, which a memo keyed on the class list would miss. There is no SQL
 parsing on this path.
 
 The log redaction costs more and only runs when an inner logger is configured: one regular expression

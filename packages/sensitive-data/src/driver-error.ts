@@ -279,28 +279,76 @@ export function sanitizeQueryError(error: unknown, shape: SanitizeShape): unknow
     for (const key of shape.nestedKeys ?? []) {
       const nested: unknown = ownValue(error, key);
       if (typeof nested !== 'object' || nested === null || nested === error) continue;
+
+      const nestedReplacements = new Map<string, unknown>();
       for (const parameterKey of shape.parameterKeys) {
-        const replacement = replacementFor(nested, parameterKey, shape.censor);
-        if (!tryWriteInPlace(nested, parameterKey, replacement)) ok = false;
+        nestedReplacements.set(parameterKey, replacementFor(nested, parameterKey, shape.censor));
       }
+
+      let nestedOk = true;
+      for (const [parameterKey, replacement] of nestedReplacements) {
+        if (!tryWriteInPlace(nested, parameterKey, replacement)) nestedOk = false;
+      }
+
+      if (nestedOk) continue;
+
+      // A nested error that would not take the censor in place has to be
+      // replaced on the copy, not merely reported. Copying it across by
+      // descriptor hands back the original object with the plaintext still on
+      // it, under an outer error that otherwise reads as sanitized, which is
+      // the worst of the three possible outcomes: it looks like success.
+      ok = false;
+      replacements.set(key, redactedCopy(nested, nestedReplacements));
     }
 
     if (ok) return error;
 
     return redactedCopy(error, replacements);
   } catch {
-    const fallback = new Error(shape.fallbackMessage);
-    fallback.name =
-      typeof (error as { name?: unknown }).name === 'string'
-        ? (error as { name: string }).name
-        : 'Error';
-    // The original stack is not carried across when the message was one this
-    // shape rewrites, because its header is the original message, which is
-    // where the parameters were.
-    if (shape.sanitizeMessage === undefined) {
-      const original: unknown = (error as { stack?: unknown }).stack;
-      if (typeof original === 'string') fallback.stack = original;
+    return fallbackFor(error, shape);
+  }
+}
+
+/** Read one property without letting a throwing getter escape. */
+function safeString(target: unknown, key: string): string | undefined {
+  try {
+    const value: unknown = (target as Record<string, unknown>)[key];
+    return typeof value === 'string' ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The minimal error returned when sanitising failed outright.
+ *
+ * Every read in here goes through {@link safeString}, and the whole body is
+ * guarded, because this runs inside the `catch` that exists to keep
+ * `sanitizeQueryError` from throwing. A property read here is exactly as
+ * capable of invoking a throwing getter as the ones in the main path, and an
+ * exception escaping from the recovery path would defeat the contract at the
+ * one moment it is being relied on.
+ *
+ * A shape with no `sanitizeMessage` is one whose message carries no value,
+ * which is a measurement about that ORM rather than a default. For it the
+ * message and the stack are the diagnosis and both are carried across. For a
+ * shape that does rewrite the message, neither is: the stack's header is the
+ * original message, which is where the parameters were.
+ */
+function fallbackFor(error: unknown, shape: SanitizeShape): Error {
+  try {
+    const safeText = shape.sanitizeMessage === undefined;
+    const originalMessage = safeText ? safeString(error, 'message') : undefined;
+
+    const fallback = new Error(originalMessage ?? shape.fallbackMessage);
+    fallback.name = safeString(error, 'name') ?? 'Error';
+
+    if (safeText) {
+      const originalStack = safeString(error, 'stack');
+      if (originalStack !== undefined) fallback.stack = originalStack;
     }
     return fallback;
+  } catch {
+    return new Error(shape.fallbackMessage);
   }
 }

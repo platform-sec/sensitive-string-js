@@ -1,7 +1,7 @@
 import {
   findUnsafeParameter,
+  identifiersIn,
   redactParameters as redactBag,
-  touchesClassifiedColumn as touches,
   truncateStatement,
 } from '@platform-sec/sensitive-string-data';
 import { classifiedColumnNames } from './column.js';
@@ -14,13 +14,37 @@ export const PARAMETER_CENSOR = '[REDACTED:drizzle-parameter]';
 /** Marks a logger this package built, so `checkSchema()` can recognise one. */
 export const SENSITIVE_LOGGER = Symbol.for('platform-sec.sensitive-string.drizzle.logger');
 
+/**
+ * Whether a statement mentions a column name this package has classified.
+ *
+ * Deliberately generous, and generous in the safe direction: a log entry that
+ * loses its parameters is an inconvenience, one that keeps a password is an
+ * incident. It answers yes for any statement naming a classified column
+ * anywhere in it, including one that only joins the table, and it answers yes
+ * for an unrelated table whose column happens to share the name.
+ *
+ * It cannot see which parameter belongs to which column, so the censoring it
+ * drives is positional-blind: a statement that touches a classified column
+ * loses all of its string parameters. Recovering the mapping would mean parsing
+ * the statement, and a parser that is wrong once is worse than a rule that is
+ * coarse always.
+ *
+ * The identifier scan is `sensitive-data`'s and runs once over the statement,
+ * with both sets checked against the one result. Two calls into the shared
+ * predicate would scan the statement twice, on the path that runs for every
+ * query the process makes.
+ */
 export function touchesClassifiedColumn(
   statement: string,
   extra: ReadonlySet<string> = new Set()
 ): boolean {
   const classified = classifiedColumnNames();
   if (classified.size === 0 && extra.size === 0) return false;
-  return touches(statement, { columns: classified }) || touches(statement, { columns: extra });
+
+  for (const identifier of identifiersIn(statement)) {
+    if (classified.has(identifier) || extra.has(identifier)) return true;
+  }
+  return false;
 }
 
 /**
