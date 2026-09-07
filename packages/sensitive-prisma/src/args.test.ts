@@ -7,7 +7,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { buildRevealContext, revealArgs, revealRawArgs } from './args.js';
-import { PrismaUnsafeStatementError } from './errors.js';
+import { PrismaCyclicArgumentError, PrismaUnsafeStatementError } from './errors.js';
 
 const CANARY = 'LEAKED_SECRET_abc123xyz';
 
@@ -191,11 +191,95 @@ describe('revealArgs', () => {
       expect(Object.keys(out.data).sort()).toEqual(['email', 'name']);
     });
 
-    it('terminates on a cycle', () => {
-      const args: Record<string, unknown> = { data: { name: 'A' } };
+    // A cycle has no correct answer for the back edge: its rebuild is
+    // unfinished, so the only reference available still holds the wrapped
+    // values. Returning it handed back a half-unwrapped graph with no signal.
+    it('refuses a cycle rather than returning a half-unwrapped graph', () => {
+      const args: Record<string, unknown> = {
+        data: { email: new SensitiveString(CANARY, 'sensitive') },
+      };
       args['self'] = args;
 
-      expect(() => revealArgs(args, info())).not.toThrow();
+      expect(() => revealArgs(args, info())).toThrow(PrismaCyclicArgumentError);
+      expect(() => revealArgs(args, info())).toThrow(/refers back to itself at 'self'/);
+    });
+
+    it('refuses a cycle that closes deeper in the tree', () => {
+      const inner: Record<string, unknown> = { name: 'A' };
+      inner['parent'] = { child: inner };
+      const args = { data: inner };
+
+      expect(() => revealArgs(args, info())).toThrow(/at 'data.parent.child'/);
+    });
+
+    it('refuses a cycle through an array', () => {
+      const rows: unknown[] = [];
+      rows.push({ rows });
+
+      expect(() => revealArgs({ data: rows }, info({ operation: 'createMany' }))).toThrow(
+        PrismaCyclicArgumentError
+      );
+    });
+
+    it('keeps the value out of the cycle refusal', () => {
+      const args: Record<string, unknown> = {
+        data: { email: new SensitiveString(CANARY, 'sensitive') },
+      };
+      args['self'] = args;
+
+      try {
+        revealArgs(args, info());
+        expect.unreachable('should have thrown');
+      } catch (error) {
+        const refusal = error as PrismaCyclicArgumentError;
+        expect(`${refusal.message} ${String(refusal.stack)}`).not.toContain(CANARY);
+        expect(refusal.code).toBe('PRISMA_CYCLIC_ARGUMENT');
+      }
+    });
+
+    // A DAG is not a cycle: the second reference is reached after the first
+    // subtree finished, so it gets the finished result.
+    it('does not mistake a repeated sibling for a cycle', () => {
+      const shared = { name: 'A' };
+      expect(() => revealArgs({ data: { first: shared, second: shared } }, info())).not.toThrow();
+    });
+
+    // A container reached twice has to produce the same result both times.
+    // Marking it visited and returning it by identity left the second reference
+    // still wrapped, so half the input reached Prisma unrevealed.
+    it('reveals every reference to a shared subtree', () => {
+      const shared = { email: new SensitiveString(CANARY, 'sensitive') };
+      const args = { data: { first: shared, second: shared } };
+      const out = revealArgs(args, info()) as {
+        data: { first: { email: unknown }; second: { email: unknown } };
+      };
+
+      expect(out.data.first.email).toBe(CANARY);
+      expect(out.data.second.email).toBe(CANARY);
+      expect(out.data.first).toBe(out.data.second);
+    });
+
+    it('reveals a shared row of a createMany array once, into both positions', () => {
+      const seen = captureContexts();
+      const shared = { email: new SensitiveString(CANARY, 'sensitive') };
+      const args = { data: [shared, shared] };
+
+      const out = withRevealContext({ name: 'bulk', auditReveal: seen.hook }, () =>
+        revealArgs(args, info({ operation: 'createMany' }))
+      ) as { data: { email: unknown }[] };
+
+      expect(out.data.map((row) => row.email)).toEqual([CANARY, CANARY]);
+      expect(seen.contexts).toHaveLength(1);
+    });
+
+    it('reveals a repeated instance once per position it appears in', () => {
+      const one = new SensitiveString(CANARY, 'sensitive');
+      const args = { data: [{ email: one }, { email: one }] };
+      const out = revealArgs(args, info({ operation: 'createMany' })) as {
+        data: { email: unknown }[];
+      };
+
+      expect(out.data.map((row) => row.email)).toEqual([CANARY, CANARY]);
     });
   });
 
@@ -341,6 +425,22 @@ describe('revealRawArgs', () => {
   it('returns the same Sql when it binds nothing sensitive', () => {
     const sql = new FakeSql(['SELECT 1'], []);
     expect(revealRawArgs(sql, info({ model: undefined, operation: '$queryRaw' }))).toBe(sql);
+  });
+
+  // One instance bound at two positions is two reads and so two reveals, each
+  // tagged with the position it was bound at. The memo does not apply: it keys
+  // containers, and an instance is a leaf the walk reveals before it looks.
+  it('reveals an instance bound twice once per position', () => {
+    const seen = captureContexts();
+    const one = new SensitiveString(CANARY, 'credential');
+    const sql = new FakeSql(['SELECT ', ', ', ''], [one, one]);
+
+    const out = withRevealContext({ name: 'job', auditReveal: seen.hook }, () =>
+      revealRawArgs(sql, info({ model: undefined, operation: '$queryRaw' }))
+    );
+
+    expect((out as FakeSql).values).toEqual([CANARY, CANARY]);
+    expect(seen.contexts.map((ctx) => ctx?.tags?.['path'])).toEqual(['values.0', 'values.1']);
   });
 
   // Revealing here would write the secret into SQL rather than binding it.

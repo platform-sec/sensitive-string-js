@@ -98,6 +98,17 @@ function unwrapTypes() {
 
   // Column types Prisma accepts must survive: mapping over a class would build
   // a structural copy that no longer matches it.
+  // A known imprecision, pinned so a change to it is visible: an array branch
+  // collapses a tuple to the union of its positions. It costs nothing at the
+  // one place it shows, the documented
+  // `$executeRawUnsafe(sql, ...sensitiveInput([secret, id]))` spread, whose
+  // target is variadic. Recovering the positions needs a homomorphic mapped
+  // type that this conditional chain does not currently produce.
+  expectTypeOf<UnwrapSensitive<[SensitiveString<'credential'>, number]>>().toEqualTypeOf<
+    (string | number)[]
+  >();
+  expectTypeOf<UnwrapSensitive<SensitiveString<'sensitive'>[]>>().toEqualTypeOf<string[]>();
+
   expectTypeOf<UnwrapSensitive<Date>>().toEqualTypeOf<Date>();
   expectTypeOf<UnwrapSensitive<Uint8Array>>().toEqualTypeOf<Uint8Array>();
   expectTypeOf<UnwrapSensitive<number>>().toEqualTypeOf<number>();

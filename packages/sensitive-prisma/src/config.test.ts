@@ -157,6 +157,17 @@ describe('normalizeConfig', () => {
       );
     });
 
+    // Prisma matches a `result` key against no model and ignores it, so this
+    // would otherwise classify nothing and report nothing.
+    it('rejects an empty model or field name', () => {
+      expect(() => normalizeConfig({ models: { '': { email: 'sensitive' } } })).toThrow(
+        /empty name/
+      );
+      expect(() => normalizeConfig({ models: { User: { '': 'sensitive' } } })).toThrow(
+        /field with an empty name/
+      );
+    });
+
     it('rejects a malformed writeContext', () => {
       expect(() => normalizeConfig({ models: {}, writeContext: 'prisma' as never })).toThrow(
         /'writeContext' must be an object/

@@ -40,6 +40,15 @@ survive. Core calls that hook with no context and with `details` of only `{ oper
 so the package installs each per-value context as the ambient one for the duration of the reveal;
 that is the only way a sink can read the tags.
 
+The names in the configuration are checked against the client when the extension is applied, which
+turned out to matter as much as anything else here. Neither TypeScript nor Prisma catches a typo:
+`models` is keyed by string, and measured three ways on both versions, Prisma ignores a result
+component under a model it does not know, adds a computed field under a name it does not know beside
+the real column rather than replacing it, and does not throw on a `needs` entry for a column that
+does not exist. In all three the configured column reads back as a plain string, so one wrong
+character turned the guarantee off with nothing said. `PrismaUnknownModelError` and
+`PrismaUnknownFieldError` are raised at `$extends` time instead, before a query runs.
+
 Also in this release: `wrapRows` for raw query results, since a type argument such as
 `$queryRaw<User[]>` is erased before the query runs; configuration validated when the extension is
 built rather than on the first query that reaches it; and `nullable` and `list` in a field spec,

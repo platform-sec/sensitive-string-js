@@ -8,7 +8,7 @@ import type {
   SensitiveString,
   SensitivityClass,
 } from '@platform-sec/sensitive-string-core';
-import { PrismaUnsafeStatementError } from './errors.js';
+import { PrismaCyclicArgumentError, PrismaUnsafeStatementError } from './errors.js';
 import { isSensitiveString } from './guard.js';
 
 /**
@@ -135,7 +135,7 @@ function rebuildObject(
  * Every replacement is one `reveal()` and therefore one audit entry, tagged
  * with the argument path that produced it.
  */
-function walk(value: unknown, path: string, base: RevealContext, seen: WeakSet<object>): unknown {
+function walk(value: unknown, path: string, base: RevealContext, done: Memo): unknown {
   if (isSensitiveString(value)) {
     return revealAt(value, withPath(base, path));
   }
@@ -144,41 +144,76 @@ function walk(value: unknown, path: string, base: RevealContext, seen: WeakSet<o
     return value;
   }
 
-  // A cycle cannot be rebuilt, and Prisma could not serialise one either.
-  // Returning the reference terminates the walk and changes nothing.
-  if (seen.has(value)) {
-    return value;
+  // A container reached twice must produce the same result both times. The memo
+  // is what makes that true: a `data` object that names one nested record under
+  // two keys used to be rebuilt on the first visit and returned by identity on
+  // the second, which left half the input still wrapped.
+  const memoized = done.get(value);
+  if (memoized !== undefined) {
+    // Reached again while its own rebuild is still running, which is a cycle.
+    // There is no answer here: the rebuild is unfinished, so the only reference
+    // available is the pre-walk one, and returning that hands back a graph
+    // still holding live instances with nothing to say so. Prisma cannot
+    // serialise a cycle either, and its own argument copy recurses until the
+    // stack ends, so refusing is both earlier and clearer.
+    if (memoized.pending) {
+      throw new PrismaCyclicArgumentError(path);
+    }
+    return memoized.result;
   }
 
+  const entry: MemoEntry = { result: value, pending: true };
+  done.set(value, entry);
+
   if (Array.isArray(value)) {
-    seen.add(value);
     let changed = false;
     const mapped = value.map((item, index) => {
-      const next = walk(item, join(path, String(index)), base, seen);
+      const next = walk(item, join(path, String(index)), base, done);
       if (next !== item) changed = true;
       return next;
     });
-    return changed ? mapped : value;
+    entry.result = changed ? mapped : value;
+    entry.pending = false;
+    return entry.result;
   }
 
   const prototype: unknown = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) {
     // Any other class instance, `Prisma.Sql` included when it is nested rather
-    // than the whole argument. Returned untouched.
+    // than the whole argument. Returned untouched, and not a container this
+    // walk descends into, so it can never be part of a cycle it sees.
+    entry.pending = false;
     return value;
   }
 
-  seen.add(value);
   const source = value as Record<string, unknown>;
   let changed = false;
   const entries = Object.entries(source).map<[string, unknown]>(([key, item]) => {
-    const next = walk(item, join(path, key), base, seen);
+    const next = walk(item, join(path, key), base, done);
     if (next !== item) changed = true;
     return [key, next];
   });
 
-  return changed ? rebuildObject(source, entries) : value;
+  entry.result = changed ? rebuildObject(source, entries) : value;
+  entry.pending = false;
+  return entry.result;
 }
+
+/**
+ * What the walk has produced for a container, or that it is still producing it.
+ *
+ * A `Map` rather than a `WeakSet` because the walk rebuilds rather than reads:
+ * knowing an object has been seen is not enough, the result has to come back so
+ * every reference to it agrees. `pending` is what separates the two ways an
+ * object is reached twice: a second reference to a finished subtree gets the
+ * result, and a reference reached from inside its own rebuild is a cycle.
+ */
+interface MemoEntry {
+  result: unknown;
+  pending: boolean;
+}
+
+type Memo = Map<object, MemoEntry>;
 
 function join(path: string, segment: string): string {
   return path === '' ? segment : `${path}.${segment}`;
@@ -191,7 +226,7 @@ function join(path: string, segment: string): string {
  * applies to the bound parameters of a tagged-template raw query.
  */
 export function revealArgs(args: unknown, attribution: RevealAttribution = {}): unknown {
-  return walk(args, '', buildRevealContext(attribution), new WeakSet());
+  return walk(args, '', buildRevealContext(attribution), new Map());
 }
 
 /**
@@ -218,9 +253,13 @@ export function revealRawArgs(args: unknown, attribution: RevealAttribution): un
   }
 
   const base = buildRevealContext(attribution);
+  // One memo across every parameter, so a container bound at two positions is
+  // rebuilt once. An instance bound twice is still two reveals: the walk
+  // reveals a leaf before it consults the memo, and two bindings are two reads.
+  const done: Memo = new Map();
   let changed = false;
   const values = args.values.map((value, index) => {
-    const next = walk(value, `values.${index}`, base, new WeakSet());
+    const next = walk(value, `values.${index}`, base, done);
     if (next !== value) changed = true;
     return next;
   });

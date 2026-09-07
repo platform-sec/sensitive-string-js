@@ -3,6 +3,7 @@ import { normalizeConfig } from './config.js';
 import type { SensitiveExtensionConfig } from './config.js';
 import { revealRawArgs } from './args.js';
 import { assertNoUnwrapped } from './guard.js';
+import { assertConfigMatchesSchema } from './schema.js';
 import { buildResultComponent } from './result.js';
 import type { SensitiveResultComponent } from './types.js';
 
@@ -43,10 +44,18 @@ import type { SensitiveResultComponent } from './types.js';
  * is destroyed, the write reports success, and a later lookup by the same
  * unwrapped value matches the corrupted row.
  *
+ * Validation happens in two steps, and the second is the one that matters
+ * most. The configuration's own shape is checked when this is called, so an
+ * unregistered sensitivity class or a malformed entry throws before a client
+ * exists. The model and column names are checked against the client when the
+ * extension is applied, because neither TypeScript nor Prisma catches a typo
+ * there: `models` is keyed by string, and Prisma silently ignores a result
+ * component under a model it does not know and silently adds a computed field
+ * under a name it does not know. Either way the column reads back as a plain
+ * string, which is the failure this package exists to prevent.
+ *
  * @param config - Models and fields to classify, plus the optional
- * `writeContext` and `detectUnwrapped`. Validated here, so an unregistered
- * sensitivity class or a malformed entry throws at startup rather than on the
- * first query that reaches it.
+ * `writeContext` and `detectUnwrapped`.
  * @returns An extension to pass to `client.$extends()`.
  * @throws PrismaConfigError If the configuration is malformed.
  *
@@ -66,41 +75,49 @@ import type { SensitiveResultComponent } from './types.js';
 export function sensitiveExtension<const C extends SensitiveExtensionConfig>(config: C) {
   const normalized = normalizeConfig(config);
 
-  return Prisma.defineExtension({
-    name: 'sensitive-prisma',
+  // The callback form, so the models and columns can be checked against the
+  // client this is applied to. Prisma's result-type inference is unaffected:
+  // `$extends` reads the extension arguments off the returned client either
+  // way, which `types.test-d.ts` asserts against a real generated client.
+  return Prisma.defineExtension((client) => {
+    assertConfigMatchesSchema(client, normalized);
 
-    // Reads.
-    //
-    // The one cast in the package, and it is the seam between the two halves
-    // of the read design. `buildResultComponent` works from the validated
-    // runtime configuration, where the literal field names and classes are
-    // gone, so its `compute` can only be declared as returning `unknown`. The
-    // published type is a mapped type over the configuration literal, which is
-    // what Prisma's inference reads to give `user.email` the type
-    // `SensitiveString<'sensitive'>`. Neither can be derived from the other.
-    //
-    // What checks it is `types.test-d.ts`, which asserts the field types the
-    // extension actually publishes against a real generated client, with a
-    // negative control so the assertions cannot pass vacuously.
-    result: buildResultComponent(normalized) as unknown as SensitiveResultComponent<C>,
+    return client.$extends({
+      name: 'sensitive-prisma',
 
-    // Raw parameters, and the guard on everything else. One top-level hook:
-    // Prisma runs `$allOperations` for `$queryRaw`, `$executeRaw`, their
-    // `Unsafe` variants and `$runCommandRaw` as well as for every model
-    // operation, measured on both major versions.
-    query: {
-      $allOperations({ model, operation, args, query }) {
-        const next =
-          model === undefined
-            ? revealRawArgs(args, { model, operation, ...normalized.writeContext })
-            : args;
+      // Reads.
+      //
+      // The one cast in the package, and it is the seam between the two halves
+      // of the read design. `buildResultComponent` works from the validated
+      // runtime configuration, where the literal field names and classes are
+      // gone, so its `compute` can only be declared as returning `unknown`.
+      // The published type is a mapped type over the configuration literal,
+      // which is what Prisma's inference reads to give `user.email` the type
+      // `SensitiveString<'sensitive'>`. Neither can be derived from the other.
+      //
+      // What checks it is `types.test-d.ts`, which asserts the field types the
+      // extension actually publishes against a real generated client, with a
+      // negative control so the assertions cannot pass vacuously.
+      result: buildResultComponent(normalized) as unknown as SensitiveResultComponent<C>,
 
-        if (normalized.detectUnwrapped) {
-          assertNoUnwrapped(next, { model, operation });
-        }
+      // Raw parameters, and the guard on everything else. One top-level hook:
+      // Prisma runs `$allOperations` for `$queryRaw`, `$executeRaw`, their
+      // `Unsafe` variants and `$runCommandRaw` as well as for every model
+      // operation, measured on both major versions.
+      query: {
+        $allOperations({ model, operation, args, query }) {
+          const next =
+            model === undefined
+              ? revealRawArgs(args, { model, operation, ...normalized.writeContext })
+              : args;
 
-        return query(next as typeof args);
+          if (normalized.detectUnwrapped) {
+            assertNoUnwrapped(next, { model, operation });
+          }
+
+          return query(next as typeof args);
+        },
       },
-    },
+    });
   });
 }

@@ -42,7 +42,13 @@ This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under 
   reach an ES `#private` field. A `SensitiveString` in `data` is already `{ klass, label }` with no
   value by the time a hook sees it, so `sensitiveInput()` reveals at the call site and the query hook
   refuses whatever still arrives flattened. `guard.ts` is that recogniser. The hook does unwrap the
-  `values` of a `$queryRaw` or `$executeRaw` template, which the copy passes by reference. See
+  `values` of a `$queryRaw` or `$executeRaw` template, which the copy passes by reference.
+  `schema.ts` is the other half of failing loudly: neither TypeScript nor Prisma catches a typo in a
+  configured model or column name, so the extension uses `defineExtension`'s callback form to check
+  the names against the client it is applied to. Model names come from the client's own properties;
+  column names come from `_runtimeDataModel`, which is internal, so the reader degrades to
+  model-only checking rather than throwing and `schema.test.ts` asserts it still finds the test
+  schema. See
   `scratch/docs/adrs/ADR-003-prisma-writes-unwrap-at-the-call-site.md`. Its suite runs against a real
   generated client over in-memory SQLite: `prisma/schema.prisma` is the test schema, and the client it
   generates lands in `packages/sensitive-prisma/generated/`, which is gitignored, excluded from the

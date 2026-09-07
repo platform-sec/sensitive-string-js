@@ -187,6 +187,9 @@ export function normalizeModelFields(model: string, fields: ModelFieldConfig): N
 
   const normalized = new Map<string, NormalizedField>();
   for (const [field, spec] of Object.entries(fields)) {
+    if (field === '') {
+      throw new PrismaConfigError(`Model '${model}' has a field with an empty name.`);
+    }
     normalized.set(field, normalizeField(`${model}.${field}`, field, spec));
   }
   return { name: model, fields: normalized };
@@ -227,6 +230,16 @@ export function normalizeConfig(config: SensitiveExtensionConfig): NormalizedCon
   const models = new Map<string, NormalizedModel>();
 
   for (const [model, fields] of Object.entries(config.models)) {
+    // An empty model name produces a `result` component keyed `''`, which
+    // Prisma matches against no model and ignores. The configuration would
+    // then classify nothing while reporting no problem, which is the failure
+    // this package exists to prevent.
+    if (model === '') {
+      throw new PrismaConfigError(
+        `A model is configured under an empty name. Use the model's name as the schema spells it.`
+      );
+    }
+
     const key = clientKey(model);
     // Two schema names cannot collide after uncapitalising unless the
     // configuration lists the same model twice in different casing, which

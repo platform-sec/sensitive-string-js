@@ -1,4 +1,5 @@
 import {
+  RevealLimitExceededError,
   SensitiveString,
   getCurrentRevealContext,
   withRevealContext,
@@ -7,6 +8,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { CANARY, createBaseClient, readColumn } from './__tests__/fixtures.js';
 import { sensitiveExtension } from './extension.js';
+import { PrismaUnknownFieldError, PrismaUnknownModelError } from './errors.js';
 import { sensitiveInput } from './types.js';
 import { wrapRows } from './raw.js';
 
@@ -169,6 +171,52 @@ describe('reads', () => {
     expect(user.email.equals(again.email.reveal({ name: 'test' }))).toBe(true);
   });
 
+  // Neither TypeScript nor Prisma catches a typo in a model or column name:
+  // `models` is keyed by string, Prisma ignores a result component under an
+  // unknown model, and it adds a computed field under an unknown name beside
+  // the real column. Either way the column would read back unwrapped, so the
+  // extension checks the names against the client it is applied to.
+  describe('names checked against the schema', () => {
+    it('refuses a misspelled model when the extension is applied', () => {
+      expect(() =>
+        base.$extends(sensitiveExtension({ models: { Usr: { passwordHash: 'credential' } } }))
+      ).toThrow(PrismaUnknownModelError);
+    });
+
+    it('refuses a misspelled column when the extension is applied', () => {
+      expect(() =>
+        base.$extends(sensitiveExtension({ models: { User: { passwrdHash: 'credential' } } }))
+      ).toThrow(PrismaUnknownFieldError);
+    });
+
+    it('refuses a relation field, which cannot carry a computed field', () => {
+      expect(() =>
+        base.$extends(sensitiveExtension({ models: { User: { posts: 'sensitive' } } }))
+      ).toThrow(PrismaUnknownFieldError);
+    });
+
+    it('refuses before any query runs, so nothing reads unwrapped in the meantime', async () => {
+      await seedUser();
+      expect(() =>
+        base.$extends(sensitiveExtension({ models: { Usr: { passwordHash: 'credential' } } }))
+      ).toThrow(PrismaUnknownModelError);
+      expect(await base.user.count()).toBe(1);
+    });
+  });
+
+  // Adopting one field at a time starts here, and an empty configuration must
+  // not be a special case that breaks the client.
+  it('leaves everything alone when nothing is configured', async () => {
+    const bare = base.$extends(sensitiveExtension({ models: {} }));
+    await bare.user.create({
+      data: { email: 'bare@example.com', passwordHash: CANARY, name: 'B' },
+    });
+
+    const user = await bare.user.findUniqueOrThrow({ where: { id: 1 } });
+    expect(user.passwordHash).toBe(CANARY);
+    expect(typeof user.email).toBe('string');
+  });
+
   it('leaves a model with no configuration untouched', async () => {
     await seedUser();
     await prisma.post.create({ data: { title: 't', secret: 's', authorId: 1 } });
@@ -283,6 +331,18 @@ describe('writes', () => {
     });
 
     expect(await readColumn(base, 'User', 'passwordHash', 1)).toBe('bulk');
+  });
+
+  // The unwrap happens at the call site, so a value's reveal budget is spent
+  // there and the refusal arrives before Prisma is involved.
+  it('refuses a reveal-limited value from sensitiveInput, not from the query', async () => {
+    const limited = new SensitiveString(CANARY, 'credential', 'pw', { maxReveals: 1 });
+    expect(limited.reveal({ name: 'first' })).toBe(CANARY);
+
+    expect(() =>
+      sensitiveInput({ passwordHash: limited, email: 'l@example.com', name: 'L' })
+    ).toThrow(RevealLimitExceededError);
+    expect(await base.user.count()).toBe(0);
   });
 
   // TEST-PRISMA-I009 / INV-PRISMA-013
@@ -443,6 +503,26 @@ describe('composition', () => {
     const user = await composed.user.findUniqueOrThrow({ where: { id: 1 } });
     expect(user.email).toBeInstanceOf(SensitiveString);
     expect(user.shout).toBe('SHOUT');
+  });
+
+  // Applying it twice is an easy mistake in an application that builds its
+  // client in two places. The compute guard is what keeps the second pass from
+  // burying the value a level deeper, where `reveal()` would return the inner
+  // instance's marker.
+  it('is idempotent when applied twice', async () => {
+    const twice = prisma.$extends(sensitiveExtension(config));
+    await twice.user.create({
+      data: sensitiveInput({
+        email: new SensitiveString('twice@example.com', 'sensitive'),
+        passwordHash: new SensitiveString(CANARY, 'credential'),
+        name: 'T',
+      }),
+    });
+
+    const user = await twice.user.findUniqueOrThrow({ where: { id: 1 } });
+    expect(user.passwordHash).toBeInstanceOf(SensitiveString);
+    expect(user.passwordHash.reveal({ name: 'test' })).toBe(CANARY);
+    expect(JSON.stringify(user)).not.toContain(CANARY);
   });
 
   // A later extension that claims the same field wins, as Prisma's protocol

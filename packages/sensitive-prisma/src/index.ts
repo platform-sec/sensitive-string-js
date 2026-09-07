@@ -63,6 +63,8 @@ export type { ComputedField, ResultComponentValue } from './result.js';
 export { buildRevealContext, revealArgs, revealRawArgs } from './args.js';
 export type { RevealAttribution } from './args.js';
 
+export { assertConfigMatchesSchema, readSchemaModels } from './schema.js';
+
 export {
   assertNoUnwrapped,
   findUnwrapped,
@@ -73,7 +75,10 @@ export type { UnwrappedResidue } from './guard.js';
 
 export {
   PrismaConfigError,
+  PrismaCyclicArgumentError,
   PrismaFieldTypeError,
+  PrismaUnknownFieldError,
+  PrismaUnknownModelError,
   PrismaUnsafeStatementError,
   PrismaUnwrappedValueError,
 } from './errors.js';

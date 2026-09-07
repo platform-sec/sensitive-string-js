@@ -93,3 +93,77 @@ export class PrismaUnwrappedValueError extends SensitiveStringError {
     this.name = 'PrismaUnwrappedValueError';
   }
 }
+
+/**
+ * A configured model is not on the client the extension was applied to.
+ *
+ * Prisma ignores a `result` component keyed by a name it does not recognise, so
+ * without this the configuration would classify nothing and report nothing, and
+ * every column it named would read back as a plain string.
+ */
+export class PrismaUnknownModelError extends SensitiveStringError {
+  readonly code = 'PRISMA_UNKNOWN_MODEL';
+
+  constructor(
+    readonly model: string,
+    /** The client property the model name resolves to. */
+    readonly clientKey: string,
+    hint = ''
+  ) {
+    super(
+      `Model '${model}' is configured but the Prisma client has no '${clientKey}'.${hint} ` +
+        `Prisma ignores a result extension keyed by an unknown model, so every column ` +
+        `configured under it would read back unwrapped.`
+    );
+    this.name = 'PrismaUnknownModelError';
+  }
+}
+
+/**
+ * A configured field is not a scalar column of its model.
+ *
+ * Prisma adds a computed field under whatever name it is given, so a misspelled
+ * one appears alongside the real column instead of replacing it: the result
+ * carries a wrapped value nobody reads and the real column stays plain.
+ */
+export class PrismaUnknownFieldError extends SensitiveStringError {
+  readonly code = 'PRISMA_UNKNOWN_FIELD';
+
+  constructor(
+    readonly model: string,
+    readonly field: string,
+    hint = ''
+  ) {
+    super(
+      `${model}.${field} is configured but is not a scalar field of '${model}' in the Prisma ` +
+        `schema.${hint} A computed field under an unknown name is added beside the real column ` +
+        `rather than replacing it, so the real column would read back unwrapped. Relation ` +
+        `fields cannot be configured.`
+    );
+    this.name = 'PrismaUnknownFieldError';
+  }
+}
+
+/**
+ * A query argument contains a cycle.
+ *
+ * There is no correct answer for the back edge: its rebuild is unfinished, so
+ * the only reference available still holds the wrapped values. Prisma cannot
+ * serialise a cyclic argument either, and its own argument copy recurses until
+ * the stack ends, so this refusal is both earlier and easier to act on.
+ */
+export class PrismaCyclicArgumentError extends SensitiveStringError {
+  readonly code = 'PRISMA_CYCLIC_ARGUMENT';
+
+  constructor(
+    /** Argument path at which the cycle closed. */
+    readonly path: string
+  ) {
+    super(
+      `A query argument refers back to itself at '${path}'. Prisma cannot serialise a cyclic ` +
+        `argument, and unwrapping one would leave part of it still wrapped. Build the argument ` +
+        `as a tree.`
+    );
+    this.name = 'PrismaCyclicArgumentError';
+  }
+}

@@ -163,10 +163,20 @@ sensitiveExtension({
 value it is given either way, so getting one wrong produces a wrong type rather than a failed read or
 an unwrapped value. Keep them matching the schema.
 
-The configuration is validated when `sensitiveExtension()` is called, so an unregistered sensitivity
-class or a malformed entry throws at startup rather than on the first query that reaches it. Unknown
-model and field names are caught by TypeScript against the generated client, and by Prisma on the
-first query that touches them.
+Validation happens in two steps. The configuration's own shape is checked when
+`sensitiveExtension()` is called, so an unregistered sensitivity class or a malformed entry throws
+before a client exists. The model and column names are checked against the client when the extension
+is applied, and that check is the one that matters, because nothing else catches a typo:
+
+| A typo in | What Prisma does with it | What you would see |
+|---|---|---|
+| A model name | Ignores the result component under it | The column reads back as a plain `string` |
+| A column name | Adds a computed field beside the real column | A wrapped value nobody reads, and the real column plain |
+| A `needs` entry | Nothing; it does not throw | The column reads back as a plain `string` |
+
+All three are measured on Prisma 6.19.3 and 7.10.0, and TypeScript catches none of them because
+`models` is keyed by string. So `client.$extends(sensitiveExtension(...))` throws
+`PrismaUnknownModelError` or `PrismaUnknownFieldError` instead, before any query runs.
 
 Turn `detectUnwrapped` off only for a schema with two columns named `klass` and `label` where the
 first holds a registered class name, which is the one shape the check can misread.
@@ -208,8 +218,16 @@ them, since both travel in the tags.
 `sensitiveInput()` knows only what you tell it, so pass `{ model, operation }` when you want them in
 the tags. Reveals the extension performs itself, on raw parameters, always carry the operation.
 
-A bulk write is one reveal per value: a `createMany` of ten thousand rows with one configured column
-produces ten thousand audit entries. Count them rather than logging each one if that matters.
+A bulk write is one reveal per position: a `createMany` of ten thousand rows with one configured
+column produces ten thousand audit entries. Count them rather than logging each one if that matters.
+Two positions holding the same instance are two reveals; two positions holding the same *container*
+are one, because the walk reuses what it built for the first.
+
+`sensitiveInput()` reveals when it is called, not when the query runs. Building an argument and then
+not sending it still spends the reveal, which matters for a value carrying `maxReveals` or a rate
+limit: the refusal arrives from `sensitiveInput()` at the call site rather than from Prisma, which is
+the more useful place for it, but the budget is spent either way. Build the argument at the point you
+are committed to the write.
 
 ## Raw queries
 
@@ -281,9 +299,12 @@ value in the message.
 | Class | `code` | Raised when |
 |---|---|---|
 | `PrismaConfigError` | `PRISMA_INVALID_CONFIG` | The configuration is malformed or names an unregistered class. At startup |
+| `PrismaUnknownModelError` | `PRISMA_UNKNOWN_MODEL` | A configured model is not on the client. When the extension is applied |
+| `PrismaUnknownFieldError` | `PRISMA_UNKNOWN_FIELD` | A configured field is not a scalar column of its model. When the extension is applied |
 | `PrismaUnwrappedValueError` | `PRISMA_UNWRAPPED_VALUE` | An argument still carries a `SensitiveString` that `sensitiveInput()` never unwrapped |
 | `PrismaFieldTypeError` | `PRISMA_FIELD_NOT_A_STRING` | A configured column is not a string |
 | `PrismaUnsafeStatementError` | `PRISMA_SENSITIVE_STATEMENT` | A `SensitiveString` was passed as raw statement text |
+| `PrismaCyclicArgumentError` | `PRISMA_CYCLIC_ARGUMENT` | A query argument refers back to itself, which cannot be unwrapped or serialised |
 
 ## Limits worth knowing
 
@@ -299,6 +320,11 @@ discovered, because partial coverage nobody knows about is worse than none.
 - **MongoDB.** `$runCommandRaw` takes its arguments through the copy that flattens instances, so
   documents need `sensitiveInput()`. Composite (embedded) types are not models and cannot carry a
   computed field, so fields inside them are not wrapped on read.
+- **Column-name validation reads an internal.** Model names are checked against the client's own
+  properties, which are public. Column names need the schema, which Prisma keeps on the client as
+  `_runtimeDataModel`. The reader is written to come back empty rather than throw if Prisma moves it,
+  in which case model names are still checked and column names are not. `schema.test.ts` asserts the
+  reader finds the test schema, so that degradation fails the suite rather than passing quietly.
 - **Middleware.** `$use` was deprecated in Prisma 4.16 and removed in Prisma 7. Extensions only.
 - **Memory.** Nothing here addresses heap dumps or V8 persistence; JavaScript has no secure memory
   primitives, and this is defence in depth.
@@ -312,7 +338,8 @@ discovered, because partial coverage nobody knows about is worse than none.
 | `wrapRows(rows, fields, model?)` | Wrap the configured columns of raw query rows |
 | `normalizeConfig`, `normalizeModelFields`, `clientKey` | Configuration validation, exported for tooling |
 | `buildResultComponent`, `revealArgs`, `revealRawArgs`, `buildRevealContext` | The pieces, for a custom extension |
-| `isUnwrappedResidue`, `findUnwrapped`, `assertNoUnwrapped` | The guard, for use outside a query hook |
+| `isUnwrappedResidue`, `findUnwrapped`, `assertNoUnwrapped`, `isSensitiveString` | The guard, for use outside a query hook |
+| `readSchemaModels`, `assertConfigMatchesSchema` | The schema check, for validating a configuration by hand |
 | `UnwrapSensitive`, `WrapRow`, `SensitiveResultComponent`, and the config types | Types |
 
 ## License
