@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // The tests reach out of `src` for the generated client, which the emitting
+    // build never sees because it excludes them.
+    "rootDir": "."
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "generated"]
+}

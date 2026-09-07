@@ -1,0 +1,50 @@
+{
+  "name": "@platform-sec/sensitive-string-prisma",
+  "version": "0.1.0",
+  "description": "Prisma integration for SensitiveString - configured columns read back wrapped, and every write unwraps through an audited reveal",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "generate": "prisma generate --schema prisma/schema.prisma",
+    "prepare": "pnpm generate",
+    "build": "pnpm generate && tsc",
+    "test": "pnpm generate && vitest run --root ../.. packages/sensitive-prisma/",
+    "test:watch": "vitest --root ../.. packages/sensitive-prisma/"
+  },
+  "keywords": [
+    "prisma",
+    "orm",
+    "database",
+    "security",
+    "sensitive-data",
+    "redaction",
+    "typescript"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "peerDependencies": {
+    "@platform-sec/sensitive-string-core": "^0.5.0",
+    "@prisma/client": "^7.0.0"
+  },
+  "devDependencies": {
+    "@platform-sec/sensitive-string-core": "workspace:*",
+    "@prisma/adapter-better-sqlite3": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "@types/node": "^22.20.1",
+    "prisma": "^7.10.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}
