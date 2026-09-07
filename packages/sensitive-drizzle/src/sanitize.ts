@@ -4,6 +4,12 @@ export const ERROR_PARAMETER_CENSOR = '[REDACTED:drizzle-parameter]';
 /** What the rebuilt message says in place of the parameters. */
 const MESSAGE_CENSOR = '[REDACTED:drizzle-parameters]';
 
+/** Where Drizzle's message stops being the statement and starts being values. */
+const PARAMS_MARKER = '\nparams: ';
+
+/** The single frame a withheld stack is left with. */
+const STACK_WITHHELD = '    at <stack withheld: it carried the query parameters>';
+
 /**
  * Recognise Drizzle's query error by shape rather than by class.
  *
@@ -44,9 +50,12 @@ function censor(value: unknown): unknown {
  */
 function sanitizedMessage(message: unknown): string | undefined {
   if (typeof message !== 'string') return undefined;
-  const at = message.indexOf('\nparams: ');
+  // The first occurrence, not the last: a statement holding the marker as text
+  // truncates the message early, which loses part of the query and keeps none
+  // of the values.
+  const at = message.indexOf(PARAMS_MARKER);
   if (at === -1) return undefined;
-  return `${message.slice(0, at)}\nparams: ${MESSAGE_CENSOR}`;
+  return `${message.slice(0, at)}${PARAMS_MARKER}${MESSAGE_CENSOR}`;
 }
 
 /**
@@ -89,23 +98,68 @@ function tryRedactInPlace(target: object, key: string, replacement: unknown): bo
 }
 
 /**
+ * Read `stack` through the getter, because on a real error that is what it is.
+ *
+ * `Error.captureStackTrace` installs `stack` as an own **accessor**, and it
+ * stays one: reading it does not swap in a data property. A sanitizer that
+ * looked for `descriptor.value` therefore found nothing and rewrote nothing,
+ * and its tests passed regardless, because V8 formats the stack at first access
+ * from whatever `message` says by then. That only holds while nothing read the
+ * stack first. A logger, an APM agent or a single `console.error` between the
+ * throw and the `catch` materialises it with the plaintext in the header, and
+ * from then on the string is fixed.
+ *
+ * So it is read here, before `message` moves, which makes the outcome the same
+ * either way: the already-materialised string when there is one, and otherwise
+ * one formatted from the message the parameters are still in.
+ */
+function readStack(error: object): string | undefined {
+  try {
+    const value: unknown = (error as { stack?: unknown }).stack;
+    return typeof value === 'string' ? value : undefined;
+  } catch {
+    // An exotic object whose getter throws. Nothing to sanitize.
+    return undefined;
+  }
+}
+
+/**
  * The stack with the parameters taken out of the header it was built with.
  *
- * V8 composes `stack` once, at construction, as the name and message followed
- * by the frames, so reassigning `message` afterwards leaves the plaintext in
- * the stack. Sanitizing the message alone would move the leak rather than
- * remove it, and the stack is the copy an error tracker is most likely to
- * keep.
+ * The header is found by the message the error carries rather than by looking
+ * for where the frames begin. Both were written; the frame-boundary version is
+ * the one that can be fooled. A parameter value holding a newline and an
+ * indented `at ` splits the header inside the parameters, and the tail is then
+ * spliced back on, which produces a stack that reads as censored and carries
+ * the value. Replacing the message text cannot do that, because whatever is
+ * inside the message goes with it.
+ *
+ * When the message no longer matches, something rewrote it between the throw
+ * and here and there is no reference text left to bound the parameters with.
+ * The frames are dropped rather than guessed at.
  */
 function sanitizedStack(
-  stack: unknown,
-  original: string | undefined,
-  replacement: string | undefined
+  stack: string | undefined,
+  original: unknown,
+  cleaned: string | undefined,
+  name: string
 ): string | undefined {
-  if (typeof stack !== 'string') return undefined;
-  if (original === undefined || replacement === undefined) return undefined;
-  if (!stack.includes(original)) return undefined;
-  return stack.replace(original, replacement);
+  if (stack === undefined) return undefined;
+  if (
+    cleaned !== undefined &&
+    typeof original === 'string' &&
+    original !== '' &&
+    stack.includes(original)
+  ) {
+    return stack.replace(original, cleaned);
+  }
+  // Nothing of Drizzle's shape in it, so nothing to bound and nothing to fix.
+  if (!stack.includes(PARAMS_MARKER)) return undefined;
+  // The header comes from the message when there is a censored one, and from
+  // the message as it stands otherwise: a message with no marker in it is one
+  // whose parameters are not there either.
+  const header = cleaned ?? (typeof original === 'string' ? original : 'A Drizzle query failed.');
+  return `${name}: ${header}\n${STACK_WITHHELD}`;
 }
 
 /** A copy with the same prototype, own descriptors, and censored parameters. */
@@ -208,13 +262,15 @@ export function sanitizeQueryError(error: unknown): unknown {
         ? messageDescriptor.value
         : undefined;
     const message = sanitizedMessage(original);
-    const stackDescriptor = Object.getOwnPropertyDescriptor(error, 'stack');
+    // Read before `message` moves, so a stack that has not been materialised is
+    // formatted from the message the parameters are in and gets cleaned here,
+    // rather than being left to a formatter that may already have run.
+    const name: unknown = (error as { name?: unknown }).name;
     const stack = sanitizedStack(
-      stackDescriptor !== undefined && 'value' in stackDescriptor
-        ? stackDescriptor.value
-        : undefined,
-      typeof original === 'string' ? original : undefined,
-      message
+      readStack(error),
+      original,
+      message,
+      typeof name === 'string' ? name : 'Error'
     );
 
     let ok = tryRedactInPlace(error, 'params', replacement);

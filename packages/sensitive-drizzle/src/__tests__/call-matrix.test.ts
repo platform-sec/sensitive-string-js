@@ -193,6 +193,41 @@ describe('paths the column covers', () => {
     expect(h.db.select().from(users).where(eq(users.name, 'P')).all()).toHaveLength(1);
   });
 
+  it('a prepared placeholder filled with null writes NULL, not an error', () => {
+    // The one path that calls the column's write side with null. Every other
+    // path skips the mapping, which makes this easy to get wrong in a way no
+    // ordinary insert would show.
+    const prepared = h.db
+      .insert(users)
+      .values({
+        name: sql.placeholder('n'),
+        email: ss('n@example.com'),
+        token: sql.placeholder('t'),
+      })
+      .prepare();
+    prepared.run({ n: 'NULLTOK', t: null });
+    const row = h.db.select().from(users).where(eq(users.name, 'NULLTOK')).get();
+    expect(row?.token).toBeNull();
+  });
+
+  it('a prepared placeholder filled with an instance still reveals', () => {
+    const prepared = h.db
+      .insert(users)
+      .values({ name: sql.placeholder('n'), email: sql.placeholder('e') })
+      .prepare();
+    prepared.run({ n: 'PLACE', e: ss('place@example.com') });
+    const row = h.db.select().from(users).where(eq(users.name, 'PLACE')).get();
+    expect(row?.email.reveal({ name: 't' })).toBe('place@example.com');
+  });
+
+  it('an ordinary insert of null never reaches the column at all', () => {
+    h.db
+      .insert(users)
+      .values({ name: 'NN', email: ss('nn@example.com'), token: null })
+      .run();
+    expect(h.db.select().from(users).where(eq(users.name, 'NN')).get()?.token).toBeNull();
+  });
+
   it('sql.param binds a value to a column, which is the audited raw escape hatch', () => {
     const rows = h.db.all(
       sql`select * from users where email = ${sql.param(ss('a@example.com'), users.email)}`

@@ -92,9 +92,44 @@ describe('assertParametersSafe', () => {
     ).not.toThrow();
   });
 
-  it('ignores a parameter list that is not an array', () => {
+  it('understands a parameter bag as well as an array', () => {
+    // Drizzle sends an array on every path measured, and the equivalent guard
+    // in sensitive-typeorm shipped understanding only arrays with the shape it
+    // missed being the one its development driver could not reach. One
+    // Array.isArray to not repeat that.
+    expect(() =>
+      assertParametersSafe('select 1', { e: new SensitiveString(CANARY, 'credential') })
+    ).toThrow(DrizzleParameterRefusedError);
+    try {
+      assertParametersSafe('select 1', { ok: 'fine', e: '[REDACTED:sensitive]' });
+      expect.unreachable('should have refused');
+    } catch (error) {
+      expect((error as DrizzleParameterRefusedError).parameter).toBe('e');
+    }
+  });
+
+  it('walks a class instance and a Map, not only a plain object', () => {
+    class Bag {
+      constructor(readonly e: unknown) {}
+    }
+    expect(() =>
+      assertParametersSafe('select 1', new Bag(new SensitiveString(CANARY, 'credential')))
+    ).toThrow(DrizzleParameterRefusedError);
+    expect(() =>
+      assertParametersSafe('select 1', new Map([['e', new SensitiveString(CANARY, 'credential')]]))
+    ).toThrow(DrizzleParameterRefusedError);
+    // A bag from another realm has Object.prototype from that realm, so a
+    // prototype check would have passed it over.
+    const foreign = Object.create(null) as Record<string, unknown>;
+    foreign['e'] = new SensitiveString(CANARY, 'credential');
+    expect(() => assertParametersSafe('select 1', foreign)).toThrow(DrizzleParameterRefusedError);
+  });
+
+  it('has nothing to walk in a primitive', () => {
     expect(() => assertParametersSafe('select 1', undefined)).not.toThrow();
-    expect(() => assertParametersSafe('select 1', { e: 'x' })).not.toThrow();
+    expect(() => assertParametersSafe('select 1', null)).not.toThrow();
+    expect(() => assertParametersSafe('select 1', 'not a bag')).not.toThrow();
+    expect(() => assertParametersSafe('select 1', 7)).not.toThrow();
   });
 });
 
@@ -161,6 +196,22 @@ describe('redactParameters', () => {
 
   it('replaces every string under redactAllParameters', () => {
     expect(redactParameters(['plain', 7], false, true)).toEqual([PARAMETER_CENSOR, 7]);
+  });
+
+  it('redacts a parameter bag as well as an array', () => {
+    expect(redactParameters({ e: 'a@example.com', n: 7 }, true, false)).toEqual({
+      e: PARAMETER_CENSOR,
+      n: 7,
+    });
+  });
+
+  it('leaves a shape it cannot rebuild identically alone', () => {
+    // The guard walks more shapes than this does, deliberately: a refusal has
+    // to be exhaustive, whereas a log line that keeps the shape it arrived in
+    // is a nicety, and rebuilding a Map as a plain object would change what the
+    // inner logger is handed.
+    const odd = new Map([['e', 'a@example.com']]);
+    expect(redactParameters(odd, true, false)).toBe(odd);
   });
 });
 

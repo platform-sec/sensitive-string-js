@@ -53,30 +53,57 @@ export function touchesClassifiedColumn(
   return false;
 }
 
+/** Refuse one parameter, or return. */
+function assertOne(value: unknown, at: number | string, statement: string): void {
+  if (value instanceof SensitiveString) {
+    throw new DrizzleParameterRefusedError(at, 'instance', truncate(statement));
+  }
+  // An array or JSON column is serialised before the parameter array exists,
+  // and a `SensitiveString` serialises as its marker, so a value nested inside
+  // one arrives here as a marker embedded in a longer string with no instance
+  // left to recognise. Containment rather than equality is what covers those,
+  // and it covers the other direction of the same mistake as well: a value
+  // serialised somewhere upstream, about to be stored or compared as a marker.
+  if (typeof value === 'string' && containsRedactionMarker(value)) {
+    throw new DrizzleParameterRefusedError(at, 'marker', truncate(statement));
+  }
+}
+
 /**
- * Refuse a parameter array that still holds an unwrapped value.
+ * The values of a parameter bag, whatever shape it arrived in.
  *
- * Called with the array Drizzle is about to hand the driver: placeholders
- * already filled, column mappings already applied. Anything still an instance
- * at this point reached here through a path that had no column behind it.
+ * Drizzle hands `logQuery` an array on every path measured on 0.45.2, and this
+ * understands an object and a `Map` as well. Not speculation: the equivalent
+ * guard in `sensitive-typeorm` shipped understanding only arrays, and the shape
+ * it missed was the one its development driver could not reach, so the hole was
+ * invisible to its suite. One `Array.isArray` to not repeat that is a good
+ * trade.
  *
- * A string holding a redaction marker is refused for the other direction of the
- * same mistake: the value was serialised somewhere upstream and what is about
- * to be stored, or compared, is the marker.
+ * Every object is walked by its own enumerable entries, without a prototype
+ * check, so a class instance and a bag from another realm are covered rather
+ * than passed over. Only a primitive is skipped, and a primitive cannot hold
+ * anything.
+ */
+function entriesOf(params: unknown): [number | string, unknown][] {
+  if (Array.isArray(params)) return params.map((value, index) => [index, value]);
+  if (params instanceof Map) {
+    return [...params.entries()].map(([key, value]) => [String(key), value]);
+  }
+  if (typeof params !== 'object' || params === null) return [];
+  return Object.entries(params as Record<string, unknown>);
+}
+
+/**
+ * Refuse a parameter bag that still holds an unwrapped value.
+ *
+ * Called with what Drizzle is about to hand the driver: placeholders already
+ * filled, column mappings already applied. Anything still an instance at this
+ * point reached here through a path that had no column behind it.
  *
  * @throws DrizzleParameterRefusedError On the first offending parameter.
  */
 export function assertParametersSafe(statement: string, params: unknown): void {
-  if (!Array.isArray(params)) return;
-  for (let index = 0; index < params.length; index += 1) {
-    const value: unknown = params[index];
-    if (value instanceof SensitiveString) {
-      throw new DrizzleParameterRefusedError(index, 'instance', truncate(statement));
-    }
-    if (typeof value === 'string' && containsRedactionMarker(value)) {
-      throw new DrizzleParameterRefusedError(index, 'marker', truncate(statement));
-    }
-  }
+  for (const [at, value] of entriesOf(params)) assertOne(value, at, statement);
 }
 
 function truncate(statement: string): string {
@@ -94,9 +121,8 @@ function truncate(statement: string): string {
  * entry useful survive, and the one shape that could carry a secret does not.
  */
 export function redactParameters(params: unknown, touched: boolean, redactAll: boolean): unknown {
-  if (!Array.isArray(params)) return params;
   let changed = false;
-  const out = params.map((value: unknown) => {
+  const redactOne = (value: unknown): unknown => {
     if (value instanceof SensitiveString) {
       changed = true;
       return PARAMETER_CENSOR;
@@ -106,7 +132,23 @@ export function redactParameters(params: unknown, touched: boolean, redactAll: b
       return PARAMETER_CENSOR;
     }
     return value;
-  });
+  };
+
+  if (Array.isArray(params)) {
+    const out: unknown[] = params.map(redactOne);
+    return changed ? out : params;
+  }
+  // A named bag, rebuilt as a plain object. The guard walks more shapes than
+  // this does, deliberately: refusing has to be exhaustive, whereas a log line
+  // that keeps the shape it arrived in is only a nicety, and rebuilding a
+  // `Map` or a class instance as one would change what the inner logger sees.
+  if (typeof params !== 'object' || params === null) return params;
+  const proto: unknown = Object.getPrototypeOf(params);
+  if (proto !== Object.prototype && proto !== null) return params;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params as Record<string, unknown>)) {
+    out[key] = redactOne(value);
+  }
   return changed ? out : params;
 }
 

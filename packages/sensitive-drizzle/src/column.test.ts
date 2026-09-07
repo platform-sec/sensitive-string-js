@@ -14,7 +14,12 @@ import {
   resetPlainWriteReports,
   sensitiveMapping,
 } from './column.js';
-import { DrizzleConfigError, DrizzleMarkerReadError, DrizzleWriteRefusedError } from './errors.js';
+import {
+  DrizzleColumnTypeError,
+  DrizzleConfigError,
+  DrizzleMarkerReadError,
+  DrizzleWriteRefusedError,
+} from './errors.js';
 import { resetMarkerCache } from './marker.js';
 
 const CANARY = 'LEAKED_SECRET_abc123xyz';
@@ -157,17 +162,62 @@ describe('sensitiveMapping', () => {
     });
   });
 
-  describe('values Drizzle never sends', () => {
-    it('refuses null with a message naming the direct call, rather than a TypeError', () => {
+  describe('nullish and non-text values', () => {
+    it('passes null through on the write path', () => {
+      // Not defensive coding. Drizzle skips the mapping for null everywhere
+      // except a prepared statement's placeholder fill, which does send one,
+      // and refusing it would make writing NULL to a nullable classified column
+      // an error on exactly that path.
       const mapping = sensitiveMapping('sensitive', 'text', 'email');
-      expect(() => mapping.toDriver(null as unknown as string)).toThrow(DrizzleWriteRefusedError);
-      expect(() => mapping.toDriver(null as unknown as string)).toThrow(/mapToDriverValue/);
+      expect(mapping.toDriver(null)).toBeNull();
+    });
+
+    it('refuses undefined rather than treating it as null', () => {
+      // They arrive by the same route and mean different things. A missing
+      // placeholder key throws inside Drizzle, so an undefined here is a caller
+      // who thought they were passing a value, and writing NULL for it would
+      // overwrite a stored credential on the quietest path available.
+      const mapping = sensitiveMapping('credential', 'text', 'token');
+      expect(() => mapping.toDriver(undefined)).toThrow(DrizzleWriteRefusedError);
+      expect(() => mapping.toDriver(undefined)).toThrow(/undefined/);
+    });
+
+    it('refuses a value that is neither text nor an instance', () => {
+      const mapping = sensitiveMapping('sensitive', 'text', 'email');
+      expect(() => mapping.toDriver(42 as unknown as string)).toThrow(DrizzleWriteRefusedError);
+      expect(() => mapping.toDriver(new Date() as unknown as string)).toThrow(
+        DrizzleWriteRefusedError
+      );
     });
 
     it('refuses a non-string from the driver rather than inventing a value', () => {
       const mapping = sensitiveMapping('sensitive', 'text', 'email');
-      expect(() => mapping.fromDriver(Buffer.from('abc'))).toThrow(DrizzleMarkerReadError);
-      expect(() => mapping.fromDriver(42)).toThrow(DrizzleMarkerReadError);
+      expect(() => mapping.fromDriver(Buffer.from('abc'))).toThrow(DrizzleColumnTypeError);
+      expect(() => mapping.fromDriver(42)).toThrow(DrizzleColumnTypeError);
+      expect(() => mapping.fromDriver(null)).toThrow(DrizzleColumnTypeError);
+    });
+
+    it('names what it read back, and never the value', () => {
+      const mapping = sensitiveMapping('credential', 'text', 'token', { table: 'users' });
+      try {
+        mapping.fromDriver(Buffer.from(CANARY));
+        expect.unreachable('should have refused');
+      } catch (error) {
+        expect(error).toBeInstanceOf(DrizzleColumnTypeError);
+        const refusal = error as DrizzleColumnTypeError;
+        expect(refusal.path).toBe('users.token');
+        expect(refusal.received).toBe('object');
+        expect(refusal.message).not.toContain(CANARY);
+        expect(refusal.code).toBe('DRIZZLE_UNEXPECTED_COLUMN_TYPE');
+      }
+    });
+
+    it('separates a type mismatch from a corrupted column', () => {
+      // Different failures with different fixes: one is a column that is not
+      // carrying text, the other is a column an earlier write destroyed.
+      const mapping = sensitiveMapping('sensitive', 'text', 'email');
+      expect(() => mapping.fromDriver(42)).not.toThrow(DrizzleMarkerReadError);
+      expect(() => mapping.fromDriver('[REDACTED:sensitive]')).toThrow(DrizzleMarkerReadError);
     });
   });
 

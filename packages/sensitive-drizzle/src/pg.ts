@@ -18,12 +18,17 @@ import type { SensitiveColumnOptions, SensitiveVarcharOptions } from './types.js
  * `customType<{ data: SensitiveString<C>; driverData: string }>(...)(name)`
  * produces, so `.notNull()`, `.default()`, `.primaryKey()`, `.unique()`,
  * `.$type()` and the rest of Drizzle's builder chain all compose as usual.
+ *
+ * `driverData` is `string | null` rather than `string` because the write side
+ * passes a `null` through, which it has to: a prepared statement's placeholder
+ * fill is one path that sends one. It is the driver-facing type only, and does
+ * not reach `$inferSelect` or `$inferInsert`, both of which come from `data`.
  */
 export type SensitivePgColumn<
   C extends SensitivityClass,
   TName extends string,
 > = PgCustomColumnBuilder<
-  ConvertCustomConfig<TName, { data: SensitiveString<C>; driverData: string }>
+  ConvertCustomConfig<TName, { data: SensitiveString<C>; driverData: string | null }>
 >;
 
 function build<C extends SensitivityClass, TName extends string>(
@@ -32,7 +37,7 @@ function build<C extends SensitivityClass, TName extends string>(
   name: TName,
   options: SensitiveColumnOptions
 ): SensitivePgColumn<C, TName> {
-  return customType<{ data: SensitiveString<C>; driverData: string }>(
+  return customType<{ data: SensitiveString<C>; driverData: string | null }>(
     sensitiveMapping(klass, sqlType, name, options)
   )(name, undefined);
 }

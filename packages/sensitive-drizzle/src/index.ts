@@ -103,6 +103,7 @@ export type {
 
 export {
   DrizzleCacheRefusedError,
+  DrizzleColumnTypeError,
   DrizzleConfigError,
   DrizzleDriftError,
   DrizzleGuardMissingError,

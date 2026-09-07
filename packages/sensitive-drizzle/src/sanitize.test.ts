@@ -84,6 +84,80 @@ describe('sanitizeQueryError', () => {
     expect(sanitized.message).not.toContain(CANARY);
   });
 
+  it('cleans a stack that was already materialised before sanitizing', () => {
+    // The case the suite missed for a whole commit. `stack` is an own accessor
+    // on a real error and stays one, so a sanitizer keyed on
+    // `descriptor.value` rewrites nothing; its tests pass anyway, because V8
+    // formats the stack at first access from whatever `message` says by then.
+    // Reading it first is what breaks that, and is what a logger or an APM
+    // agent between the throw and the catch does.
+    const error = queryError();
+    expect(String(error.stack)).toContain(CANARY);
+    const sanitized = sanitizeQueryError(error) as DrizzleQueryError;
+    expect(String(sanitized.stack)).not.toContain(CANARY);
+    expect(String(sanitized.stack)).toContain('sanitize.test.ts');
+  });
+
+  it('reads the stack through the getter rather than looking for a value', () => {
+    // Pinning the mechanism, not just the outcome: on a real error the property
+    // is an accessor, and asserting that keeps the regression from coming back
+    // in a form the outcome test cannot see.
+    const error = queryError();
+    const descriptor = Object.getOwnPropertyDescriptor(error, 'stack');
+    expect(descriptor).toBeDefined();
+    expect(descriptor && 'value' in descriptor).toBe(false);
+    sanitizeQueryError(error);
+    const after = Object.getOwnPropertyDescriptor(error, 'stack');
+    expect(after && 'value' in after).toBe(true);
+    expect(String((after as { value: string }).value)).not.toContain(CANARY);
+  });
+
+  it('withholds the frames when the message was rewritten before it got here', () => {
+    // An error normaliser between the throw and the catch leaves a stack whose
+    // header no longer matches any text we hold, and nothing left to bound the
+    // parameters with. Guessing the boundary is what the frame-scanning version
+    // did, and a parameter holding a newline and an indented `at ` fools it.
+    const error = queryError();
+    void error.stack;
+    error.message = 'Something went wrong';
+    const sanitized = sanitizeQueryError(error) as DrizzleQueryError;
+    expect(String(sanitized.stack)).not.toContain(CANARY);
+    expect(String(sanitized.stack)).toContain('stack withheld');
+  });
+
+  it('is not fooled by a parameter value that looks like a stack frame', () => {
+    const nasty = `${CANARY}\n   at the office`;
+    const error = new DrizzleQueryError('select 1 where a = $1', [nasty], undefined);
+    void error.stack;
+    const sanitized = sanitizeQueryError(error) as DrizzleQueryError;
+    expect(String(sanitized.stack)).not.toContain(CANARY);
+    expect(String(sanitized.message)).not.toContain(CANARY);
+  });
+
+  it('cleans a stack it cannot write to, by returning a copy that carries the clean one', () => {
+    const error = queryError();
+    Object.defineProperty(error, 'stack', {
+      value: `Error: ${error.message}\n    at somewhere`,
+      writable: false,
+      configurable: false,
+    });
+    const sanitized = sanitizeQueryError(error) as DrizzleQueryError;
+    expect(sanitized).not.toBe(error);
+    expect(String(sanitized.stack)).not.toContain(CANARY);
+    expect(String(sanitized.stack)).toContain('at somewhere');
+    expect(sanitized.params).toEqual([ERROR_PARAMETER_CENSOR]);
+    expect(sanitized.message).not.toContain(CANARY);
+  });
+
+  it('leaves a stack alone when the message is not one Drizzle built', () => {
+    // Nothing to key off, and nothing to justify rewriting someone else's
+    // stack. The parameters are still censored on the property.
+    const odd = Object.assign(new Error('unrecognised'), { query: 'select 1', params: [CANARY] });
+    const sanitized = sanitizeQueryError(odd) as { params: unknown[]; stack?: string };
+    expect(sanitized.params).toEqual([ERROR_PARAMETER_CENSOR]);
+    expect(String(sanitized.stack)).toContain('unrecognised');
+  });
+
   it('recognises the error by shape, not by class', () => {
     const lookalike = Object.assign(new Error('Failed query: select 1\nparams: ' + CANARY), {
       query: 'select 1',

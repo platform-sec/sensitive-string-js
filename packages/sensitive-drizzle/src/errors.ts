@@ -68,6 +68,38 @@ export class DrizzleMarkerReadError extends SensitiveStringError {
 }
 
 /**
+ * A classified column was handed something that is not text on the read path.
+ *
+ * Separate from {@link DrizzleMarkerReadError} because it is a different
+ * failure with a different fix. A marker means an earlier write corrupted the
+ * column; this means the column is not carrying text at all, which is a driver
+ * answering a text column with a `Buffer`, a schema whose SQL type was
+ * overridden to something else, or a direct call to `mapFromDriverValue`.
+ *
+ * Coercing would hide the mismatch, and wrapping a `Buffer`'s `toString()`
+ * would invent a value and hand it back as if it had been read.
+ */
+export class DrizzleColumnTypeError extends SensitiveStringError {
+  readonly code = 'DRIZZLE_UNEXPECTED_COLUMN_TYPE';
+
+  constructor(
+    /** `table.column`, or just the column when the schema named no table. */
+    readonly path: string,
+    /** `typeof` what arrived. Never the value. */
+    readonly received: string
+  ) {
+    super(
+      `${path} is a classified text column and read back a ${received}. Drizzle never sends null ` +
+        `to a column's read side, so a nullish value here is a direct call to ` +
+        `mapFromDriverValue; anything else means the column is not carrying text. Wrapping it ` +
+        `would hand the application an invented value under a type that promises a ` +
+        `SensitiveString.`
+    );
+    this.name = 'DrizzleColumnTypeError';
+  }
+}
+
+/**
  * A bound parameter carried a `SensitiveString` or a redaction marker.
  *
  * This is the refusal for the paths the column never sees. A column's
@@ -90,8 +122,8 @@ export class DrizzleParameterRefusedError extends SensitiveStringError {
   readonly code = 'DRIZZLE_SENSITIVE_PARAMETER';
 
   constructor(
-    /** Index into the bound parameter array. */
-    readonly parameter: number,
+    /** Index into the bound parameter array, or a key within a parameter bag. */
+    readonly parameter: number | string,
     /** What was found: an instance, or a marker. */
     readonly kind: 'instance' | 'marker',
     /** The statement, truncated. Never the parameters. */

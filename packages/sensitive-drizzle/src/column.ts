@@ -6,7 +6,12 @@ import {
   hasPolicy,
 } from '@platform-sec/sensitive-string-core';
 import type { RevealContext, SensitivityClass } from '@platform-sec/sensitive-string-core';
-import { DrizzleConfigError, DrizzleMarkerReadError, DrizzleWriteRefusedError } from './errors.js';
+import {
+  DrizzleColumnTypeError,
+  DrizzleConfigError,
+  DrizzleMarkerReadError,
+  DrizzleWriteRefusedError,
+} from './errors.js';
 import { containsRedactionMarker } from './marker.js';
 import type {
   ColumnClassification,
@@ -26,7 +31,7 @@ import type {
  */
 export interface SensitiveMapping<C extends SensitivityClass> {
   readonly dataType: () => string;
-  readonly toDriver: (value: SensitiveString<C> | string) => string;
+  readonly toDriver: (value: SensitiveString<C> | string | null | undefined) => string | null;
   readonly fromDriver: (value: unknown) => SensitiveString<C>;
 }
 
@@ -131,12 +136,16 @@ function writeContext(
 /**
  * The read and write halves of one classified column.
  *
- * Reads wrap and writes reveal, both through Drizzle's `customType`. Drizzle
- * never calls either for `null`, in the SQL builder or in the result mapper, so
- * a nullable column needs no null guard here and gets one anyway: the mapping
- * is also reachable directly, through `column.mapToDriverValue()`, and a guard
- * that only exists on Drizzle's own path is a guard that stops existing the
- * first time someone calls the column's method.
+ * Reads wrap and writes reveal, both through Drizzle's `customType`.
+ *
+ * Both directions pass `null` through, and the write side has to. Drizzle skips
+ * the mapping for `null` almost everywhere, in the result mapper and for an
+ * insert, an update, an `onConflictDoUpdate` and every predicate builder, so
+ * the guard reads as defensive. It is not. A prepared statement whose
+ * `values()` used `sql.placeholder` calls `mapToDriverValue` at fill time with
+ * whatever `execute()` was given, `null` included, and a mapping that refused
+ * one would turn writing NULL to a nullable classified column into an error on
+ * exactly that path. Measured on 0.45.2.
  *
  * What this does not cover, because Drizzle does not route it through a column:
  * a value interpolated into a `sql` template, and a prepared statement's
@@ -176,7 +185,16 @@ export function sensitiveMapping<C extends SensitivityClass>(
   return {
     dataType: () => sqlType,
 
-    toDriver(value: SensitiveString<C> | string): string {
+    toDriver(value: SensitiveString<C> | string | null | undefined): string | null {
+      // `null` only, and `undefined` deliberately not. Both arrive by the same
+      // route, a prepared statement's placeholder fill, and they mean different
+      // things: `null` is a caller writing NULL to a nullable column, while
+      // `undefined` is a caller who thought they were passing a value. A
+      // missing key throws inside Drizzle, so an `undefined` here is explicit,
+      // and treating it as NULL would overwrite a stored credential on the
+      // quietest possible path. It falls through to the refusal below.
+      if (value === null) return null;
+
       if (value instanceof SensitiveString) {
         // Before the context is built, so a refusal costs nothing and so the
         // refusal is unambiguously about the absence rather than about
@@ -229,15 +247,16 @@ export function sensitiveMapping<C extends SensitivityClass>(
         return value;
       }
 
-      // Drizzle does not call this for null or undefined on any of its own
-      // paths, and a direct caller who does gets told rather than getting a
-      // TypeError out of the ORM three frames later.
+      // A number, a Date, a Buffer. The column's declared type is text and its
+      // data type is a SensitiveString, so nothing well typed arrives here;
+      // what does is a placeholder filled from an `any`, and passing it through
+      // would store a value the property type says cannot exist.
       throw new DrizzleWriteRefusedError(
         path,
         `${path} is classified '${klass}' and was handed a ${describe(value)}. A classified ` +
           `column stores text: pass a SensitiveString, or a plain string for a literal ` +
-          `predicate. Drizzle skips the mapping entirely for null, so a null reaching here came ` +
-          `from a direct call to the column's mapToDriverValue.`
+          `predicate. A value of another type reaching here came from a prepared statement's ` +
+          `placeholder or from a direct call to the column's mapToDriverValue.`
       );
     },
 
@@ -245,8 +264,9 @@ export function sensitiveMapping<C extends SensitivityClass>(
       if (typeof value !== 'string') {
         // A driver that answers a text column with a Buffer, or a schema whose
         // SQL type was overridden to something that is not text. Coercing hides
-        // the mismatch; wrapping a Buffer's `toString()` invents a value.
-        throw new DrizzleMarkerReadError(path);
+        // the mismatch, and wrapping a Buffer's `toString()` invents a value.
+        // Drizzle never sends `null` here, so a nullish value is a direct call.
+        throw new DrizzleColumnTypeError(path, describe(value));
       }
       if (containsRedactionMarker(value)) throw new DrizzleMarkerReadError(path);
       return new SensitiveString(value, klass, label);

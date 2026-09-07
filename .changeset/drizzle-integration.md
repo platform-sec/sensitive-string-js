@@ -29,15 +29,24 @@ log redaction and the refusal. It is passed to `drizzle()` at construction and c
 afterwards, because `node-postgres` builds a fresh session for a transaction on a pool.
 
 `sanitizeQueryError()` removes the revealed parameters from all three places `DrizzleQueryError`
-keeps them: `params`, an own enumerable property; `message`, which interpolates them; and the header
-of `stack`, which V8 composes once at construction, so rewriting the message alone would have moved
-the leak into the field an error tracker is most likely to keep.
+keeps them: `params`, an own enumerable property; `message`, which interpolates them; and `stack`.
+The third needs care. `stack` is an own accessor on a real error and stays one, and V8 formats it at
+first access from whatever `message` says by then, so fixing the message alone looks correct until
+something reads the stack first, which a logger or an APM agent between the throw and the `catch`
+does. The stack is read through the getter, before the message moves, and written back.
 
 `checkSchema(db, schema)` runs once at boot and refuses a database built without the guard, a
 configured query cache, which stores the driver's rows before any column's read side has run, and a
 column named in `requireClassified` that was declared with a plain factory, which is the one drift
 the compiler cannot see. It also reports a classified column carrying a column default, since that is
 a secret in the schema file and in every migration generated from it.
+
+Both directions pass `null` through. Drizzle skips the mapping for `null` almost everywhere, which
+makes a column that refuses one look correct against an ordinary insert; one path does send one,
+namely a prepared statement whose `values()` used `sql.placeholder` and whose `execute()` supplied
+`null`. A value that is neither text nor a `SensitiveString` is refused on the write path, and a
+non-string read back raises `DrizzleColumnTypeError`, which is a different failure from a column an
+earlier write corrupted.
 
 A classified column declares a standard SQL type, so `drizzle-kit generate` and `drizzle-kit push`
 are unaffected and adoption on an existing column is a type change rather than a migration.

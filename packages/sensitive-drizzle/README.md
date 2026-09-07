@@ -145,8 +145,13 @@ own enumerable property; interpolated into `message`, as `Failed query: ${query}
 and in the header of `stack`, which V8 composes once at construction. By then the parameters are the
 revealed plaintext, because that is what was sent.
 
-The third copy is the one worth naming. Rewriting `message` does not change `stack`, so a sanitizer
-that only fixed the property would move the leak rather than remove it.
+The third copy is the one worth naming, and it is subtler than "rewrite the message and the stack
+follows". `stack` is an own **accessor** on a real error and stays one; V8 formats it at first access
+from whatever `message` says by then. So a sanitizer that fixed the message and left the stack looks
+correct right up until something reads the stack first, which a logger, an APM agent or one
+`console.error` between the throw and the `catch` does. From that point the string is fixed with the
+plaintext in it. `sanitizeQueryError()` reads the stack through the getter, before the message moves,
+and writes back a data property.
 
 ```ts
 try {
@@ -209,6 +214,26 @@ await db
 `like()` needs a cast in the other direction, because it wants a string column and a string pattern.
 The pattern does **not** go through the column's mapping, measured, so a plain pattern is bound as
 given and an instance used as one would reach the driver, where the guard catches it.
+
+## Nulls
+
+The write side passes `null` through, and the column's nullability stays Drizzle's business. This is
+worth stating because Drizzle skips the mapping for `null` almost everywhere, so it is easy to build
+a column that refuses one and never notice: an insert, an update, an `onConflictDoUpdate` and every
+predicate builder all bypass the mapping entirely. One path does not. A prepared statement whose
+`values()` used `sql.placeholder` calls the write side at fill time with whatever `execute()` was
+given, `null` included.
+
+`undefined` is refused rather than treated as `null`. Both arrive by the same route and mean
+different things: a missing placeholder key throws inside Drizzle, so an `undefined` that gets here is
+a caller who thought they were passing a value, and writing NULL for it would overwrite a stored
+credential on the quietest path available.
+
+A value that is neither text nor a `SensitiveString` is refused rather than passed through, since a
+classified column's declared type is text and nothing well typed can produce one. On the read side, a
+value that is not a string raises `DrizzleColumnTypeError`, which is a different failure from
+`DrizzleMarkerReadError` and has a different fix: the column is not carrying text, rather than
+carrying a value an earlier write destroyed.
 
 ## The audit record
 
@@ -278,6 +303,10 @@ It refuses:
 
 `classifiedColumns(schema)` reports the same inventory without enforcing anything.
 
+It inspects tables. Anything else a schema module exports comes back in `skipped`, views included, so
+a classified column reachable only through a view is neither counted nor checked. Name it in
+`alsoClassified` on the logger if the log redaction should still know about it.
+
 Classification is detected by asking the column: `checkSchema` runs each column's own
 `mapFromDriverValue` over a sentinel and looks at what comes back. That is public API on Drizzle's
 `Column` in every dialect, so the check does not depend on internals that a patch release can move.
@@ -327,6 +356,17 @@ into an availability incident.
 ```ts
 sensitiveText('email', { table: 'users', strictWrites: true, strictContext: true });
 ```
+
+## Cost
+
+The guard runs on every statement. It walks the parameter array once and, for each string in it,
+tests containment against the redaction markers the policy registry can currently produce, which is
+two for the default policies and is memoized against the registered class list. There is no SQL
+parsing on this path.
+
+The log redaction costs more and only runs when an inner logger is configured: one regular expression
+pass over the statement to collect its identifiers, then a set lookup each. A database constructed
+with `sensitiveLogger()` and no `inner` pays the guard and nothing else.
 
 ## Not covered
 
