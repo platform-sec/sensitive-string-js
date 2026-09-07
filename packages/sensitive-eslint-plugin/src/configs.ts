@@ -34,16 +34,20 @@ type RuleEntry = 'off' | 'warn' | 'error' | readonly ['off' | 'warn' | 'error', 
 /**
  * The default posture.
  *
- * The three rules that catch a value actually escaping are errors. The three
- * that reason about something they cannot see are warnings, and a warning is
- * the honest severity for a check that can be wrong: a context installed in a
- * caller, a class supplied through a spread, and a password recognised by what
- * the variable holding it is called.
+ * The three rules that catch a value actually escaping are errors, and so is
+ * the one that catches an audit control being switched off: `allowUnaudited`
+ * is never written by accident, so the finding is never wrong, and a disable
+ * comment is where the reason belongs. The three that reason about something
+ * they cannot see are warnings, and a warning is the honest severity for a
+ * check that can be wrong: a context installed in a caller, a class supplied
+ * through a spread, and a password recognised by what the variable holding it
+ * is called.
  */
 const RECOMMENDED_RULES: Readonly<Record<string, RuleEntry>> = {
   'no-log-reveal': 'error',
   'no-credential-equality': 'error',
   'no-network-sensitive': 'error',
+  'no-allow-unaudited': 'error',
   'explicit-class': 'warn',
   'require-reveal-context': 'warn',
   'no-password-fast-hash': 'warn',
@@ -60,6 +64,7 @@ const STRICT_RULES: Readonly<Record<string, RuleEntry>> = {
   'no-log-reveal': 'error',
   'no-credential-equality': 'error',
   'no-network-sensitive': ['error', { allowWithContext: false }],
+  'no-allow-unaudited': 'error',
   'explicit-class': 'error',
   'require-reveal-context': ['error', { requireReason: true }],
   'no-password-fast-hash': 'error',

@@ -1,3 +1,4 @@
+import { SensitiveStringError } from './errors.js';
 import { getGlobalSingleton } from './global-state.js';
 import { snapshotStatelessRegExp } from './regexp.js';
 import type {
@@ -39,8 +40,9 @@ export interface RevocationRecord {
  * `reason` and `label` are developer-supplied text and appear in the message.
  * Neither may carry any part of the protected value.
  */
-export class RevokedSensitiveValueError extends Error {
+export class RevokedSensitiveValueError extends SensitiveStringError {
   override readonly name = 'RevokedSensitiveValueError';
+  override readonly code = 'revoked-value';
 
   readonly scope: RevocationScope;
 

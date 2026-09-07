@@ -41,6 +41,7 @@ import {
   isBudgetExhausted,
   planRevealBudget,
   revealsRemaining,
+  unshareableBudgetOptions,
   type RevealBudget,
   type RevealConstrained,
 } from './reveal-budget.js';
@@ -227,6 +228,50 @@ export type DeriveSensitiveString = <D extends SensitivityClass>(
  * @internal
  */
 export let deriveSensitiveString: DeriveSensitiveString;
+
+/**
+ * Package-internal serialization under a caller-described audit record.
+ *
+ * `serialize()` reads through the gate with the fixed `reveal` record, so a
+ * sibling module that puts a value on the wire for a reason of its own, as
+ * `toWorkerPayload()` does, could not say so in the audit log. This is the
+ * same read with the details supplied, published the way `deriveSensitiveString`
+ * is: absent from `index.ts` and unreachable through the package `exports` map.
+ *
+ * @internal
+ */
+export type SerializeSensitiveString = (
+  value: SensitiveString<SensitivityClass>,
+  ctx: RevealContext | undefined,
+  details: RevealDetails
+) => SerializedSensitiveString;
+
+/**
+ * Assigned once, from the static block at the end of the class body.
+ *
+ * @internal
+ */
+export let serializeSensitiveString: SerializeSensitiveString;
+
+/**
+ * Package-internal question: which of this value's constraints cannot be
+ * shared with another isolate. Empty for a value that can cross.
+ *
+ * Reads nothing through the gate, so asking is not a reveal and is not
+ * charged, audited, or refused by anything the gate enforces.
+ *
+ * @internal
+ */
+export type UnshareableConstraints = (
+  value: SensitiveString<SensitivityClass>
+) => readonly (keyof SensitiveStringOptions)[];
+
+/**
+ * Assigned once, from the static block at the end of the class body.
+ *
+ * @internal
+ */
+export let unshareableConstraints: UnshareableConstraints;
 
 /**
  * Secure wrapper for sensitive string data.
@@ -564,6 +609,8 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     // would fail the brand check.
     deriveSensitiveString = (value, klass, label, sources) =>
       SensitiveString.#derived(value, klass, label, sources);
+    serializeSensitiveString = (value, ctx, details) => value.#serialize(ctx, details);
+    unshareableConstraints = (value) => unshareableBudgetOptions(value.#constrained);
   }
 
   /**
@@ -1583,7 +1630,17 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @throws RevokedSensitiveValueError If the value has been revoked.
    */
   serialize(ctx?: RevealContext): SerializedSensitiveString {
-    const value = this.#readRawValue('expose', ctx);
+    return this.#serialize(ctx, REVEAL_AUDIT_DETAILS);
+  }
+
+  /**
+   * The wire form, read under the given audit record.
+   *
+   * `serialize()` reports a reveal; a handoff to another thread reports itself
+   * as one, through `serializeSensitiveString`. Same gate, same access kind.
+   */
+  #serialize(ctx: RevealContext | undefined, details: RevealDetails): SerializedSensitiveString {
+    const value = this.#readRawValue('expose', ctx, details);
     const deadline = this.#earliestDeadline();
 
     const serialized: SerializedSensitiveString = {

@@ -10,6 +10,7 @@
  * - Partial masking for support, debugging, and user confirmation
  * - Constant-time comparison for credentials
  * - AsyncLocalStorage context propagation
+ * - An explicit handoff across worker threads and child processes
  *
  * @example
  * ```ts
@@ -57,6 +58,7 @@ export type {
   RevocationRegistry,
   RevocationScope,
   RevokeAuditDetails,
+  WorkerHandoffAuditDetails,
   ISensitiveString,
 } from './types.js';
 
@@ -64,6 +66,9 @@ export { SENSITIVITY_PRECEDENCE } from './types.js';
 
 // Main class
 export { SensitiveString } from './sensitive-string.js';
+
+// The base every refusal extends, so a caller can catch any of them at once
+export { SensitiveStringError } from './errors.js';
 
 // Expiration
 export { ExpiredSensitiveValueError, RenewalNotAllowedError } from './ttl.js';
@@ -83,6 +88,31 @@ export {
   revocationCount,
 } from './revocation.js';
 export type { RevocationRecord } from './revocation.js';
+
+// Worker thread and child process handoff
+export {
+  toWorkerPayload,
+  fromWorkerPayload,
+  withWorkerPayload,
+  MalformedWorkerPayloadError,
+  ConsumedWorkerPayloadError,
+  MissingWorkerValueError,
+  UnregisteredClassError,
+  UnauditedWorkerError,
+  UnportableDataError,
+  UnshareableConstraintError,
+} from './worker.js';
+export type {
+  WorkerTransport,
+  SensitiveValues,
+  AnySensitiveValues,
+  PortableRevealContext,
+  WorkerPayloadOptions,
+  WorkerPayloadValues,
+  WorkerPayload,
+  FromWorkerPayloadOptions,
+  ReceivedWorkerPayload,
+} from './worker.js';
 
 // Development mode
 export { setDevMode, getDevModeConfig, withDevMode } from './dev-mode.js';

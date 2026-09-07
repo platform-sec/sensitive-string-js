@@ -582,6 +582,7 @@ const EXPOSURE_NAMES: Partial<Record<RevealDetails['operation'], string>> = {
   mask: 'Mask',
   hash: 'Hash',
   hmac: 'HMAC',
+  'worker-handoff': 'Worker handoff',
 };
 
 function describeValue(klass: SensitivityClass, label: string | undefined): string {

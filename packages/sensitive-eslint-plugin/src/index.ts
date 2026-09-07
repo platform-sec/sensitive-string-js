@@ -5,9 +5,9 @@
  *
  * A type keeps a secret wrapped. It cannot stop `console.log(secret.reveal())`,
  * because the reveal produces an ordinary string and logging a string is
- * ordinary code. Eight rules read the call instead.
+ * ordinary code. Nine rules read the call instead.
  *
- * Six of them read syntax alone, so they run under any parser and cost
+ * Seven of them read syntax alone, so they run under any parser and cost
  * nothing beyond the parse:
  *
  * - `no-log-reveal` stops a revealed value reaching a logger.
@@ -19,6 +19,8 @@
  *   asks the same of the other audited reads where types are available.
  * - `no-password-fast-hash` stops a password being stored under a digest that
  *   a wordlist runs through at billions of guesses a second.
+ * - `no-allow-unaudited` stops a worker accepting a payload without the audit
+ *   hook its sender asked for.
  *
  * Two answer a question no syntax can, "does this value carry a sensitive one
  * inside it", and so need typescript-eslint's type-aware mode:
@@ -49,6 +51,7 @@
  */
 import { buildConfigs } from './configs.js';
 import { explicitClass } from './rules/explicit-class.js';
+import { noAllowUnaudited } from './rules/no-allow-unaudited.js';
 import { noCredentialEquality } from './rules/no-credential-equality.js';
 import { noLogReveal } from './rules/no-log-reveal.js';
 import { noNetworkSensitive } from './rules/no-network-sensitive.js';
@@ -61,6 +64,7 @@ import type { Plugin, RuleModule } from './types.js';
 /** Every rule this plugin defines, keyed by the name a config uses. */
 export const rules: Readonly<Record<string, RuleModule>> = {
   'explicit-class': explicitClass,
+  'no-allow-unaudited': noAllowUnaudited,
   'no-credential-equality': noCredentialEquality,
   'no-log-reveal': noLogReveal,
   'no-network-sensitive': noNetworkSensitive,
@@ -95,6 +99,7 @@ Object.assign(configs, buildConfigs(plugin));
 
 export {
   explicitClass,
+  noAllowUnaudited,
   noCredentialEquality,
   noLogReveal,
   noNetworkSensitive,

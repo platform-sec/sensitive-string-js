@@ -5,6 +5,7 @@ import type {
   SensitivityPolicy,
   SensitiveStringOptions,
 } from './types.js';
+import { SensitiveStringError } from './errors.js';
 
 /**
  * The intrinsic `getTime`, so a deadline is read from a Date's internal slot.
@@ -40,16 +41,24 @@ function describeType(value: unknown): string {
  * Callers distinguish this from a policy denial to decide whether to fetch a
  * fresh secret or to fail the request outright.
  */
-export class ExpiredSensitiveValueError extends Error {
+export class ExpiredSensitiveValueError extends SensitiveStringError {
   override readonly name = 'ExpiredSensitiveValueError';
+  override readonly code = 'expired-value';
 
+  /**
+   * @param key - The key the value had in a worker payload, when the expiry
+   *   was found at that boundary. The label is the value's own name and the
+   *   key is the caller's, and a handler fixing a handoff needs the second.
+   */
   constructor(
     readonly expiredAt: Date,
     readonly attemptedAt: Date,
-    readonly label?: string
+    readonly label?: string,
+    readonly key?: string
   ) {
     super(
-      `Sensitive value${label !== undefined ? ` '${label}'` : ''} expired at ` +
+      `Sensitive value${label !== undefined ? ` '${label}'` : ''}` +
+        `${key !== undefined ? ` (payload key '${key}')` : ''} expired at ` +
         expiredAt.toISOString()
     );
   }
@@ -66,8 +75,9 @@ export type RenewalRefusal = 'policy' | 'exhausted' | 'no-expiration' | 'derived
 /**
  * Raised when `renew()` cannot extend a deadline.
  */
-export class RenewalNotAllowedError extends Error {
+export class RenewalNotAllowedError extends SensitiveStringError {
   override readonly name = 'RenewalNotAllowedError';
+  override readonly code = 'renewal-not-allowed';
 
   constructor(
     readonly reason: RenewalRefusal,

@@ -310,8 +310,40 @@ export interface RevokeAuditDetails {
 }
 
 /**
+ * Audit record for a value leaving for another thread or process through
+ * `toWorkerPayload()`.
+ *
+ * A handoff is authorized as an ordinary `expose`, since the raw value does
+ * reach the caller, and is distinguished here rather than by a new access
+ * kind: a policy that refuses `expose` today must keep refusing a handoff, and
+ * a separate kind would route around every such policy. The caller's context
+ * name is left alone, because that is the field an audit reader searches on;
+ * where the value went is a field of this record instead.
+ */
+export interface WorkerHandoffAuditDetails {
+  readonly operation: 'worker-handoff';
+  /** The destination named to `toWorkerPayload()`. Recorded, never verified. */
+  readonly worker: string | undefined;
+  /** The key this value has in the payload. */
+  readonly key: string;
+  /**
+   * Whether the authorizing context carried an `auditReveal` that cannot cross
+   * the boundary. The receiving side is required to install its own.
+   *
+   * Always `true` in a record a sink actually receives, and deliberately still
+   * a field rather than an assumption: a record is only delivered *through*
+   * the hook this reports the loss of, so the sink reading it is the one being
+   * dropped. Do not filter an audit log on `false` expecting to find handoffs
+   * that kept their hook; there are none, because a context without a hook
+   * records nothing at all.
+   */
+  readonly auditHookDropped: boolean;
+}
+
+/**
  * What the audited operation was, so an audit sink can tell a full reveal from
- * a partial one, and either from a lifetime extension or a revocation.
+ * a partial one, and either from a lifetime extension, a revocation, or a
+ * handoff to another thread.
  */
 export type RevealDetails =
   | RevealAuditDetails
@@ -319,7 +351,8 @@ export type RevealDetails =
   | HashAuditDetails
   | HmacAuditDetails
   | RenewAuditDetails
-  | RevokeAuditDetails;
+  | RevokeAuditDetails
+  | WorkerHandoffAuditDetails;
 
 /**
  * What a policy is being asked to authorize.

@@ -268,7 +268,9 @@ establishes its own context around the loop that produces values.
   and `sensitiveClassesIn()` see own enumerable properties, and an
   auto-accessor is not one. See the section above.
 - **No worker threads.** `AsyncLocalStorage` does not cross a worker boundary,
-  so a context does not either. This is core's limitation, inherited.
+  so a context installed by `@WithRevealContext` does not either. This is core's
+  limitation, inherited; core's `toWorkerPayload()` and `withWorkerPayload()`
+  carry the values and the portable part of the context across explicitly.
 - Everything in core's threat model applies. These decorators defend against
   accidents, not against code that already runs in the process.
 

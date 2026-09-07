@@ -31,8 +31,11 @@ const revealContextStorage = getGlobalSingleton(
  * ```
  *
  * @remarks
- * Context does NOT propagate to Worker threads.
- * If your application uses workers, you must explicitly pass context.
+ * Context does NOT propagate to worker threads or child processes: the store is
+ * per isolate. `toWorkerPayload()` carries the `name`, `reason` and `tags` of
+ * the active context across the boundary alongside the values, and
+ * `withWorkerPayload()` installs them on the far side with that side's own
+ * `auditReveal`, which is the one field that cannot cross.
  */
 export function withRevealContext<T>(ctx: RevealContext, fn: () => T): T {
   return revealContextStorage.run(ctx, fn);

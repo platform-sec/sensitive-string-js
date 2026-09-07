@@ -7,8 +7,8 @@ catch.
 A type keeps a secret wrapped. It cannot stop `console.log(secret.reveal())`,
 because the reveal produces an ordinary string and logging a string is ordinary
 code. The same goes for `password.reveal() === input`, which type-checks
-perfectly and leaks the password to a timing attack. Seven rules read the call
-instead: five from its shape alone, two from the types of its arguments.
+perfectly and leaks the password to a timing attack. Nine rules read the call
+instead: seven from its shape alone, two from the types of its arguments.
 
 ## Installation
 
@@ -16,7 +16,7 @@ instead: five from its shape alone, two from the types of its arguments.
 pnpm add -D @platform-sec/eslint-plugin-sensitive-string
 ```
 
-ESLint 8.40 or newer is a peer dependency, and nothing else is. The five
+ESLint 8.40 or newer is a peer dependency, and nothing else is. The seven
 untyped rules work from the syntax alone, so they run under any parser and cost
 nothing beyond the parse.
 
@@ -78,6 +78,7 @@ Syntax only, in `recommended`:
 | [explicit-class](docs/rules/explicit-class.md) | warn | `new SensitiveString(v)` with no class |
 | [require-reveal-context](docs/rules/require-reveal-context.md) | warn | `x.reveal()` with no context and no enclosing `withRevealContext`, and the same for `mask()`, `hash()`, `hmac()` and `serialize()` where types are available |
 | [no-password-fast-hash](docs/rules/no-password-fast-hash.md) | warn | `password.hash('sha256')`, a fast digest where a KDF belongs |
+| [no-allow-unaudited](docs/rules/no-allow-unaudited.md) | error | `fromWorkerPayload(d, { allowUnaudited: true })`, which drops an audit hook the sender asked for |
 
 Type-aware, in `recommended-type-checked` only:
 
@@ -90,25 +91,26 @@ Type-aware, in `recommended-type-checked` only:
 
 | Preset | Format | Rules |
 |---|---|---|
-| `configs.recommended` | flat | the six untyped |
-| `configs.strict` | flat | the six untyped, harder |
-| `configs['recommended-type-checked']` | flat | all eight |
-| `configs['strict-type-checked']` | flat | all eight, harder |
+| `configs.recommended` | flat | the seven untyped |
+| `configs.strict` | flat | the seven untyped, harder |
+| `configs['recommended-type-checked']` | flat | all nine |
+| `configs['strict-type-checked']` | flat | all nine, harder |
 | `configs['disable-type-checked']` | flat | turns the two type-aware rules off |
-| `configs['legacy-recommended']` | eslintrc | the six untyped |
-| `configs['legacy-strict']` | eslintrc | the six untyped, harder |
-| `configs['legacy-recommended-type-checked']` | eslintrc | all eight |
-| `configs['legacy-strict-type-checked']` | eslintrc | all eight, harder |
+| `configs['legacy-recommended']` | eslintrc | the seven untyped |
+| `configs['legacy-strict']` | eslintrc | the seven untyped, harder |
+| `configs['legacy-recommended-type-checked']` | eslintrc | all nine |
+| `configs['legacy-strict-type-checked']` | eslintrc | all nine, harder |
 | `configs['legacy-disable-type-checked']` | eslintrc | turns the two type-aware rules off |
 
 Both formats configure the same rules at the same severities, and a test holds
 them to it.
 
-`recommended` errors on the three rules that catch a value escaping and warns on
-the three that reason about something they cannot see: a context installed in a
-caller, a class supplied through a spread, and a password recognised by what the
-variable holding it is called. A warning is the honest severity for a check that
-can be wrong.
+`recommended` errors on the three rules that catch a value escaping, and on
+`no-allow-unaudited`, which catches an audit control being switched off and is
+never wrong about it. It warns on the three that reason about something they
+cannot see: a context installed in a caller, a class supplied through a spread,
+and a password recognised by what the variable holding it is called. A warning
+is the honest severity for a check that can be wrong.
 
 `strict` raises everything to error, requires a `reason` in every reveal
 context, and sets `allowWithContext: false` on `no-network-sensitive`, so the

@@ -1,4 +1,5 @@
 import type { SensitiveStringOptions } from './types.js';
+import { SensitiveStringError } from './errors.js';
 
 /**
  * Describe a rejected option without disclosing it.
@@ -13,8 +14,9 @@ function describeType(value: unknown): string {
  * The condition is permanent: nothing resets the count, so a caller that sees
  * this fetches a fresh secret rather than retrying.
  */
-export class RevealLimitExceededError extends Error {
+export class RevealLimitExceededError extends SensitiveStringError {
   override readonly name = 'RevealLimitExceededError';
+  override readonly code = 'reveal-limit-exceeded';
 
   constructor(
     /** The lifetime limit that was reached. */
@@ -36,8 +38,9 @@ export class RevealLimitExceededError extends Error {
  * The condition is temporary, and `retryAfter` says how temporary, so a caller
  * that means to continue can back off rather than fetch a new secret.
  */
-export class RevealRateLimitError extends Error {
+export class RevealRateLimitError extends SensitiveStringError {
   override readonly name = 'RevealRateLimitError';
+  override readonly code = 'reveal-rate-limited';
 
   constructor(
     /** Milliseconds until the window has room again. Always positive. */
@@ -379,4 +382,39 @@ export function revealsRemaining(states: readonly RevealConstrained[]): number |
   }
 
   return fewest;
+}
+
+/**
+ * The construction options, among these states, that describe a limit no
+ * other isolate can share.
+ *
+ * A budget is a counter held by reference between a value and everything
+ * derived from it. A thread or a child process is a different isolate, so
+ * there is no reference to hand it, and the wire format resets counters for
+ * the same reason. A handoff would therefore give the far side a fresh budget,
+ * which turns a three-reveal limit into three per thread. `toWorkerPayload()`
+ * asks this before reading anything and refuses a value that answers.
+ *
+ * Named by option rather than by state so the message tells the caller what
+ * they wrote. The two halves of a rate limit are reported together, because
+ * they are given together.
+ */
+export function unshareableBudgetOptions(
+  states: readonly RevealConstrained[]
+): readonly (keyof SensitiveStringOptions)[] {
+  const names: (keyof SensitiveStringOptions)[] = [];
+
+  for (const state of states) {
+    const { maxReveals, rate } = state.budget;
+
+    if (maxReveals !== undefined && !names.includes('maxReveals')) {
+      names.push('maxReveals');
+    }
+
+    if (rate !== undefined && !names.includes('revealWindow')) {
+      names.push('revealWindow', 'maxRevealsPerWindow');
+    }
+  }
+
+  return names;
 }

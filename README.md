@@ -292,7 +292,7 @@ app.post('/payment', async (req, res) => {
 |------------|--------|------------|
 | Memory dumps | JavaScript lacks secure memory primitives | Use `crypto.subtle` for encryption keys |
 | Malicious code | Attacker with code execution can extract values | This is defense-in-depth, not a security boundary |
-| Worker threads | AsyncLocalStorage doesn't propagate to workers | Explicit context passing required |
+| Worker threads and child processes | `AsyncLocalStorage` is per isolate, and `structuredClone` strips an instance to `{ klass, label }` | [`toWorkerPayload` / `fromWorkerPayload`](#worker-threads-and-child-processes) carry the values and the context explicitly |
 | V8 heap persistence | Raw values may persist until GC | Consider WASM-based secure memory for highest sensitivity |
 
 
@@ -1296,6 +1296,40 @@ createChildContext(overrides: Partial<RevealContext> & { name: string }): Reveal
 withAuditedReveals<T>(name: string, auditFn: (value) => void, fn: () => T): T;
 ```
 
+### Worker Handoff
+
+```typescript
+// Sender: values in the wire format plus the portable part of the context
+toWorkerPayload<T>(values: T, options?: {
+  worker?: string | URL;          // audit field, recorded and never verified
+  context?: RevealContext;        // defaults to the ambient context
+  data?: unknown;                 // non-sensitive passthrough, checked against transport
+  transport?: 'clone' | 'json';   // 'json' for child_process IPC
+}): WorkerPayload<T>;
+
+// Receiver: rebuild the instances and take the raw values out of the payload
+fromWorkerPayload<T>(payload: unknown, options?: {
+  auditReveal?: RevealContext['auditReveal'];
+  allowUnaudited?: boolean;       // reported by the no-allow-unaudited lint rule
+  require?: readonly string[];
+  keepPayload?: boolean;
+}): { values: T; context: RevealContext; data: unknown };
+
+// Receiver: the above followed by withRevealContext()
+withWorkerPayload<T, R = unknown>(payload: unknown, options, fn: (values: T, data: unknown) => R): R;
+```
+
+TypeScript has no partial type argument inference, so naming the values type alone on
+`withWorkerPayload` fills the return type from its default instead of inferring it. That is harmless
+when the result is discarded, which is the usual shape in a worker. Annotate the callback's
+parameter, `({ token }: Values, data) => ...`, to have both inferred, or name both.
+
+
+Every refusal extends `SensitiveStringError` and carries a `code`:
+`MalformedWorkerPayloadError`, `ConsumedWorkerPayloadError`, `MissingWorkerValueError`,
+`UnregisteredClassError`, `UnauditedWorkerError`, `UnportableDataError` and
+`UnshareableConstraintError`. See [Worker Threads and Child Processes](#worker-threads-and-child-processes).
+
 ### Policy Management
 
 ```typescript
@@ -1656,6 +1690,7 @@ export default [sensitive.configs.recommended];
 | `explicit-class` | warn | `new SensitiveString(v)` with no class |
 | `require-reveal-context` | warn | `x.reveal()` with no context and no enclosing `withRevealContext` |
 | `no-password-fast-hash` | warn | `password.hash('sha256')`, a fast digest where a KDF belongs |
+| `no-allow-unaudited` | error | `fromWorkerPayload(d, { allowUnaudited: true })`, which drops an audit hook the sender asked for |
 
 The three rules that catch a value escaping are errors. The three that reason about something they
 cannot see are warnings: a context installed in a caller, a class supplied through a spread, and a
@@ -1767,6 +1802,111 @@ const { token } = PayloadSchema.parse(req.body);
 ```
 
 > ⚠️ **Security Note**: Serialized sensitive strings contain the **RAW UNREDACTED STRING**. Never log serialized outputs. Only use this method when transmitting data over secure channels (mTLS, encrypted message buses, or VPC-internal communication) to another trusted service.
+
+### Worker Threads and Child Processes
+
+A `SensitiveString` handed to a worker arrives broken, and nothing says so. `structuredClone`
+keeps the public fields and drops the private one, so `workerData: { token }` delivers a plain
+`{ klass, label }` that answers `klass` correctly and fails at the first method call, in another
+thread. The usual fix, `workerData: { token: token.reveal() }`, works and leaves the plaintext in a
+plain string for the life of the thread. `AsyncLocalStorage` is per isolate too, so a reveal in the
+worker has no context.
+
+`toWorkerPayload()` builds a payload out of the wire format and `withWorkerPayload()` rebuilds the
+instances on the far side, with the context's `name`, `reason` and `tags` carried across:
+
+```typescript
+// main thread
+import { Worker } from 'node:worker_threads';
+import { toWorkerPayload } from '@platform-sec/sensitive-string-core';
+
+const worker = new Worker(workerFile, {
+  workerData: toWorkerPayload({ token }, { worker: workerFile, data: { batchSize: 100 } }),
+});
+```
+
+```typescript
+// worker
+import { workerData } from 'node:worker_threads';
+import { withWorkerPayload } from '@platform-sec/sensitive-string-core';
+
+await withWorkerPayload<{ token: SensitiveString<'credential'> }>(
+  workerData,
+  { auditReveal: (value, details) => logger.info('reveal', { klass: value.klass, ...details }) },
+  async ({ token }, data) => {
+    await callApi(token.reveal(), data);
+  },
+);
+```
+
+What crosses is what `serialize()` puts on the wire: the value, its class, its label and its
+deadline. Building the payload is a reveal of each value through the ordinary gate, so an expired,
+revoked or policy-denied value refuses on the sending side, and each value produces one audit record
+with `operation: 'worker-handoff'`, the payload key, and the `worker` name the caller gave.
+
+Four things the boundary changes, each of which the helpers turn into a refusal rather than a
+silent degradation:
+
+- **The audit hook does not cross.** A function does not survive structured clone. A payload built
+  under an audited context arrives marked `audited: true`, and `fromWorkerPayload()` throws
+  `UnauditedWorkerError` unless this side passes `auditReveal`, runs inside a `withRevealContext()`
+  that carries one, or passes `allowUnaudited: true`. The lint rule `no-allow-unaudited` reports the
+  last of those, because it means the sender asked for reveals to be recorded and they will not be.
+- **Policies are per thread.** A class registered with `registerPolicy()` on the main thread does not
+  exist in a worker. `UnregisteredClassError` names the class and says to register it in the
+  worker's own bootstrap; nothing in a payload can install, change or weaken a policy.
+- **A reveal limit cannot cross.** `maxReveals` and the rate-limit window are counters shared by
+  reference, and a thread has no reference to share, so a handoff would give every worker a fresh
+  budget. `toWorkerPayload()` refuses such a value with `UnshareableConstraintError` before reading
+  anything.
+- **The transports disagree.** `workerData`, `postMessage`, `MessagePort` and `BroadcastChannel` use
+  structured clone; `child_process` IPC uses JSON, which drops a function silently where the clone
+  throws, and turns a `Date` into a string and a `Map` into `{}` where the clone keeps them.
+  `transport: 'json'` validates `data` and `tags` for the serializer that will actually run. The one
+  mistake the option cannot catch is its omission: a `Date` in `data` under the default check arrives
+  at a forked child as a string.
+
+`fromWorkerPayload()` consumes the payload: it deletes the raw values from the object it was handed
+and marks it `consumed`. `workerData` is one mutable object shared by every module in the thread, so
+after that a `console.log(workerData)`, a crash handler serializing it, or a dependency walking it no
+longer reads the values, and a second `fromWorkerPayload()` throws `ConsumedWorkerPayloadError`
+rather than rebuilding anything.
+
+That is per copy, not per payload. Every transport clones, so a payload posted to two workers
+arrives twice, whole, and each copy is consumable once; the sender's own object is untouched by
+either. Consumption shortens how long one thread holds plaintext. It is not a use-once token, and
+building one out of it would be a mistake. Before consumption the payload is made of wire objects, so
+`safeStringify`, `safeLog`, `redactInStructure`, `redactCopy` and the logger serializers redact it;
+`JSON.stringify` and `util.inspect` do not, which is the window consumption closes.
+
+The reverse direction needs no options. A worker sending results back builds a payload under its own
+audited context, and a parent `'message'` handler registered inside `withRevealContext()` already has
+an ambient hook, so `fromWorkerPayload(message)` satisfies the requirement as it stands.
+
+#### What this does not fix
+
+Three things a reader who ships `toWorkerPayload()` and believes the worker boundary is now closed
+would be wrong about, all measured:
+
+- **`process.env` is copied into every worker by default.** A service that reads secrets from the
+  environment already has them in every worker it starts. Pass an `env` allowlist to the `Worker`
+  constructor; the `sensitive-env` package is the row that covers the environment itself.
+- **An error crossing back carries its own properties and its stack.** A worker that throws an
+  application error whose `message` holds a raw value delivers that value to the parent's `'error'`
+  handler. The library's own errors put a label and a deadline in the message and never a value; the
+  exposure is in application errors, and it is the same exposure those errors have in-process.
+- **A `revocationRegistry` does not cross.** It is construction state, like the deadline, but unlike
+  the deadline it is a function table and the wire format has never carried one, so a value built
+  with one is rebuilt in the worker without it and stops consulting that list. Instance revocation
+  travels as a flag and the process-global lists are per isolate, so a worker that needs either
+  registers its own. This is the wire format's standing behaviour rather than something the handoff
+  introduced, and `serialize()` across a service boundary loses it the same way.
+- **The plaintext window is shortened, not eliminated.** Deleting a property removes the reference
+  reachable through `workerData`; it does not erase the string from the heap. A heap snapshot, an
+  attached debugger, or `/proc/<pid>/mem` still sees the value until it is collected, which is the
+  same limitation the library has everywhere. `postMessage` after start keeps the window shorter than
+  `workerData`, because a message is garbage once its handler returns where `workerData` lives as
+  long as the thread.
 
 ### NestJS Integration (Example)
 

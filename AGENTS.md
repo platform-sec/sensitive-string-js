@@ -140,7 +140,7 @@ This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under 
   bug.
 - `packages/sensitive-eslint-plugin/src/` contains the ESLint rules, their presets, and the
   parser-agnostic AST helpers they share. It has no dependencies, not even on the core package, and
-  not on `typescript`: five rules read syntax only, and the two that need types reach the checker
+  not on `typescript`: seven rules read syntax only, and the two that need types reach the checker
   structurally through `parserServices`, which whoever configured type-aware linting already built.
   Those two carry `meta.docs.requiresTypeChecking`, which is what `configs.ts` splits the presets on
   and what keeps them out of a preset that runs over plain JavaScript. Their suites lint inside
@@ -166,7 +166,11 @@ Use pnpm 9; the preinstall hook rejects other package managers.
   imports another workspace package by name resolves it through that package's `exports` map, so it
   runs against `dist` rather than source: build before running one of those, or a change to the
   dependency is invisible to the tests that exercise it. Colocated tests that import by relative
-  path are unaffected. This also decides whether a check that a test guards what it claims means
+  path are unaffected, with one exception inside core: the worker fixtures under
+  `packages/sensitive-core/src/__tests__/fixtures/` are `.mjs` files started in a real `Worker` or
+  a forked child, where Vitest's transform cannot reach, so they import the package by name and run
+  against core's own `dist`; `worker-boundary.test.ts` refuses to start without it and says why.
+  This also decides whether a check that a test guards what it claims means
   anything: breaking the dependency on purpose and rerunning proves nothing without the rebuild,
   because the run still exercises the old `dist`, passes, and leaves a vacuous test looking exactly
   like a load bearing one.

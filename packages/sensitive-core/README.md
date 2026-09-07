@@ -159,6 +159,17 @@ it under `NODE_ENV=production` prints a warning, and of `revokeByLabel()`,
 `revokeByPattern()` and `pruneRevocations()`, which defend against a stale
 secret rather than against a hostile caller.
 
+## Worker threads and child processes
+
+`AsyncLocalStorage` is per isolate and `structuredClone` strips an instance to
+`{ klass, label }`, so neither a value nor its context crosses a worker boundary
+on its own. `toWorkerPayload()` builds a payload in the wire format with the
+context's `name`, `reason` and `tags`, and `withWorkerPayload()` rebuilds the
+instances on the far side, installs that side's own audit hook, and deletes the
+raw values from the payload object so `workerData` stops holding plaintext. The
+[main README](../../README.md#worker-threads-and-child-processes) has the full
+account, including the three things the boundary still does not close.
+
 ## API
 
 See the [main README](../../README.md) for full API documentation.

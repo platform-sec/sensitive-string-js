@@ -1,3 +1,4 @@
+import { SensitiveStringError } from './errors.js';
 import { getGlobalSingleton } from './global-state.js';
 import type { SensitivityClass } from './types.js';
 
@@ -53,8 +54,9 @@ export function isInsideRedaction(): boolean {
  * A caller sees this only by catching it inside that `toJSON()`: the walk
  * itself absorbs the throw and redacts the object's own properties instead.
  */
-export class RevealDuringRedactionError extends Error {
+export class RevealDuringRedactionError extends SensitiveStringError {
   override readonly name = 'RevealDuringRedactionError';
+  override readonly code = 'reveal-during-redaction';
 
   constructor(
     readonly klass: SensitivityClass,
