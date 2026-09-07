@@ -16,6 +16,7 @@ import {
   MissingWorkerValueError,
   RenewalNotAllowedError,
   RevealLimitExceededError,
+  RevokedSensitiveValueError,
   SensitiveString,
   UnauditedWorkerError,
   UnportableDataError,
@@ -906,6 +907,30 @@ describe('fromWorkerPayload', () => {
       const payload = crossed(toWorkerPayload({ token: token() }, { context: { name: 'req' } }));
 
       expect(() => fromWorkerPayload(payload)).not.toThrow();
+    });
+  });
+
+  describe('the revocation registry does not cross', () => {
+    it("rebuilds a value the sender's registry refuses, because a function cannot clone", () => {
+      let revokedInStore = false;
+      const registry = { isRevoked: () => revokedInStore };
+      const sender = new SensitiveString(CANARY, 'credential', 'api_key', {
+        revocationRegistry: registry,
+      });
+
+      const payload = crossed(toWorkerPayload({ token: sender }));
+      const { values } = fromWorkerPayload<{ token: SensitiveString<'credential'> }>(payload, {
+        auditReveal: () => undefined,
+      });
+
+      revokedInStore = true;
+
+      // The sender is refused and the copy is not. Nothing on the receiving
+      // side can bind a registry to a rebuilt value: `deserialize()` takes no
+      // options and the constructor is the only place one can be set. A
+      // receiver that needs revocation has to use its own label list.
+      expect(() => sender.reveal({ name: 'parent' })).toThrow(RevokedSensitiveValueError);
+      expect(values.token.reveal({ name: 'worker' })).toBe(CANARY);
     });
   });
 

@@ -184,7 +184,14 @@ context's `name`, `reason` and `tags`, and `withWorkerPayload()` rebuilds the
 instances on the far side, installs that side's own audit hook, and deletes the
 raw values from the payload object so `workerData` stops holding plaintext. The
 [main README](../../README.md#worker-threads-and-child-processes) has the full
-account, including the three things the boundary still does not close.
+account, including the four things the boundary still does not close.
+
+The sharpest of those four: a value that crosses leaves the parent's revocation
+reach entirely. An instance `revoke()`, `revokeByLabel()` and
+`revokeByPattern()` in the parent, and a `revocationRegistry` the value was
+built with, all stop at the boundary, and the receiving side cannot bind a
+registry to a rebuilt value. A worker that must honour revocation keeps its own
+label list.
 
 ## Environment restrictions
 

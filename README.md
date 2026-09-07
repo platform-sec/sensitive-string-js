@@ -2242,7 +2242,7 @@ and its declarative environment restrictions. Building the payload is a reveal o
 revoked or policy-denied value refuses on the sending side, and each value produces one audit record
 with `operation: 'worker-handoff'`, the payload key, and the `worker` name the caller gave.
 
-Four things the boundary changes, each of which the helpers turn into a refusal rather than a
+Five things the boundary changes, each of which the helpers turn into a refusal rather than a
 silent degradation:
 
 - **The audit hook does not cross.** A function does not survive structured clone. A payload built
@@ -2289,7 +2289,7 @@ an ambient hook, so `fromWorkerPayload(message)` satisfies the requirement as it
 
 #### What this does not fix
 
-Three things a reader who ships `toWorkerPayload()` and believes the worker boundary is now closed
+Four things a reader who ships `toWorkerPayload()` and believes the worker boundary is now closed
 would be wrong about, all measured:
 
 - **`process.env` is copied into every worker by default.** A service that reads secrets from the
@@ -2299,12 +2299,23 @@ would be wrong about, all measured:
   application error whose `message` holds a raw value delivers that value to the parent's `'error'`
   handler. The library's own errors put a label and a deadline in the message and never a value; the
   exposure is in application errors, and it is the same exposure those errors have in-process.
-- **A `revocationRegistry` does not cross.** It is construction state, like the deadline, but unlike
-  the deadline it is a function table and the wire format has never carried one, so a value built
-  with one is rebuilt in the worker without it and stops consulting that list. Instance revocation
-  travels as a flag and the process-global lists are per isolate, so a worker that needs either
-  registers its own. This is the wire format's standing behaviour rather than something the handoff
-  introduced, and `serialize()` across a service boundary loses it the same way.
+- **A handoff leaves the parent's revocation reach entirely**, by every mechanism it has. Measured
+  against a real worker: an instance `revoke()` in the parent does not reach the copy, because
+  consumption and revocation are both per copy; `revokeByLabel()` and `revokeByPattern()` in the
+  parent do not reach it either, because those lists are module state and module state is per
+  isolate, the same reason a registered class does not exist in the worker; and a
+  `revocationRegistry` the value was built with is a function table, which does not clone, so the
+  copy is rebuilt without it and stops consulting that store. Nothing on the receiving side can bind
+  one back, because `deserialize()` takes no options and the constructor is the only place a registry
+  can be set.
+
+  What still bites is the worker's *own* label list, matched on the label that crossed, so a worker
+  that must honour revocation calls `revokeByLabel()` in its own bootstrap. Revoking before the
+  handoff is not a way round any of this: the gate refuses to read a revoked value, so
+  `toWorkerPayload()` throws and there is no payload at all. The wire format's `revoked` flag is for
+  a payload assembled by hand or by a gateway that checked its own list; `serialize()` never emits
+  it. None of this is something the handoff introduced, and `serialize()` across a service boundary
+  loses revocation the same way.
 - **The plaintext window is shortened, not eliminated.** Deleting a property removes the reference
   reachable through `workerData`; it does not erase the string from the heap. A heap snapshot, an
   attached debugger, or `/proc/<pid>/mem` still sees the value until it is collected, which is the

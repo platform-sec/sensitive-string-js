@@ -56,8 +56,18 @@ nothing and the plaintext still there.
 
 What it does not do is erase the string from the heap, and the README says so, next to the three
 other things the boundary does not close: `process.env` is copied into every worker by default, an
-application error crossing back carries whatever its message holds, and a `revocationRegistry` is
-construction state the wire format has never carried, so a worker that needs one registers it.
+application error crossing back carries whatever its message holds, and a value that crosses leaves
+the sending side's revocation reach entirely.
+
+That last one is broader than a missing registry, and it is measured against a real thread rather
+than reasoned about. An instance `revoke()` is per copy; `revokeByLabel()` and `revokeByPattern()`
+act on module state, which is per isolate for the same reason policies are; and a
+`revocationRegistry` is a function table, so it does not clone, and nothing on the receiving side can
+bind one back, since `deserialize()` takes no options. What still reaches the copy is the worker's
+own label list, matched on the label that crossed, so a worker that must honour revocation keeps
+one. Revoking before the handoff is not a way round it: the gate refuses to read a revoked value, so
+no payload is built. The wire format's `revoked` flag is for a payload assembled by hand or by a
+gateway that checked its own list, and `serialize()` never emits it.
 
 Three refusals the boundary adds. Policies are per isolate, so a class registered on the main
 thread does not exist in a worker; `UnregisteredClassError` names the class and says to register it

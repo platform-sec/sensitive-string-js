@@ -19,11 +19,14 @@ import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
+  RevokedSensitiveValueError,
   SensitiveString,
   UnauditedWorkerError,
   fromWorkerPayload,
+  pruneRevocations,
   registerPolicy,
   resetPolicies,
+  revokeByLabel,
   toWorkerPayload,
   withRevealContext,
 } from '../index.js';
@@ -282,6 +285,48 @@ describe('workerData', () => {
       expect(crossed.stack ?? '').not.toContain(CANARY);
       return true;
     });
+  });
+});
+
+describe('what a revocation reaches after a handoff', () => {
+  // The parent's reach ends at the boundary, by every mechanism it has. That is
+  // a fact about isolates rather than a decision this library made, and it is
+  // measured here rather than reasoned about, because the shape of it is
+  // surprising: the value the parent refuses is the same value the worker
+  // still reveals.
+  afterEach(() => {
+    pruneRevocations(Date.now() + 1);
+  });
+
+  it("an instance revoke() in the parent does not reach the worker's copy", async () => {
+    const value = token();
+    const payload = toWorkerPayload({ token: value }, { worker: 'worker-consume.mjs' });
+
+    // After the payload holds the plaintext, which is the realistic order: the
+    // handoff happens, then the credential is rotated.
+    value.revoke('rotated');
+    expect(() => value.reveal({ name: 'parent' })).toThrow(RevokedSensitiveValueError);
+
+    const report = await runWorker<ConsumeReport>('worker-consume.mjs', payload);
+
+    expect(report.ok).toBe(true);
+    expect(report.result?.values['token']?.revealed).toBe(CANARY);
+  });
+
+  it("revokeByLabel() in the parent does not reach the worker's copy either", async () => {
+    const payload = toWorkerPayload({ token: token() }, { worker: 'worker-consume.mjs' });
+
+    // The label list is module state, and module state is per isolate: the
+    // same reason a class registered here does not exist in the worker. The
+    // worker's own list is empty, so the worker's own call is the one that
+    // would bite.
+    revokeByLabel('api_key', 'rotated');
+    expect(() => token().reveal({ name: 'parent' })).toThrow(RevokedSensitiveValueError);
+
+    const report = await runWorker<ConsumeReport>('worker-consume.mjs', payload);
+
+    expect(report.ok).toBe(true);
+    expect(report.result?.values['token']?.revealed).toBe(CANARY);
   });
 });
 

@@ -804,6 +804,18 @@ function requirePortable(value: unknown, path: string, transport: WorkerTranspor
  * payload. `fromWorkerPayload()` deletes the raw values from the payload
  * object, which shortens the accident window; it does not erase a string from
  * memory, which nothing in JavaScript can.
+ *
+ * A value that crosses leaves this side's revocation reach entirely, which is
+ * the part of the boundary most easily read backwards. Instance `revoke()` is
+ * per copy; `revokeByLabel()` and `revokeByPattern()` act on module state, and
+ * module state is per isolate; a `revocationRegistry` is a function table, so
+ * it does not clone, and the receiving side cannot bind one to a rebuilt value
+ * because `deserialize()` takes no options. What still reaches the copy is the
+ * worker's own label list, matched on the label that crossed, so a worker that
+ * must honour revocation keeps one. Revoking before the handoff is not a way
+ * round it either: the gate refuses to read a revoked value, so there is no
+ * payload. Measured in `__tests__/worker-boundary.test.ts` against a real
+ * thread.
  */
 export function toWorkerPayload<T extends SensitiveValues<T>>(
   values: T,
