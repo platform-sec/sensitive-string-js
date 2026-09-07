@@ -1848,6 +1848,52 @@ const logger = pino({
 logger.info({ payload: { token: sensitiveToken } }, 'Processing request');
 ```
 
+#### One case where the marker is lost: a wildcard `redact.paths`
+
+If your pino config has a wildcard redaction path, a wrapped value logged as a
+**direct property of the merging argument** serializes as pino's
+`[unable to serialize, circular reference is too complex to analyze]` instead of
+its redaction marker.
+
+```typescript
+const logger = pino({ redact: { paths: ['*.token'] } });
+
+logger.info({ apiKey: sensitiveToken }, 'x');
+// {"apiKey":"[unable to serialize, circular reference is too complex to analyze]"}
+
+logger.info({ payload: { apiKey: sensitiveToken } }, 'x');
+// {"payload":{"apiKey":"[REDACTED:credential]"}}   one level down is fine
+```
+
+Nothing is disclosed: the value does not appear. What is lost is the marker, so
+the line no longer tells you a credential was there. Three things have to hold at
+once, and dropping any one of them avoids it: a **wildcard** entry in
+`redact.paths` (a literal path list is unaffected at any depth), a class instance
+carrying an **ES private field**, and that instance at the **top level** of the
+log object. One level down, or inside an array, renders correctly.
+
+This is not something we can fix from inside the library. The same failure
+reproduces with any class carrying a `#private` field and no `toJSON` at all, and
+does not reproduce with the identical class minus the private field; `Date` and
+plain objects with a `toJSON` are unaffected. `#value` is what makes the wrapped
+value unreadable by reflection, so it is not something we would trade away.
+
+The remedy is one line, and it leaves pino's own redaction working:
+
+```typescript
+const logger = pino({
+  redact: { paths: ['*.token'] },
+  formatters: { log: (o) => JSON.parse(JSON.stringify(o)) },
+});
+
+logger.info({ apiKey: sensitiveToken }, 'x');
+// {"apiKey":"[REDACTED:credential]"}
+```
+
+It matters more than the top-level condition suggests, because `logger.info(data,
+msg)` is the ordinary pino idiom and puts every field of `data` at exactly that
+level. Measured against pino 10.3.1.
+
 ---
 
 ## Zod Integration Deep Dive
