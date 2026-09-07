@@ -1,7 +1,6 @@
-import { SensitiveString } from '@platform-sec/sensitive-string-core';
+import { SensitiveString, containsRedactionMarker } from '@platform-sec/sensitive-string-core';
 import { classifiedColumnNames } from './column.js';
 import { DrizzleParameterRefusedError } from './errors.js';
-import { containsRedactionMarker } from './marker.js';
 import type { LoggerLike, SensitiveLoggerOptions } from './types.js';
 
 /** What a redacted parameter is replaced with. */

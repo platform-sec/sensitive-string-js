@@ -1,6 +1,5 @@
-import { SensitiveString } from '@platform-sec/sensitive-string-core';
+import { SensitiveString, containsRedactionMarker } from '@platform-sec/sensitive-string-core';
 import { TypeOrmParameterRefusedError } from './errors.js';
-import { containsRedactionMarker } from './marker.js';
 
 /**
  * Whether a guard is still installed, read by the wrappers it left on runners.

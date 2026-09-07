@@ -193,8 +193,19 @@ export {
   getRegisteredClasses,
   resetPolicies,
   defaultCombineClasses,
+  policyRegistryVersion,
 } from './policy.js';
 export type { RegisterPolicyOptions } from './policy.js';
+
+// Recognizing this library's own redacted output, for the guards that refuse to
+// hand a redaction onward: a write that would persist one, a request body that
+// would transmit one, a column read that hands one back as if it were a value.
+export {
+  containsRedactionMarker,
+  redactionMatchers,
+  resetRedactionMarkerCache,
+  MARKER_PREFIX,
+} from './redaction-marker.js';
 
 // Context management
 export {

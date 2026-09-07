@@ -1,5 +1,6 @@
 import {
   SensitiveString,
+  containsRedactionMarker,
   createChildContext,
   getCurrentRevealContext,
   getDevModeConfig,
@@ -7,7 +8,6 @@ import {
 } from '@platform-sec/sensitive-string-core';
 import type { RevealContext, SensitivityClass } from '@platform-sec/sensitive-string-core';
 import { TypeOrmConfigError, TypeOrmMarkerReadError, TypeOrmWriteRefusedError } from './errors.js';
-import { containsRedactionMarker } from './marker.js';
 import { SENSITIVE_TRANSFORMER } from './types.js';
 import type {
   PlainWriteInfo,

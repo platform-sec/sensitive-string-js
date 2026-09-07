@@ -6,7 +6,7 @@ import {
   TypeOrmMarkerReadError,
   TypeOrmWriteRefusedError,
 } from '../errors.js';
-import { redactionMarkers } from '../marker.js';
+import { redactionMatchers } from '@platform-sec/sensitive-string-core';
 import { defineSchema } from '../schema.js';
 import { sensitiveColumn } from '../transformer.js';
 import { CANARY, KEY_CANARY, makeDataSource, rawRows, testSchema } from './fixtures.js';
@@ -73,8 +73,11 @@ describe('the canary sweep', () => {
     });
 
     const cells = await allCells(ds);
-    for (const marker of redactionMarkers()) {
-      expect(cells.filter((c) => c.value.includes(marker))).toEqual([]);
+    for (const matcher of redactionMatchers()) {
+      const holding = cells.filter((c) =>
+        typeof matcher === 'string' ? c.value.includes(matcher) : c.value.search(matcher) !== -1
+      );
+      expect(holding).toEqual([]);
     }
   });
 
@@ -354,15 +357,18 @@ describe('DDL and composition', () => {
     expect(read[0]?.v.reveal({ name: 't' })).toBe('MIXED');
   });
 
-  it('transforms the marker instead of the value when the array is reversed', async () => {
-    // The order is load bearing and this is why. With this package second, the
-    // first transformer sees the instance rather than a string, stringifies it
-    // through toString(), and what gets stored is a transformed redaction
-    // marker. The write refusal does not catch it and cannot: the marker has
-    // already been through the other transformer by the time this package sees
-    // the value, and a real encryption transformer would hand over ciphertext
-    // that matches nothing. The array order is the whole defence, so it is
-    // asserted here rather than described in a README.
+  it('refuses a reversed array whose transform leaves the marker recognisable', async () => {
+    // The order is load bearing. With this package second, the first
+    // transformer sees the instance rather than a string, stringifies it
+    // through toString(), and hands this package a redaction marker that has
+    // already been through the other transform.
+    //
+    // Whether the write refusal catches that depends on what the other
+    // transform did to it, and this case it does catch: uppercasing does not
+    // touch `[REDACTED:`, and the detector matches on that prefix rather than
+    // on the exact per-class marker. It did not catch it before the detector
+    // moved to core, where two copies enumerated the registry and looked for
+    // `[REDACTED:sensitive]` exactly, which uppercasing defeats.
     const schema = testSchema();
     const upper = { to: (v: unknown) => String(v).toUpperCase(), from: (v: unknown) => v };
     const Reversed = new EntitySchema({
@@ -380,11 +386,48 @@ describe('DDL and composition', () => {
       entities: [Reversed],
     });
     await ds.initialize();
-    await ds.getRepository('Reversed').insert({ v: new SensitiveString('mixed', 'sensitive') });
+
+    await expect(
+      ds.getRepository('Reversed').insert({ v: new SensitiveString('mixed', 'sensitive') })
+    ).rejects.toThrow(TypeOrmWriteRefusedError);
 
     const stored = await rawRows<{ v: string }>(ds, 'SELECT v FROM reversed');
-    expect(stored[0]?.v).toBe('[REDACTED:SENSITIVE]');
-    expect(stored[0]?.v).not.toContain('MIXED');
+    expect(stored).toEqual([]);
+  });
+
+  it('stores a transformed marker when the reversed transform destroys it', async () => {
+    // The half the refusal cannot reach, and the reason array order is the
+    // defence rather than the guard. A transform that renders the marker
+    // unrecognisable hands this package a string that matches nothing, and a
+    // real encryption transformer is exactly that: ciphertext. The value is
+    // already gone by then, so what lands in the column is an encoded
+    // redaction rather than the secret, which is the failure this asserts
+    // rather than a leak.
+    const schema = testSchema();
+    const b64 = {
+      to: (v: unknown) => Buffer.from(String(v)).toString('base64'),
+      from: (v: unknown) => v,
+    };
+    const Encoded = new EntitySchema({
+      name: 'Encoded',
+      tableName: 'encoded',
+      columns: {
+        id: { type: Number, primary: true, generated: true },
+        v: { type: String, transformer: [b64, schema.column('users.email')] },
+      },
+    });
+    ds = new DataSource({
+      type: 'better-sqlite3',
+      database: ':memory:',
+      synchronize: true,
+      entities: [Encoded],
+    });
+    await ds.initialize();
+    await ds.getRepository('Encoded').insert({ v: new SensitiveString('mixed', 'sensitive') });
+
+    const stored = await rawRows<{ v: string }>(ds, 'SELECT v FROM encoded');
+    expect(stored[0]?.v).toBe(Buffer.from('[REDACTED:sensitive]').toString('base64'));
+    expect(Buffer.from(stored[0]?.v ?? '', 'base64').toString()).not.toContain('mixed');
   });
 });
 

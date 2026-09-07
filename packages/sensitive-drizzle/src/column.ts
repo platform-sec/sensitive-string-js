@@ -1,5 +1,6 @@
 import {
   SensitiveString,
+  containsRedactionMarker,
   createChildContext,
   getCurrentRevealContext,
   getDevModeConfig,
@@ -12,7 +13,6 @@ import {
   DrizzleMarkerReadError,
   DrizzleWriteRefusedError,
 } from './errors.js';
-import { containsRedactionMarker } from './marker.js';
 import type {
   ColumnClassification,
   ColumnLike,

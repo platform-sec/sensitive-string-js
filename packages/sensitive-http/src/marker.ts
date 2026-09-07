@@ -1,4 +1,4 @@
-import { getPolicy, getRegisteredClasses } from '@platform-sec/sensitive-string-core';
+import { MARKER_PREFIX, redactionMatchers } from '@platform-sec/sensitive-string-core';
 
 import { MarkerLeakError } from './errors.js';
 
@@ -12,26 +12,23 @@ import { MarkerLeakError } from './errors.js';
  * in development instead of at the first 401 in production. The other four
  * stringify, so the marker in the outgoing bytes is the only evidence left, and
  * this module is what reads it.
+ *
+ * What a marker looks like is core's question and is answered by
+ * `redactionMatchers()`, which derives it from the policy registry. What is
+ * this package's own is the encodings a request applies on the way out, which
+ * is the rest of this file.
  */
+
+export { MARKER_PREFIX };
 
 /**
- * Two probes handed to a policy's `redact` to learn what its marker looks like.
+ * Every needle the guard should look for.
  *
- * Two rather than one, and of different lengths, because one probe cannot tell
- * a constant redactor from a value-dependent one. A policy that echoes part of
- * the value gives itself away on the first probe; a policy that renders
- * `len:29` does not, and a needle derived from it would fire on unrelated
- * traffic while missing every real marker. Two probes that disagree is the test
- * for both, and such a policy is expected to declare `markerPattern` instead.
- *
- * Both are non-secret and conspicuous, so a needle accidentally derived from
- * one would be inert rather than dangerous.
+ * Core's, unchanged. It was derived here first and moved down once a second and
+ * third row needed the same answer; the two written for a database missed
+ * `markerPattern`, which is the field core added for this guard.
  */
-const PROBE_A = 'SENSITIVE_STRING_MARKER_PROBE';
-const PROBE_B = 'SENSITIVE_STRING_MARKER_PROBE_OF_A_DELIBERATELY_DIFFERENT_LENGTH';
-
-/** The prefix every default policy in core produces. */
-export const MARKER_PREFIX = '[REDACTED:';
+export const markerMatchers = redactionMatchers;
 
 /**
  * Base64 needles for `MARKER_PREFIX`, one per byte alignment.
@@ -49,59 +46,6 @@ export const MARKER_PREFIX = '[REDACTED:';
  * | 2 mod 3 | `REDACTED:` | `UkVEQUNURUQ6` |
  */
 export const BASE64_NEEDLES: readonly string[] = ['W1JFREFDVEVE', 'RURBQ1RF', 'UkVEQUNURUQ6'];
-
-/**
- * Every needle the guard should look for, built at call time.
- *
- * At call time rather than at module load, and derived rather than hardcoded,
- * for two reasons that are the same reason: an application may
- * `registerPolicy()` a custom redaction format, and it may register a class
- * this package has never heard of. A hardcoded list would miss both, and
- * missing means sending the marker.
- *
- * A policy whose `redact` is value-dependent returns something containing the
- * probe, so no literal needle can be derived from it. Such a policy is expected
- * to set `markerPattern`; when it does not, only `MARKER_PREFIX` covers it, and
- * a policy that does not use that prefix is not covered at all.
- */
-export function markerMatchers(): readonly (string | RegExp)[] {
-  const matchers: (string | RegExp)[] = [MARKER_PREFIX];
-
-  for (const klass of getRegisteredClasses()) {
-    const policy = getPolicy(klass);
-
-    // Declared on `SensitivityPolicy` by core, and `deterministicRedaction()`
-    // is the first policy to set it. Checked rather than trusted, because a
-    // policy arrives from an application and the field is optional.
-    if (policy.markerPattern instanceof RegExp) {
-      matchers.push(policy.markerPattern);
-    }
-
-    let first: string;
-    let second: string;
-
-    try {
-      first = policy.redact(PROBE_A);
-      second = policy.redact(PROBE_B);
-    } catch {
-      // A policy that refuses to redact a probe cannot contribute a needle.
-      // The prefix above still covers the default format.
-      continue;
-    }
-
-    if (typeof first !== 'string' || first === '' || first !== second) {
-      continue;
-    }
-
-    const redacted = first;
-
-    if (!matchers.includes(redacted)) {
-      matchers.push(redacted);
-    }
-  }
-
-  return matchers;
-}
 
 export interface MarkerScanOptions {
   /**

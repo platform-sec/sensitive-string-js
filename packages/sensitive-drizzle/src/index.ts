@@ -85,7 +85,14 @@ export { drizzleScrubFragment } from './scrub.js';
 
 export { hydrateRawRows } from './raw.js';
 
-export { containsRedactionMarker, redactionMarkers, resetMarkerCache } from './marker.js';
+// Recognizing a redaction marker is core's, shared with every other guard that
+// refuses to hand one onward. Re-exported so a caller holding this package does
+// not need a second import to write the assertion.
+export {
+  containsRedactionMarker,
+  redactionMatchers,
+  resetRedactionMarkerCache,
+} from '@platform-sec/sensitive-string-core';
 
 export type {
   CheckOptions,

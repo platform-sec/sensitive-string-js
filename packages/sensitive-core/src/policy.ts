@@ -76,6 +76,25 @@ const policyRegistry = getGlobalSingleton(
 );
 
 /**
+ * How many times the registry has changed.
+ *
+ * A cache over the registry cannot be keyed on the set of class *names*: an
+ * `overwrite` re-registration replaces a policy's `redact` while leaving the
+ * name set identical, so anything memoized against the names keeps answering
+ * from the previous policy. This counter moves on every mutation, including
+ * that one, which is what {@link redactionMatchers} keys its memo on.
+ *
+ * A singleton for the same reason the registry is one: two physical copies of
+ * core share the registry, so they must share its version too.
+ */
+const registryVersion = getGlobalSingleton('policy-registry-version', () => ({ value: 0 }));
+
+/** The registry's current version. Increments on every registration and reset. */
+export function policyRegistryVersion(): number {
+  return registryVersion.value;
+}
+
+/**
  * Options for registering a policy.
  */
 export interface RegisterPolicyOptions {
@@ -137,6 +156,7 @@ export function registerPolicy(policy: SensitivityPolicy, opts: RegisterPolicyOp
   }
 
   policyRegistry.set(policy.name, policy);
+  registryVersion.value += 1;
 }
 
 /**
@@ -182,4 +202,5 @@ export function resetPolicies(): void {
   for (const policy of DEFAULT_POLICIES) {
     policyRegistry.set(policy.name, policy);
   }
+  registryVersion.value += 1;
 }

@@ -1,4 +1,4 @@
-import { SensitiveString } from '@platform-sec/sensitive-string-core';
+import { SensitiveString, containsRedactionMarker } from '@platform-sec/sensitive-string-core';
 import type { RevealContext, SensitivityClass } from '@platform-sec/sensitive-string-core';
 
 import { SecretWriteRefusedError } from './errors.js';
@@ -24,9 +24,6 @@ import type { FieldMap, ResolvedSecretRef, SecretRef, SecretSource } from './typ
 
 /** Any wrapped value, whatever its class. */
 type AnySensitive = SensitiveString<SensitivityClass>;
-
-/** The marker every default policy in core produces. */
-const MARKER = '[REDACTED:';
 
 /** What a provider's write call accepts. */
 export type WritePayload =
@@ -75,7 +72,12 @@ function refuseMarkers(
   ref: SecretRef
 ): void {
   for (const { field, value } of values) {
-    if (!value.includes(MARKER)) {
+    // Core's detector rather than a literal. It knows the default prefix, the
+    // constant redaction of any policy an application registered, and the
+    // `markerPattern` a value-dependent one declares, none of which a hardcoded
+    // string reaches. A deployment that customised its redaction had no
+    // protection here before, and nothing said so.
+    if (!containsRedactionMarker(value)) {
       continue;
     }
 

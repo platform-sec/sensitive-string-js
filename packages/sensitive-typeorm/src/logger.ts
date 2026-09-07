@@ -1,5 +1,4 @@
-import { SensitiveString } from '@platform-sec/sensitive-string-core';
-import { containsRedactionMarker } from './marker.js';
+import { SensitiveString, containsRedactionMarker } from '@platform-sec/sensitive-string-core';
 import type { DataSchema } from './schema.js';
 
 /** The part of TypeORM's `Logger` this package wraps. */

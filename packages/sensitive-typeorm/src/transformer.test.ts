@@ -9,7 +9,7 @@ import {
 import type { AuditContext, RevealContext } from '@platform-sec/sensitive-string-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TypeOrmConfigError, TypeOrmMarkerReadError, TypeOrmWriteRefusedError } from './errors.js';
-import { resetMarkerCache } from './marker.js';
+import { resetRedactionMarkerCache } from '@platform-sec/sensitive-string-core';
 import { brandOf, resetPlainWriteReports, sensitiveColumn } from './transformer.js';
 import { SENSITIVE_TRANSFORMER } from './types.js';
 import { CANARY } from './__tests__/fixtures.js';
@@ -247,7 +247,7 @@ describe('the brand', () => {
 describe('a custom policy', () => {
   afterEach(() => {
     resetPolicies();
-    resetMarkerCache();
+    resetRedactionMarkerCache();
   });
 
   it('has its marker recognised on both the read and the write path', () => {
@@ -261,7 +261,7 @@ describe('a custom policy', () => {
       },
       { overwrite: true }
     );
-    resetMarkerCache();
+    resetRedactionMarkerCache();
 
     const transformer = sensitiveColumn('sensitive', options);
     expect(() => transformer.to('<<gone>>')).toThrow(TypeOrmWriteRefusedError);

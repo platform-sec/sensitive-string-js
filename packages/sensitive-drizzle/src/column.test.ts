@@ -20,14 +20,14 @@ import {
   DrizzleMarkerReadError,
   DrizzleWriteRefusedError,
 } from './errors.js';
-import { resetMarkerCache } from './marker.js';
+import { resetRedactionMarkerCache } from '@platform-sec/sensitive-string-core';
 
 const CANARY = 'LEAKED_SECRET_abc123xyz';
 
 beforeEach(() => {
   resetPlainWriteReports();
   resetClassifiedColumnNames();
-  resetMarkerCache();
+  resetRedactionMarkerCache();
 });
 
 describe('sensitiveMapping', () => {
@@ -150,14 +150,14 @@ describe('sensitiveMapping', () => {
         },
         { overwrite: true }
       );
-      resetMarkerCache();
+      resetRedactionMarkerCache();
       try {
         const mapping = sensitiveMapping('sensitive', 'text', 'email');
         expect(() => mapping.toDriver('<<gone>>')).toThrow(DrizzleWriteRefusedError);
         expect(() => mapping.fromDriver('<<gone>>')).toThrow(DrizzleMarkerReadError);
       } finally {
         resetPolicies();
-        resetMarkerCache();
+        resetRedactionMarkerCache();
       }
     });
   });

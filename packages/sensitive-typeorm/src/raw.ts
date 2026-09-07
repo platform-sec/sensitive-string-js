@@ -1,7 +1,6 @@
-import { SensitiveString } from '@platform-sec/sensitive-string-core';
+import { SensitiveString, containsRedactionMarker } from '@platform-sec/sensitive-string-core';
 import type { SensitivityClass } from '@platform-sec/sensitive-string-core';
 import { TypeOrmMarkerReadError } from './errors.js';
-import { containsRedactionMarker } from './marker.js';
 import type { HydrateRawOptions } from './types.js';
 
 /** The part of a `DataSchema` this module needs, so the two do not import each other. */

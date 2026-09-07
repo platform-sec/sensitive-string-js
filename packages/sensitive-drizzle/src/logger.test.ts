@@ -11,7 +11,7 @@ import {
   sensitiveLogger,
   touchesClassifiedColumn,
 } from './logger.js';
-import { resetMarkerCache } from './marker.js';
+import { resetRedactionMarkerCache } from '@platform-sec/sensitive-string-core';
 import type { LoggerLike } from './types.js';
 
 const CANARY = 'LEAKED_SECRET_abc123xyz';
@@ -23,7 +23,7 @@ function recorder(): LoggerLike & { lines: [string, unknown[]][] } {
 
 beforeEach(() => {
   resetClassifiedColumnNames();
-  resetMarkerCache();
+  resetRedactionMarkerCache();
 });
 
 describe('assertParametersSafe', () => {

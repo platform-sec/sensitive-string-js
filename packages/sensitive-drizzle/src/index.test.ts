@@ -23,7 +23,8 @@ describe('the public surface', () => {
       'redactParameters',
       'loggerBrand',
       'containsRedactionMarker',
-      'redactionMarkers',
+      'redactionMatchers',
+      'resetRedactionMarkerCache',
     ]) {
       expect(index).toHaveProperty(name);
     }
