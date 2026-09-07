@@ -64,6 +64,9 @@ const raw = apiKey.reveal({ name: 'api-call', reason: 'authenticating' });
   Password storage lives in `@platform-sec/sensitive-string-kdf`, since a fast digest is the wrong
   tool for it
 - **Path-Based Wrapping**: Wrap sensitive fields in complex objects by path
+- **Environment Restrictions**: `restrictions` says where a value may be read, checked against a
+  process-global `setEnvironmentInfo()` declaration on every access, carried by derived values and
+  across the wire
 - **Development Mode**: `setDevMode()` records where a value came from, how often it has been
   exposed and from where, off by default and behind one guard when it is
 - **Deterministic Redaction**: `deterministicRedaction()` registers a policy whose redacted output
@@ -153,14 +156,24 @@ appear in inspection and audit metadata without exposing the protected value.
 ## Process-global state
 
 The policy registry, the reveal-context storage, the development mode
-configuration and the revocation lists are shared across duplicate installed
-copies of core through `Symbol.for()`. Policy registration is mutable
-process-global configuration: it protects against accidental misuse and
-misconfiguration, but code already executing in the process can replace a policy
-and must be trusted. The same is true of `setDevMode()`, which is why enabling
-it under `NODE_ENV=production` prints a warning, and of `revokeByLabel()`,
-`revokeByPattern()` and `pruneRevocations()`, which defend against a stale
-secret rather than against a hostile caller.
+configuration, the revocation lists and the environment declaration are shared
+across duplicate installed copies of core through `Symbol.for()`. Policy
+registration is mutable process-global configuration: it protects against
+accidental misuse and misconfiguration, but code already executing in the
+process can replace a policy and must be trusted. The same is true of
+`setDevMode()`, which is why enabling it under `NODE_ENV=production` prints a
+warning, and of `revokeByLabel()`, `revokeByPattern()` and
+`pruneRevocations()`, which defend against a stale secret rather than against a
+hostile caller.
+
+`setEnvironmentInfo()` is the same kind of state and carries the same caveat.
+`lockEnvironmentInfo()` freezes it for the rest of the process, which is what
+makes an environment restriction worth anything after startup, and
+`resetEnvironmentInfo()` clears both the environment and the lock for test
+isolation. That reset is the honest statement of what the lock is worth: the
+threat is a misconfigured deploy, not code already running in the process. Each
+singleton is per isolate, so a worker thread declares its own environment or
+reports `unknown` with no region, which refuses every allowlist.
 
 ## Worker threads and child processes
 
@@ -172,6 +185,21 @@ instances on the far side, installs that side's own audit hook, and deletes the
 raw values from the payload object so `workerData` stops holding plaintext. The
 [main README](../../README.md#worker-threads-and-child-processes) has the full
 account, including the three things the boundary still does not close.
+
+## Environment restrictions
+
+`restrictions` on the constructor options says where a value may be read: an
+environment, a region with an optional trailing `*`, a datacenter, or a
+predicate handed the frozen `EnvironmentInfo`. The check lives in the same
+raw-value gate expiry, revocation and reveal limits do, so every operation that
+reaches the value refuses together, `renew()` with them, and redaction keeps
+working. Derived values
+carry the restriction, and declarative restrictions cross `serialize()`; a
+custom function has no wire form, so a value carrying one refuses to serialize
+rather than arriving half enforced. The [main
+README](../../README.md#environment-restrictions) has the field table, the rule
+for a field the environment does not state, and what the process-global
+environment does and does not protect.
 
 ## Deterministic redaction
 

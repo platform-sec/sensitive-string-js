@@ -91,6 +91,116 @@ export interface SensitiveStringOptions {
    * `RevocationList` cannot, and answers false.
    */
   revocationRegistry?: RevocationRegistry;
+
+  /**
+   * Where this value may be read: an environment, a region, a datacenter, or a
+   * predicate of the caller's own.
+   *
+   * Checked against the process-global {@link setEnvironmentInfo} declaration
+   * on every read, in the same gate expiry and revocation sit in, so a
+   * substring or a template result is restricted exactly as its source is.
+   *
+   * A list is accepted as well as a single set, and every set has to pass. That
+   * is what lets a value derived from two restricted values carry both, and
+   * what lets the wire format carry them back.
+   */
+  restrictions?: EnvironmentRestrictions | readonly EnvironmentRestrictions[];
+}
+
+/**
+ * Where the process believes it is running.
+ *
+ * Declared once at startup through {@link setEnvironmentInfo}. Every field is
+ * copied when it is declared, so mutating the object afterwards does not move
+ * the environment.
+ */
+export interface EnvironmentInfo {
+  /**
+   * Deployment environment: `development`, `staging`, `production`, `test`, or
+   * whatever this deployment calls them. Compared literally, so the spelling
+   * has to match what a restriction lists.
+   */
+  environment: string;
+
+  /** Cloud region, such as `eu-west-1`. The only field a pattern may match. */
+  region?: string | undefined;
+
+  /** Datacenter identifier. Compared literally. */
+  datacenter?: string | undefined;
+
+  /**
+   * Anything else this deployment wants a custom restriction to be able to read.
+   * Copied and frozen when the environment is declared.
+   */
+  customTags?: Record<string, string> | undefined;
+}
+
+/**
+ * Where a value may be read.
+ *
+ * Every field that is present has to pass. An allowlist and a denylist over the
+ * same field are both applied, so a name on both lists is denied.
+ *
+ * A field the environment does not state is read differently by the two kinds
+ * of list: an allowlist refuses, because "only here" is not satisfied by a
+ * deployment that cannot say where it is, and a denylist passes, because "not
+ * there" concludes nothing from silence.
+ */
+export interface EnvironmentRestrictions {
+  /** Environments this value may be read in. Matched literally. */
+  allowedEnvironments?: readonly string[] | undefined;
+
+  /** Environments this value may not be read in. Matched literally. */
+  deniedEnvironments?: readonly string[] | undefined;
+
+  /**
+   * Regions this value may be read in.
+   *
+   * An entry is a literal region name or a prefix ending in `*`, such as
+   * `eu-*`. A `*` anywhere else is refused at construction rather than matched
+   * as a literal, which would leave the list matching nothing.
+   */
+  allowedRegions?: readonly string[] | undefined;
+
+  /** Regions this value may not be read in. Same pattern rule as the allowlist. */
+  deniedRegions?: readonly string[] | undefined;
+
+  /** Datacenters this value may be read in. Matched literally. */
+  allowedDatacenters?: readonly string[] | undefined;
+
+  /** Datacenters this value may not be read in. Matched literally. */
+  deniedDatacenters?: readonly string[] | undefined;
+
+  /**
+   * A predicate of the caller's own, asked last and handed the frozen
+   * environment.
+   *
+   * It must return `true` to allow the read. Anything else, including a
+   * Promise from an `async` function, is a refusal, and so is a throw.
+   *
+   * A function is not data: a value carrying one cannot be serialized or
+   * handed to a worker, because the far side would enforce the declarative
+   * half and silently not this.
+   */
+  custom?: ((env: Readonly<EnvironmentInfo>) => boolean) | undefined;
+
+  /** What to say when `custom` refuses. Requires `custom`. */
+  customMessage?: string | undefined;
+}
+
+/**
+ * The wire form of {@link EnvironmentRestrictions}.
+ *
+ * The declarative fields and nothing else. `custom` has no wire form, and a
+ * value that carries one refuses to serialize rather than crossing without it.
+ */
+export interface SerializedEnvironmentRestrictions {
+  allowedEnvironments?: string[];
+  deniedEnvironments?: string[];
+  allowedRegions?: string[];
+  deniedRegions?: string[];
+  allowedDatacenters?: string[];
+  deniedDatacenters?: string[];
 }
 
 /**
@@ -612,4 +722,20 @@ export interface SerializedSensitiveString {
   revoked?: true;
   /** Why, for a payload carrying `revoked`. Ignored without it. */
   revocationReason?: string;
+  /**
+   * Where the receiver may read this value.
+   *
+   * Restrictions travel, because a value that may only be read in the EU is
+   * still a value that may only be read in the EU after it crosses a service
+   * boundary, and the receiving process is exactly the one that might be
+   * somewhere else. Like every other field here they may only tighten: a
+   * deserialized value starts with none, so a payload can add restrictions and
+   * has no way to spell the removal of one.
+   *
+   * A list, because a value derived from two restricted values carries both.
+   * An entry with a key this receiver does not know is rejected rather than
+   * ignored, since ignoring it would enforce part of a restriction and report
+   * nothing about the rest.
+   */
+  restrictions?: SerializedEnvironmentRestrictions[];
 }

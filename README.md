@@ -280,6 +280,7 @@ app.post('/payment', async (req, res) => {
 | Threat | Defense |
 |--------|---------|
 | Accidental logging | Automatic redaction in `toString()`, `toJSON()`, `inspect()` |
+| A value used in the wrong deployment or region | [Environment restrictions](#environment-restrictions) refuse the read, and travel with the value across a service boundary |
 | Casual inspection | Private fields (`#value`) inaccessible via reflection |
 | JSON serialization | `toJSON()` returns redacted value |
 | Template literals | `toString()` called, returns redacted value |
@@ -292,6 +293,7 @@ app.post('/payment', async (req, res) => {
 |------------|--------|------------|
 | Memory dumps | JavaScript lacks secure memory primitives | Use `crypto.subtle` for encryption keys |
 | Malicious code | Attacker with code execution can extract values | This is defense-in-depth, not a security boundary |
+| Spoofing the environment | `setEnvironmentInfo()` is process-global and any code can call it before the lock | `lockEnvironmentInfo()` early in startup, from a source you trust; the restriction guards a config mistake, not a caller who wants the value |
 | Worker threads and child processes | `AsyncLocalStorage` is per isolate, and `structuredClone` strips an instance to `{ klass, label }` | [`toWorkerPayload` / `fromWorkerPayload`](#worker-threads-and-child-processes) carry the values and the context explicitly |
 | V8 heap persistence | Raw values may persist until GC | Consider WASM-based secure memory for highest sensitivity |
 
@@ -1046,6 +1048,136 @@ Revocation is a control over the values this process holds. It stops code from u
 somebody took away; it does not erase the secret from memory, it does not reach a raw string that
 was already revealed, and it does not defend against code already executing in the process, which
 can revoke anything or prune anything.
+
+### Environment Restrictions
+
+```typescript
+interface SensitiveStringOptions {
+  restrictions?: EnvironmentRestrictions | readonly EnvironmentRestrictions[];
+}
+
+function setEnvironmentInfo(info: EnvironmentInfo): void;
+function lockEnvironmentInfo(): void;
+function getEnvironmentInfo(): Readonly<EnvironmentInfo>;
+function isEnvironmentLocked(): boolean;
+function resetEnvironmentInfo(): void;   // test isolation; it clears the lock
+```
+
+**The environment is process-global state and any code in the process can set it until the lock is
+on.** This is protection against a value being deployed somewhere it was not meant to run, not
+against a caller who wants the value. A restriction is a guard rail on a config mistake, in the same
+class as `revokeByLabel()` and `setDevMode()`.
+
+Declare where the process is running, once, at startup, and lock it before serving anything:
+
+```typescript
+setEnvironmentInfo({
+  environment: process.env.NODE_ENV ?? 'unknown',
+  region: await instanceRegion(),       // from cloud metadata, not from a request
+  datacenter: process.env.DATACENTER,
+  customTags: { cluster: 'primary' },
+});
+
+lockEnvironmentInfo();
+```
+
+Then say where a value may be read:
+
+```typescript
+const euCustomer = new SensitiveString(pii, 'sensitive', 'eu_pii', {
+  restrictions: { allowedRegions: ['eu-*'] },
+});
+
+const prodKey = new SensitiveString(key, 'credential', 'prod_db', {
+  restrictions: { deniedEnvironments: ['development', 'test'] },
+});
+
+euCustomer.reveal();   // in us-east-1: throws EnvironmentRestrictedError
+```
+
+Six declarative lists and one escape hatch:
+
+| Field | Matched | Notes |
+|---|---|---|
+| `allowedEnvironments`, `deniedEnvironments` | literally | `NODE_ENV` and friends, spelled exactly |
+| `allowedRegions`, `deniedRegions` | literal name or a `*` prefix | `eu-*` is a prefix; `*-east-1` and `eu-*-1` are refused |
+| `allowedDatacenters`, `deniedDatacenters` | literally | |
+| `custom(env)` | your predicate | asked last, handed the frozen `EnvironmentInfo` |
+
+Every field that is present has to pass, so a name on both an allowlist and a denylist is denied.
+The check lives in the same gate expiry, revocation, and reveal limits do, so `mask()`, `hash()`,
+`serialize()`, `map()`, and every string, regex, and template operation refuse alongside `reveal()`.
+So does `equals()`: a value that may not be read in this region must not still answer whether a
+guess matches it here. So does `renew()`, which reads nothing but must not keep extending the life
+of a value this deployment may not use. Redaction and metadata keep working, because a value that
+cannot be used here still has to be safe to log.
+
+Restrictions are read at each access, not at construction, and derived values carry them:
+
+```typescript
+const child = euCustomer.substring(0, 4);   // restricted exactly as its parent is
+```
+
+A value derived from two restricted values carries both, so it is at least as restricted as each of
+them.
+
+**A field the environment does not state is read differently by the two kinds of list.** An
+allowlist refuses, because "only here" is not satisfied by a deployment that cannot say where it is.
+A denylist passes, because "not there" concludes nothing from silence, and reading it the other way
+would refuse every read on every laptop and CI runner that never sets a region. The first time a
+restricted value is read before `setEnvironmentInfo()` has been called, the library warns once on
+`console.warn`, because that is the configuration in which the quiet half of that rule bites.
+
+An empty list, and a restriction set that expresses nothing, are refused at construction rather than
+read either way. `allowedRegions: []` means "no region is allowed" read literally and "every region
+is allowed" read as an omission, and a security control must not pick one of those silently; a
+caller whose configuration came back empty finds out at the call that wrote it.
+
+Restrictions cross the wire, because a value that may only be read in the EU is still that value
+after it crosses a service boundary, and the receiving process is the one that might be somewhere
+else:
+
+```typescript
+euCustomer.serialize();
+// { __sensitive: true, klass: 'sensitive', value, label: 'eu_pii',
+//   restrictions: [{ allowedRegions: ['eu-*'] }] }
+```
+
+Like the `revoked` flag they can only tighten: a deserialized value starts with none, and there is
+no spelling of "no restriction" that lifts one. A payload carrying a restriction key this receiver
+does not know is rejected rather than ignored, because ignoring it would enforce part of a
+restriction and report nothing about the rest.
+
+A `custom` restriction is a function, and a function has no wire form. Such a value refuses to
+serialize with `UnserializableRestrictionError`, and refuses a worker handoff with
+`UnshareableConstraintError`, rather than arriving with the declarative half of its restriction
+enforced and this half silently gone. Express what you can with the lists, or do not transmit the
+value.
+
+That refusal is deliberately not an `EnvironmentRestrictedError`. The two say different things:
+`EnvironmentRestrictedError` means "not here, try where the value allows", and a caller may sensibly
+retry elsewhere on it, while `UnserializableRestrictionError` means "not anywhere", and a caller who
+cannot tell them apart retries in every region forever.
+
+```typescript
+try {
+  euCustomer.reveal();
+} catch (error) {
+  if (error instanceof EnvironmentRestrictedError) {
+    error.restriction;   // 'region'
+    error.currentValue;  // 'us-east-1', or undefined when the environment states none
+    error.allowedValues; // ['eu-*']
+    error.deniedValues;  // undefined
+    error.label;         // 'eu_pii'
+  }
+}
+```
+
+All five are configuration, never any part of the protected value, so the message is safe to log.
+
+Workers have their own environment. `AsyncLocalStorage` is per isolate and so is this singleton, so
+a worker that reads a restricted value must call `setEnvironmentInfo()` itself. Until it does, it
+reports `unknown` with no region, which refuses every allowlist.
 
 ### Development Mode
 
@@ -2024,8 +2156,8 @@ await withWorkerPayload<{ token: SensitiveString<'credential'> }>(
 );
 ```
 
-What crosses is what `serialize()` puts on the wire: the value, its class, its label and its
-deadline. Building the payload is a reveal of each value through the ordinary gate, so an expired,
+What crosses is what `serialize()` puts on the wire: the value, its class, its label, its deadline
+and its declarative environment restrictions. Building the payload is a reveal of each value through the ordinary gate, so an expired,
 revoked or policy-denied value refuses on the sending side, and each value produces one audit record
 with `operation: 'worker-handoff'`, the payload key, and the `worker` name the caller gave.
 
@@ -2044,6 +2176,12 @@ silent degradation:
   reference, and a thread has no reference to share, so a handoff would give every worker a fresh
   budget. `toWorkerPayload()` refuses such a value with `UnshareableConstraintError` before reading
   anything.
+- **A custom environment restriction cannot cross either.** It is a function, which is not data, so
+  a handoff would leave the worker enforcing the declarative half of a restriction and silently not
+  the rest. `toWorkerPayload()` refuses such a value with the same error. Declarative restrictions
+  do cross, and the worker enforces them against its own environment, which it has to declare:
+  `setEnvironmentInfo()` is per isolate, and until the worker calls it the environment reports
+  `unknown` with no region, which refuses every allowlist.
 - **The transports disagree.** `workerData`, `postMessage`, `MessagePort` and `BroadcastChannel` use
   structured clone; `child_process` IPC uses JSON, which drops a function silently where the clone
   throws, and turns a `Date` into a string and a `Map` into `{}` where the clone keeps them.

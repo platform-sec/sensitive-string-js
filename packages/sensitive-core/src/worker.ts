@@ -334,11 +334,16 @@ export class UnportableDataError extends SensitiveStringError {
 /**
  * Raised when a value carries a constraint no other isolate can share.
  *
- * Today that is a reveal budget. The counter is shared by reference between a
- * value and its derivatives, a thread has no reference to share, and the wire
+ * Two things qualify. A reveal budget is a counter shared by reference between
+ * a value and its derivatives; a thread has no reference to share, and the wire
  * format resets counters, so a handoff would hand every worker a fresh budget.
- * The refusal is the rule that a derivative carries its parent's counter or
- * refuses to exist, applied to a transport.
+ * A custom environment restriction is a function, which is not data and cannot
+ * be cloned into another isolate at all, so a handoff would leave the receiving
+ * thread enforcing the declarative half of a restriction and silently not the
+ * rest.
+ *
+ * Both refusals are the rule that a derivative carries its parent's constraint
+ * or refuses to exist, applied to a transport.
  */
 export class UnshareableConstraintError extends SensitiveStringError {
   override readonly name = 'UnshareableConstraintError';
@@ -348,10 +353,26 @@ export class UnshareableConstraintError extends SensitiveStringError {
     readonly key: string,
     readonly constraints: readonly (keyof SensitiveStringOptions)[]
   ) {
+    const limits = constraints.filter((name) => name !== 'restrictions');
+    const carried: string[] = [];
+
+    if (limits.length !== 0) {
+      carried.push(
+        `${limits.join(' and ')}, a reveal limit that another thread cannot share: a handoff ` +
+          'would give the receiving thread a fresh budget'
+      );
+    }
+
+    if (limits.length !== constraints.length) {
+      carried.push(
+        'a custom restriction, which is a function rather than data: a handoff would leave the ' +
+          'receiving thread enforcing only the declarative half of it'
+      );
+    }
+
     super(
-      `Worker payload value '${key}' carries ${constraints.join(' and ')}, a reveal limit ` +
-        'that another thread cannot share. A handoff would give the receiving thread a fresh ' +
-        'budget, so the value is refused rather than the limit silently reset.'
+      `Worker payload value '${key}' carries ${carried.join('; and ')}. The value is refused ` +
+        'rather than the constraint silently reset.'
     );
   }
 }
@@ -759,7 +780,7 @@ function requirePortable(value: unknown, path: string, transport: WorkerTranspor
  * @param values - The instances to carry, keyed however the receiver expects.
  * @param options - Destination, context, non-sensitive data, and transport.
  * @throws TypeError If `values` is not a plain object of instances.
- * @throws UnshareableConstraintError If a value carries a reveal limit.
+ * @throws UnshareableConstraintError If a value carries a reveal limit or a custom environment restriction.
  * @throws UnportableDataError If `data` holds a sensitive value, or `data` or the
  *   context's `tags` would not survive the transport.
  * @throws ExpiredSensitiveValueError, RevokedSensitiveValueError, or whatever

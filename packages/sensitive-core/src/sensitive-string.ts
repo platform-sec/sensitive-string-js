@@ -56,6 +56,16 @@ import {
   type RevocationCell,
   type RevocationRecord,
 } from './revocation.js';
+import {
+  carriesCustomRestriction,
+  checkEnvironmentRestrictions,
+  deserializeRestrictions,
+  NO_RESTRICTIONS,
+  planRestrictions,
+  serializeRestrictions,
+  UnserializableRestrictionError,
+  type ResolvedRestrictions,
+} from './environment.js';
 import { snapshotRegExp } from './regexp.js';
 
 /**
@@ -152,6 +162,14 @@ interface SensitiveStringState {
    * arrives after construction by definition.
    */
   readonly revocation: RevocationCell;
+  /**
+   * Where this value may be read, or `undefined` when it may be read anywhere.
+   *
+   * Frozen at construction, unlike the revocation cell beside it: a restriction
+   * is a property of the value, and the environment it is decided against is
+   * the thing that moves.
+   */
+  readonly restrictions: readonly ResolvedRestrictions[] | undefined;
 }
 
 /** A state that carries reveal limits. */
@@ -188,6 +206,27 @@ function constrainedStates(states: readonly SensitiveStringState[]): readonly Co
   }
 
   return constrained ?? NO_BUDGETS;
+}
+
+/**
+ * Every restriction set these states carry, flattened.
+ *
+ * The same shape as the constrained view above and for the same reason: the
+ * gate dismisses the overwhelmingly common unrestricted case with a length
+ * check instead of walking states that restrict nothing.
+ */
+function restrictedStates(
+  states: readonly SensitiveStringState[]
+): readonly ResolvedRestrictions[] {
+  let restrictions: ResolvedRestrictions[] | undefined;
+
+  for (const state of states) {
+    if (state.restrictions !== undefined) {
+      (restrictions ??= []).push(...state.restrictions);
+    }
+  }
+
+  return restrictions ?? NO_RESTRICTIONS;
 }
 
 /**
@@ -342,6 +381,12 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   #constrained: readonly ConstrainedState[] = NO_BUDGETS;
 
   /**
+   * The restrictions of every state above, flattened, so the gate answers with
+   * a length check on a value that has none.
+   */
+  #restrictions: readonly ResolvedRestrictions[] = NO_RESTRICTIONS;
+
+  /**
    * This instance's own state, or undefined when it was derived from other
    * values. Only an owner may renew: a derivative shares its sources' state by
    * reference, so renewing through one would silently extend the lifetime of
@@ -367,9 +412,9 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param klass - The sensitivity classification ('credential' or 'sensitive')
    * @param label - Optional label for audit/compliance (e.g., 'api_key', 'email')
    * @param options - Shared options for access constraints and feature behavior
-   * @throws Error If both `ttl` and `expiresAt` are given, if only one half of the rate limit is given, or if the class policy requires an expiration and neither is.
+   * @throws Error If both `ttl` and `expiresAt` are given, if only one half of the rate limit is given, if a restriction set expresses no restriction, or if the class policy requires an expiration and neither is.
    * @throws TypeError If `value` is not a string, or an option has the wrong type.
-   * @throws RangeError If `ttl` is negative, `expiresAt` is an invalid Date, or a reveal limit is out of range.
+   * @throws RangeError If `ttl` is negative, `expiresAt` is an invalid Date, a reveal limit is out of range, or a restriction list is empty or holds a pattern that is neither a literal name nor a prefix.
    */
   constructor(value: string, klass: C, label?: string, options?: SensitiveStringOptions) {
     // Anything but a string would still redact, and then fail far from here:
@@ -407,6 +452,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       reveals: 0,
       budget: planRevealBudget(options),
       revocation: planRevocation(options, label),
+      restrictions: planRestrictions(options),
     };
 
     this.#own = state;
@@ -420,9 +466,14 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * behind by a derivation that forgot it. A derivation that dropped the view
    * would hand back an unlimited copy of a value that was meant to be spent.
    */
-  #adopt(states: readonly SensitiveStringState[], constrained?: readonly ConstrainedState[]): void {
+  #adopt(
+    states: readonly SensitiveStringState[],
+    constrained?: readonly ConstrainedState[],
+    restricted?: readonly ResolvedRestrictions[]
+  ): void {
     this.#states = states;
     this.#constrained = constrained ?? constrainedStates(states);
+    this.#restrictions = restricted ?? restrictedStates(states);
   }
 
   /**
@@ -534,6 +585,17 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       throw new ExpiredSensitiveValueError(new Date(expired), new Date(), this.label);
     }
 
+    // After the deadline and before the budget, which is the order the
+    // restriction was specified in, and before the policy hook and the audit
+    // hook for the reason the two above are: a refused read is not a reveal.
+    // A comparison is checked too. Rule R2 names `equals()` as a read for the
+    // purposes of expiry, revocation and restrictions alike: a value that may
+    // not be read in this region must not still be able to answer whether a
+    // guess matches it here.
+    if (this.#restrictions.length !== 0) {
+      checkEnvironmentRestrictions(this.#restrictions, this.label);
+    }
+
     // The same rule one step later, and the same reason the budget is decided
     // here but charged below: a refusal is not a reveal, and neither is a read
     // an audit hook stopped. A comparison is not charged and so is not refused
@@ -584,7 +646,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     // what the derivative needs. `#states` is assigned once and never mutated,
     // and the state objects are shared between derivatives by design.
     if (only !== undefined) {
-      derived.#adopt(only.#states, only.#constrained);
+      derived.#adopt(only.#states, only.#constrained, only.#restrictions);
       return derived;
     }
 
@@ -610,7 +672,15 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     deriveSensitiveString = (value, klass, label, sources) =>
       SensitiveString.#derived(value, klass, label, sources);
     serializeSensitiveString = (value, ctx, details) => value.#serialize(ctx, details);
-    unshareableConstraints = (value) => unshareableBudgetOptions(value.#constrained);
+    unshareableConstraints = (value) => {
+      const names = [...unshareableBudgetOptions(value.#constrained)];
+
+      if (carriesCustomRestriction(value.#restrictions)) {
+        names.push('restrictions');
+      }
+
+      return names;
+    };
   }
 
   /**
@@ -962,13 +1032,18 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * The extension is audited before it takes effect, so an audit sink that
    * throws stops it, and a refused renewal leaves no record of one that never
    * happened. Renewing is not a read: it does not disclose the value, and it
-   * works on an expired one.
+   * works on an expired one. It does not work on a revoked one, or on one this
+   * environment may not read, because neither of those is a lapsed deadline:
+   * both say the value must not be used here, and extending its life is using
+   * it.
    *
    * @param additionalTtl - Milliseconds to add. Must be positive.
    * @param options - `maxExtension` clamps the resulting deadline.
    * @param ctx - Optional reveal context for authorization and auditing.
    * @throws RenewalNotAllowedError If renewal is refused, or a cap leaves no room to extend.
    * @throws RangeError If `additionalTtl` is not a positive, finite number.
+   * @throws RevokedSensitiveValueError If the value has been revoked.
+   * @throws EnvironmentRestrictedError If this environment may not read the value.
    *
    * @example
    * ```ts
@@ -997,6 +1072,15 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
         revoked.scope,
         revoked.cause
       );
+    }
+
+    // The same reason, one restriction along: renewal does not read the value,
+    // so nothing else here consults the environment, and without this a process
+    // the value forbids could keep extending its life. Reading it is the thing
+    // the restriction denies, and a lifecycle control that keeps working where
+    // the value does not is one somebody will mistake for the value working.
+    if (this.#restrictions.length !== 0) {
+      checkEnvironmentRestrictions(this.#restrictions, this.label);
     }
 
     const { expiry } = own;
@@ -1625,9 +1709,16 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * emitting the wire format's `revoked` flag. That flag is for the receiving
    * side, and `deserialize()` honours it.
    *
+   * Environment restrictions travel too, so a value that may only be read in
+   * the EU is still restricted to the EU on the other side. A restriction that
+   * is a function does not travel and cannot: such a value refuses to
+   * serialize rather than arriving with half of its restriction enforced.
+   *
    * @param ctx - Optional context for audit/permission checks
    * @throws ExpiredSensitiveValueError If the value has expired.
    * @throws RevokedSensitiveValueError If the value has been revoked.
+   * @throws EnvironmentRestrictedError If this environment may not read the value.
+   * @throws UnserializableRestrictionError If the value carries a custom restriction.
    */
   serialize(ctx?: RevealContext): SerializedSensitiveString {
     return this.#serialize(ctx, REVEAL_AUDIT_DETAILS);
@@ -1640,6 +1731,14 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * as one, through `serializeSensitiveString`. Same gate, same access kind.
    */
   #serialize(ctx: RevealContext | undefined, details: RevealDetails): SerializedSensitiveString {
+    // Before the read, so a value that cannot cross intact is refused without
+    // being revealed or audited. A function has no wire form: emitting the
+    // declarative half and dropping this would hand the receiver a value it
+    // believes it has fully checked.
+    if (carriesCustomRestriction(this.#restrictions)) {
+      throw new UnserializableRestrictionError(this.label);
+    }
+
     const value = this.#readRawValue('expose', ctx, details);
     const deadline = this.#earliestDeadline();
 
@@ -1655,6 +1754,10 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
 
     if (deadline !== undefined) {
       serialized.expiresAt = isoDeadline(deadline);
+    }
+
+    if (this.#restrictions.length !== 0) {
+      serialized.restrictions = serializeRestrictions(this.#restrictions);
     }
 
     return serialized;
@@ -1759,13 +1862,17 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   /**
    * Rebuild the construction options carried by a serialized form.
    *
-   * Only the deadline crosses. Renewal permission and renewal counts are
-   * decided locally, by the receiving process's policy: taking them from a
-   * payload would let a sender declare a credential renewable.
+   * The deadline and the environment restrictions cross, and nothing else.
+   * Both only ever narrow what the receiver may do. Renewal permission and
+   * renewal counts are decided locally, by the receiving process's policy:
+   * taking them from a payload would let a sender declare a credential
+   * renewable.
    */
   static #deserializeOptions(serialized: object): SensitiveStringOptions | undefined {
+    const restrictions = deserializeRestrictions(serialized);
+
     if (!('expiresAt' in serialized) || serialized.expiresAt === undefined) {
-      return undefined;
+      return restrictions === undefined ? undefined : { restrictions };
     }
 
     if (typeof serialized.expiresAt !== 'string') {
@@ -1780,7 +1887,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       );
     }
 
-    return { expiresAt };
+    return restrictions === undefined ? { expiresAt } : { expiresAt, restrictions };
   }
 
   /**

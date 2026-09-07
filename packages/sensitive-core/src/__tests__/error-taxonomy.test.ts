@@ -81,6 +81,17 @@ const SAMPLES: readonly (readonly [string, SensitiveStringError, string])[] = [
     'unshareable-constraint',
   ],
   [
+    'EnvironmentRestrictedError',
+    new core.EnvironmentRestrictedError('region', 'us-east-1', ['eu-*'], undefined, 'eu_pii'),
+    'environment-restricted',
+  ],
+  ['EnvironmentLockedError', new core.EnvironmentLockedError(), 'environment-locked'],
+  [
+    'UnserializableRestrictionError',
+    new core.UnserializableRestrictionError('eu_pii'),
+    'unserializable-restriction',
+  ],
+  [
     'DeterministicRedactionNotAllowedError',
     new core.DeterministicRedactionNotAllowedError('credential'),
     'deterministic-redaction-refused',

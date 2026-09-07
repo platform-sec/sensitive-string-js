@@ -57,6 +57,9 @@ export type {
   RevealDetails,
   RevocationRegistry,
   RevocationScope,
+  EnvironmentInfo,
+  EnvironmentRestrictions,
+  SerializedEnvironmentRestrictions,
   RevokeAuditDetails,
   WorkerHandoffAuditDetails,
   ISensitiveString,
@@ -88,6 +91,21 @@ export {
   revocationCount,
 } from './revocation.js';
 export type { RevocationRecord } from './revocation.js';
+
+// Environment and region restrictions. The environment is process-global
+// configuration under rule R6: it protects against a value being deployed
+// somewhere it was not meant to run, not against a caller who wants it.
+export {
+  setEnvironmentInfo,
+  getEnvironmentInfo,
+  lockEnvironmentInfo,
+  isEnvironmentLocked,
+  resetEnvironmentInfo,
+  EnvironmentRestrictedError,
+  EnvironmentLockedError,
+  UnserializableRestrictionError,
+} from './environment.js';
+export type { RestrictionKind } from './environment.js';
 
 // Worker thread and child process handoff
 export {
