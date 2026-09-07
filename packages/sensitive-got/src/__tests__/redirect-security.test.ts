@@ -139,8 +139,10 @@ describe('allowedHosts: strip', () => {
     // revealed nowhere and stripped by nothing.
     origin.reply({ status: 302, headers: { location: `${second.origin}/landing` } });
 
+    // got's own header type takes strings, so the descriptor is cast past it
+    // the way the undici wire test hands a raw instance to a bare client.
     const api = createSensitiveGot(
-      instance(origin).extend({ headers: { 'x-api-key': apiKey(token()) } }),
+      instance(origin).extend({ headers: { 'x-api-key': apiKey(token()) as unknown as string } }),
       { allowInsecureTransport: true, allowedHosts: 'strip' }
     );
 

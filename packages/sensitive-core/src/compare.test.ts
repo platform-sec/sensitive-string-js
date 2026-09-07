@@ -41,7 +41,7 @@ describe('constantTimeEquals', () => {
     const composed = '\u00e9';
     const decomposed = 'e\u0301';
 
-    expect(composed === decomposed).toBe(false);
+    expect(composed).not.toBe(decomposed);
     expect(constantTimeEquals(composed, decomposed)).toBe(false);
     expect(constantTimeEquals(composed, composed)).toBe(true);
   });
