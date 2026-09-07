@@ -295,8 +295,71 @@ app.post('/payment', async (req, res) => {
 | Malicious code | Attacker with code execution can extract values | This is defense-in-depth, not a security boundary |
 | Spoofing the environment | `setEnvironmentInfo()` is process-global and any code can call it before the lock | `lockEnvironmentInfo()` early in startup, from a source you trust; the restriction guards a config mistake, not a caller who wants the value |
 | Worker threads and child processes | `AsyncLocalStorage` is per isolate, and `structuredClone` strips an instance to `{ klass, label }` | [`toWorkerPayload` / `fromWorkerPayload`](#worker-threads-and-child-processes) carry the values and the context explicitly |
-| V8 heap persistence | Raw values may persist until GC | Consider WASM-based secure memory for highest sensitivity |
+| V8 heap persistence | Raw values may persist until GC, and a derived value can [retain the original](#derived-values-can-retain-the-original) | Consider WASM-based secure memory for highest sensitivity |
 
+### Derived values can retain the original
+
+V8 does not always copy when you take a piece of a string. A **SlicedString**,
+which `slice()` and `substring()` produce whenever the result is 13 characters
+or longer, is a pointer to a range of its parent rather than a copy. Shorter
+results are copied.
+
+So a small derived value can keep the full plaintext resident long after every
+reference to the original is gone. Measured on Node 22.15.0 by keeping only the
+derived value from a 32 MB secret, dropping the secret, and forcing a full GC:
+
+| Value kept | Original plaintext |
+|------------|--------------------|
+| nothing (control) | freed |
+| `substring(0, 4)` | freed |
+| `substring(0, 40)` | **retained, 32 MB** |
+| `reveal().substring(0, 4)` | freed |
+| `reveal().slice(0, 40)` | **retained, 32 MB** |
+| `mask({ showFirst: 4, showLast: 4 })` | freed |
+| `mask({ showFirst: 40 })` | freed |
+| `[...reveal().slice(0, 40)].join('')` | freed |
+
+The 13-character threshold, not the sensitivity class, is what decides this. A
+four-character prefix is a copy; a forty-character one pins 32 MB.
+
+`mask()` is unaffected at any width because `applyMask` builds its output from a
+character array rather than from a range of the source, so the rendering is
+always a fresh string. `substring()`, `slice()` and `trim()` pass through
+`#transform` to the native string methods and inherit whatever V8 chooses.
+`map()` follows its callback: a function that slices shares, one that rebuilds
+does not.
+
+Deriving a `SensitiveString` rather than a raw string changes nothing here. The
+sharing is a property of the underlying string, and `#derived` adopts only the
+state arrays of its sources, so the parent instance itself is not retained.
+
+Concatenation is the other non-copying representation, a **ConsString** holding
+both operands, but it is not a surprise in the same way: the result of
+`a.concat(b)` contains both values, so keeping it keeps them. The consequence
+worth knowing is on the read side. A rope is flattened the first time something
+needs its characters, and flattening allocates a fresh copy of the entire
+string, so reading a concatenated secret materializes a second full copy of the
+plaintext.
+
+None of this widens the disclosure surface. Nothing additional is printed, and
+reaching the retained bytes still needs a heap dump or code execution, both
+already out of scope above. It matters only if you assumed that deriving a
+smaller value shortens the plaintext's lifetime. It does not, and it can extend
+it: a forty-character substring held for the life of a request pins the whole
+secret for that long.
+
+Where the lifetime genuinely matters, force a copy at the point of derivation:
+
+```typescript
+// Shares memory with the full secret for as long as `shared` lives
+const shared = token.reveal().slice(0, 40);
+
+// Fresh allocation; the original becomes collectable
+const copied = [...token.reveal().slice(0, 40)].join('');
+```
+
+Neither form erases anything, and the copy costs an allocation. Reach for it
+when a small derivative outlives the value it came from, not by default.
 
 ---
 
