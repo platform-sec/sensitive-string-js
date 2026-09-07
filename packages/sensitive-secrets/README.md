@@ -235,6 +235,161 @@ is a true report rather than a false alarm.
 It lives behind its own entry point, so an application that only reads never loads it and a build
 that never imports it can be verified to contain no write call.
 
+## References: send a pointer, not a value
+
+`serialize()` puts the raw value on the wire and asks the transport for confidentiality. That is a
+fair deal for mTLS between two services in one trust domain, and a poor one everywhere the payload
+comes to rest: a job in SQS, Kafka, a `jobs` table or a webhook retry buffer sits there in plaintext
+for as long as the retention allows, and a transport that terminates at a mesh sidecar, an API
+gateway or a logging proxy is decrypted somewhere in the middle.
+
+Where both sides can reach the same store, send a pointer instead. It is the only option here under
+which the value never leaves the process that fetched it.
+
+```typescript
+// Sender
+import { toReference } from '@platform-sec/sensitive-string-secrets';
+
+const record = await vault.get('kv/payments/stripe');
+await queue.send({ job: 'charge', key: toReference(record, { store: 'vault-prod' }) });
+
+// Receiver
+import { createReferenceResolver } from '@platform-sec/sensitive-string-secrets';
+
+const resolver = createReferenceResolver({
+  store: 'vault-prod',
+  source: vault,
+  allow: [
+    { path: 'kv/payments/*', klass: 'credential' },
+    { path: 'kv/analytics/db', fields: { password: 'credential', username: 'sensitive' } },
+  ],
+});
+
+const key = await resolver.resolve(job.key, { context: { name: 'charge-worker' } });
+```
+
+A reference is `{ __sensitiveRef: true, v, store, path, version?, field?, klass?, label? }`, and it
+carries no secret material at any version of the format.
+
+### Minting takes the record, not the value
+
+There is no `token.toReference()`, and that is not an oversight. An instance does not know which
+store it came from, because the label rule strips everything identifying the account, project,
+tenancy or host: `prod/db` is what survives from an ARN, and the same logical path usually exists in
+staging and in production. And a derived instance inherits its sources' state, which is right for
+constraints and wrong for provenance in the most direct way available, since
+`token.substring(0, 4).toReference()` would mint a pointer to the whole credential and the receiver
+would have no way to tell.
+
+So minting takes the `ref` a read returned, which contains no secret material by construction. It
+performs no I/O, reads no raw value, and takes no `RevealContext`, because it is not a reveal:
+recording it as one would make a sink that counts reveals to decide whether a credential is
+over-used count every message that merely mentions it. That is the call the load path already made.
+
+`fieldReference(record, 'password', { store })` points at one field of a multi-value secret, by the
+same dot path `getJson` declares.
+
+### Resolving is an authorization decision
+
+`resolve()` runs in the receiver, with the receiver's credentials, against a path a sender chose,
+which is the shape of every confused deputy ever written. Unconstrained, it lets anything that can
+enqueue a job read any secret the receiver's role can read, using the receiver as the oracle. So a
+resolver is constructed with an allowlist, there is no permissive default, and an empty allowlist is
+legal and resolves nothing.
+
+The rules, in the order they run, each refusing before the store is touched:
+
+| # | Rule | `reason` |
+|---|---|---|
+| 1 | It is a reference, and carries every member the format requires | `shape` |
+| 2 | The format version is one this build reads | `format` |
+| 3 | `ref.store` equals the resolver's store, compared exactly | `store` |
+| 4 | The path has no `.` or `..` segment, no empty segment, no leading slash, no control character | `path` |
+| 5 | The version matches `[A-Za-z0-9._:-]{1,128}` | `version` |
+| 6 | Some allowlist entry covers the path | `path` |
+| 7 | A matching entry resolves this kind of reference, and declares this field | `field` |
+| 8 | A `RevealContext` was supplied | `no-context` |
+
+Then the class: the more restrictive of the entry's and the reference's, so a class on the wire may
+tighten what the receiver does and may never loosen it. A receiver that took `klass` from the wire
+would let a sender ask it to treat a credential as `sensitive`, which turns off constant-time
+comparison, lifts the refusal on partial queries, and lets `mask()` disclose a prefix. The label is
+derived here too, under the label rule; the one on the wire is advisory and unread.
+
+Only then does the resolver call `get` or `getJson`, which is where caching, the load event,
+lifetime binding and the decode guard already live. Resolving a reference is a load, so it emits the
+load event a direct `get` for the same ref would emit, and it fires no reveal hook, because nothing
+in it reads a raw value.
+
+Four things about that list are worth stating outright.
+
+**A path is refused rather than normalized.** Normalizing would mean this library and the provider
+each holding an opinion about what `kv/a/../b` means, and a disagreement between two normalizers is
+how a path that fails the allowlist reaches the store anyway.
+
+**A version is checked, not escaped.** It is attacker-chosen exactly as a path is, and providers put
+it into a URL path or a query string.
+
+**Patterns are a trailing `*` on a segment boundary and nothing else.** `kv/payments/*` covers the
+subtree below `kv/payments/` and does not match `kv/paymentsx/stripe`. There is no regex, because a
+regular expression in a security check against attacker-chosen input is a backtracking bug waiting
+to be found. A malformed pattern throws at construction rather than silently matching nothing.
+
+**An allowlist is a scope, not an authorization decision.** It says which secrets this worker will
+ever hand out. It does not say whether the particular sender was entitled to this particular secret.
+A system where different callers deserve different secrets constructs a resolver per scope, from the
+caller's identity.
+
+A refusal is a `ReferenceRefusedError` carrying `reason`. The path is on `error.path` and never in
+`error.message`: `ref.path` is text a sender chose, a refusal is the case where the sender is least
+likely to be one this receiver trusts, and a message that interpolated it would put attacker-chosen
+text into the receiver's own logs. What is on `error.path` after a refusal is what the sender asked
+for, which may name no secret that exists anywhere, so a handler that logs it is logging a request
+rather than an identifier of anything.
+
+### Versions, and what a pin costs
+
+`pinVersion` defaults to true, so a reference resolves to the version the sender read. A reference
+stands in for a value, and a value does not change between the send and the receive; without the
+pin, a job that sits in a queue across a rotation resolves to a different credential than the one
+the sender was holding, and the failure surfaces as an authentication error in whatever the job
+talks to, one hop away from the cause.
+
+The cost is the other half of the same fact: a pinned reference outlives the rotation that was meant
+to retire the old version. Keeping queue retention shorter than the rotation interval is the honest
+fix, and it is a property of the system rather than of this library. `pinVersion: false` is the
+other one, for a long-lived credential where "current" is genuinely what the receiver wants.
+
+A provider that reports no version says so with `'unknown'`, which is a sentinel rather than a
+version, and is never pinned.
+
+### A reference is not redacted
+
+Every walk in `core` emits a reference as it is, and `containsSensitive()` answers false for one.
+That is a decision rather than an omission: it carries no secret material, resolving it needs
+credentials a reader of the log would have to hold independently, and redacting it would make a
+reference-passing system undebuggable for no gain. Being able to see which secret a job refers to is
+the point. The disclosure it makes, that this request touched `kv/payments/stripe`, is the one the
+label already makes in every line that logs the value itself.
+
+An error tracker payload is a stricter walk than a log line. `sensitive-scrub` also denies by key
+name, so a reference sent under a key called `token` or `secret` is replaced there like anything
+else under that name.
+
+### Where this does not reach
+
+It applies to values that came out of a store, which is where credentials, API keys and connection
+secrets are, and not to the other half of what this library wraps. A card number arriving in a
+webhook, an email address parsed from a request body, or a session token minted in the process has
+no path, and giving it one means writing it into a store first, which is a larger decision than
+choosing a wire format. A derived value has no reference either, per the rule above, and that is the
+case a caller hits by accident: wrap a connection string, split it, and there is no reference to the
+part.
+
+Revocation is the real answer to a pinned reference to a retired version, and this does not
+approximate it. What the reference pattern does get for free is the other direction: the receiver
+fetches at resolve time, so a secret deleted at the store stops resolving everywhere.
+
 ## Watching a file
 
 ```typescript

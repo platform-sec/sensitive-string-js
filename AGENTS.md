@@ -47,8 +47,12 @@ This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under 
 - `packages/sensitive-secrets/src/` contains the shared layer under the secrets manager
   integrations: the `SecretSource` interface, the classification policy over core's
   `ClassificationSpec`, the decode guard that keeps a payload out of a `SyntaxError`, the label rule,
-  the instance cache with single-flight and TTL alignment, the file watcher, and the sweep harness
-  provider suites import from `./testing`. The write guard is a separate entry point, `./write`, so
+  the instance cache with single-flight and TTL alignment, the file watcher, the reference pattern,
+  and the sweep harness provider suites import from `./testing`. A reference is minted from the
+  record a read returned rather than from a value, because a derived instance would inherit
+  provenance and a label deliberately does not name the store; resolving one is `get` plus an
+  authorization decision, so `createReferenceResolver` denies by default and every refusal keeps the
+  sender's path out of the message. The write guard is a separate entry point, `./write`, so
   an application that only reads never loads it. It has no third-party runtime dependencies and
   takes the core package as a peer.
 - `packages/sensitive-env/src/` contains the shared loader under the config and environment

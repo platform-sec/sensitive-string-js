@@ -1803,6 +1803,51 @@ const { token } = PayloadSchema.parse(req.body);
 
 > ⚠️ **Security Note**: Serialized sensitive strings contain the **RAW UNREDACTED STRING**. Never log serialized outputs. Only use this method when transmitting data over secure channels (mTLS, encrypted message buses, or VPC-internal communication) to another trusted service.
 
+### Secret References
+
+A serialized payload puts the raw value on the wire and relies on the transport. Where the value
+came from a secrets store and the receiver can reach that store too, send a pointer instead: the
+value never leaves the process that fetched it.
+
+```typescript
+// Sender: mint from the record the read returned, not from the value.
+import { toReference } from '@platform-sec/sensitive-string-secrets';
+
+const record = await vault.get('kv/payments/stripe');
+await queue.send({ job: 'charge', key: toReference(record, { store: 'vault-prod' }) });
+
+// Receiver: resolve against an allowlist, never against a bare path from the payload.
+import { createReferenceResolver } from '@platform-sec/sensitive-string-secrets';
+
+const resolver = createReferenceResolver({
+  store: 'vault-prod',
+  source: vault,
+  allow: [{ path: 'kv/payments/*', klass: 'credential' }],
+});
+
+const key = await resolver.resolve(job.key, { context: { name: 'charge-worker' } });
+```
+
+`resolve()` runs in the receiver, with the receiver's credentials, against a path the sender chose,
+which is a confused deputy unless it is constrained. So the resolver is constructed with an
+allowlist and refuses everything else: the store identity must match exactly, a path carrying a
+traversal or an empty segment is refused rather than normalized, a version outside
+`[A-Za-z0-9._:-]{1,128}` is refused, and the class comes from the allowlist. A class on the wire may
+tighten the receiver's rule and may never loosen it, because a receiver that took `klass` from a
+payload would let a sender turn off constant-time comparison for a credential.
+
+There is no `token.toReference()`. A derived instance inherits its sources' state, so a substring
+would mint a pointer to the whole credential, and the label rule deliberately strips the account, so
+an instance knows a path and not which store it is in. Minting takes the record.
+
+A reference carries no secret material, so every redaction walk emits it as it is and
+`containsSensitive()` answers false for one: being able to see which secret a job refers to is the
+point of passing references at all. `@platform-sec/sensitive-string-core` owns the format and the
+`isSensitiveValueReference()` guard; minting and resolving live in
+`@platform-sec/sensitive-string-secrets`, which is the layer that knows the store, the version and
+the credentials. Full documentation is in [that package's
+README](packages/sensitive-secrets/README.md#references-send-a-pointer-not-a-value).
+
 ### Worker Threads and Child Processes
 
 A `SensitiveString` handed to a worker arrives broken, and nothing says so. `structuredClone`

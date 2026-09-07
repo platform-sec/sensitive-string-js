@@ -60,12 +60,13 @@ export type {
 } from './types.js';
 
 export {
+  ReferenceRefusedError,
   SecretError,
   SecretNotFoundError,
   SecretPayloadError,
   SecretWriteRefusedError,
 } from './errors.js';
-export type { WriteRefusal } from './errors.js';
+export type { ReferenceRefusal, WriteRefusal } from './errors.js';
 
 export { BaseSecretSource, normalizeRef } from './source.js';
 
@@ -87,3 +88,16 @@ export {
 
 export { watchFile } from './watch.js';
 export type { FileWatcher, WatchOptions } from './watch.js';
+
+// The reference pattern: mint a pointer to a value a read returned, and resolve
+// one against an allowlist. The wire format itself lives in core, which is
+// where the walks that meet a payload on the way to a log line are.
+export { createReferenceResolver, fieldReference, toReference } from './reference.js';
+export type {
+  Referenceable,
+  ReferenceAllowEntry,
+  ReferenceResolver,
+  ReferenceResolverOptions,
+  ResolveOptions,
+  ToReferenceOptions,
+} from './reference.js';

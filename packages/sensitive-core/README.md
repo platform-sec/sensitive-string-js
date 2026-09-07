@@ -170,6 +170,20 @@ raw values from the payload object so `workerData` stops holding plaintext. The
 [main README](../../README.md#worker-threads-and-child-processes) has the full
 account, including the three things the boundary still does not close.
 
+## Secret references
+
+`SensitiveValueReference` is the wire shape of a pointer to a value in a
+secrets store, and `isSensitiveValueReference()` is the guard for it. Only the
+format lives here, because the walks that meet a payload on the way to a log
+line are here; minting and resolving live in
+[`@platform-sec/sensitive-string-secrets`](../sensitive-secrets/README.md#references-send-a-pointer-not-a-value),
+which is the layer that knows the store, the version and the credentials.
+
+Every walk emits a reference as it is, and `containsSensitive()` answers false
+for one. It carries no secret material, resolving it needs credentials of the
+reader's own, and redacting it would make a reference-passing system
+undebuggable for no gain.
+
 ## API
 
 See the [main README](../../README.md) for full API documentation.

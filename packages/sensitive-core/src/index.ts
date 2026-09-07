@@ -114,6 +114,18 @@ export type {
   ReceivedWorkerPayload,
 } from './worker.js';
 
+// The reference wire format. Minting and resolving live in
+// `@platform-sec/sensitive-string-secrets`, which is the layer that knows the
+// store, the version and the credentials; the format lives here because the
+// walks that meet one on the way to a log line do.
+export {
+  REFERENCE_VERSION,
+  carriesReferenceMarker,
+  isSensitiveValueReference,
+  referenceFormatVersion,
+} from './reference.js';
+export type { SensitiveValueReference } from './reference.js';
+
 // Development mode
 export { setDevMode, getDevModeConfig, withDevMode } from './dev-mode.js';
 export type {

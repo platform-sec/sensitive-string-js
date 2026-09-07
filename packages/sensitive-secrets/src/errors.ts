@@ -74,3 +74,59 @@ export class SecretWriteRefusedError extends SecretError {
     super(message, path, version);
   }
 }
+
+/** Which rule refused a reference, before the store was ever reached. */
+export type ReferenceRefusal =
+  /** Not a reference at all, or one missing a member the format requires. */
+  | 'shape'
+  /** A format version this build does not know. */
+  | 'format'
+  /** Minted for a different store than the resolver was constructed for. */
+  | 'store'
+  /**
+   * A path carrying a traversal, an empty segment or a control character, or a
+   * path no allowlist entry covers.
+   */
+  | 'path'
+  /** A version outside the accepted charset. */
+  | 'version'
+  /**
+   * The matching entries resolve the other kind of reference, or none of them
+   * declares the field this one names.
+   */
+  | 'field'
+  /**
+   * No `RevealContext` was supplied, and resolving must not use an ambient one.
+   *
+   * The receiver's own mistake rather than the sender's, and named separately
+   * from `'shape'` for that reason: the two lead to different fixes and only
+   * one of them is a reason to distrust whoever sent the reference. It is the
+   * same refusal the write path makes for the same reason.
+   */
+  | 'no-context';
+
+/**
+ * A reference was refused before anything was fetched.
+ *
+ * The path is on the `path` property and never in `message`. `ref.path` is text
+ * a sender chose, a refusal is the case where the sender is least likely to be
+ * one this receiver trusts, and a message that interpolated it would put
+ * attacker-chosen text into the receiver's own logs. Same for the version, on
+ * `version`.
+ *
+ * What is on `path` after a refusal is what the sender asked for, which may
+ * name no secret that exists in any store. A handler that logs it is logging a
+ * request rather than an identifier of anything.
+ */
+export class ReferenceRefusedError extends SecretError {
+  override readonly name = 'ReferenceRefusedError';
+
+  constructor(
+    readonly reason: ReferenceRefusal,
+    message: string,
+    path: string,
+    version?: string
+  ) {
+    super(message, path, version);
+  }
+}
