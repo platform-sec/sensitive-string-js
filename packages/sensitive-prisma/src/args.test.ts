@@ -290,9 +290,9 @@ describe('revealArgs', () => {
 
   // Section 2.5 / TEST-PRISMA-U011
   describe('reveal context', () => {
-    // Core calls `auditReveal(value, details)` and `details` for a reveal is
-    // only `{ operation: 'reveal' }`, so the sink reads the context it is
-    // running under. That is what these assert reaches it.
+    // Core hands the hook the context the reveal ran under as its third
+    // argument, and that is the per-value context this package builds. These
+    // assert what reaches a sink through it.
     it('tags each reveal with the model, operation and argument path', () => {
       const seen = captureContexts();
       const args = {
