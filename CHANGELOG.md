@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added the TypeORM integration, `@platform-sec/sensitive-string-typeorm`. Classified columns read
+  back wrapped and every write unwraps through an audited reveal, both through one
+  `ValueTransformer`. The transformer is not enough on its own: TypeORM does not call it for a query
+  builder's named parameters, so the instance reaches the driver, and `pg` and `mysql2` bind a
+  redaction marker while only SQLite fails loudly. `guardParameters()` refuses that at the query
+  runner. Three plaintext surfaces beside the column get their own answers, since none is reachable
+  from a transformer: the query log, `QueryFailedError.parameters`, and the query result cache, which
+  stores both the pre-transform rows and the revealed predicate values in a second table.
+
 ## First publication - 2026-09-04
 
 Packages version independently, so this release has no single number. `sensitive-core` starts at

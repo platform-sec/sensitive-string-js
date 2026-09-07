@@ -1,0 +1,58 @@
+{
+  "name": "@platform-sec/sensitive-string-typeorm",
+  "version": "0.1.0",
+  "description": "TypeORM integration for SensitiveString - classified columns read back wrapped, writes unwrap through an audited reveal, and the query builder's parameter bypass is refused",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run --root ../.. packages/sensitive-typeorm/",
+    "test:watch": "vitest --root ../.. packages/sensitive-typeorm/"
+  },
+  "keywords": [
+    "typeorm",
+    "orm",
+    "database",
+    "security",
+    "sensitive-data",
+    "redaction",
+    "typescript"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "peerDependencies": {
+    "@platform-sec/sensitive-string-core": "^0.5.0",
+    "@platform-sec/sensitive-string-scrub": "^0.1.0",
+    "typeorm": ">=0.3.20 <2"
+  },
+  "peerDependenciesMeta": {
+    "@platform-sec/sensitive-string-scrub": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@platform-sec/sensitive-string-core": "workspace:*",
+    "@platform-sec/sensitive-string-scrub": "workspace:*",
+    "@types/node": "^22.20.1",
+    "@types/pg": "^8.15.6",
+    "better-sqlite3": "^12.11.1",
+    "mysql2": "^3.24.3",
+    "pg": "^8.23.0",
+    "reflect-metadata": "^0.2.2",
+    "typeorm": "^1.1.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}
