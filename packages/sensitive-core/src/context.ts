@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { AuditContext, RevealContext, RevealDetails } from './types.js';
+import type { AuditContext, ISensitiveString, RevealContext, RevealDetails } from './types.js';
 import { getGlobalSingleton } from './global-state.js';
 
 /**
@@ -101,14 +101,15 @@ export function createChildContext(
  * `auditFn` receives the context each operation ran under, which is the one
  * built here only while nothing nests a child over it. A two-parameter
  * function stays valid; the third argument is there to be ignored.
+ *
+ * The value is the whole `ISensitiveString`, matching what `auditReveal`
+ * itself is handed. It used to be typed as `{ klass }` alone, which left a sink
+ * written against this wrapper unable to read `label` and so unable to say
+ * which credential was read.
  */
 export function withAuditedReveals<T>(
   name: string,
-  auditFn: (
-    value: { readonly klass: string },
-    details: RevealDetails,
-    context: AuditContext
-  ) => void,
+  auditFn: (value: ISensitiveString, details: RevealDetails, context: AuditContext) => void,
   fn: () => T
 ): T {
   return withRevealContext(

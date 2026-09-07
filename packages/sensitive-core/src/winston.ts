@@ -219,11 +219,21 @@ export function sensitiveFormat(options: SensitiveFormatOptions = {}): WinstonFo
  * that already redacted the instances away.
  */
 function classesInRecord(info: WinstonInfo): Set<SensitivityClass> {
-  const found = sensitiveClassesIn(info, new Set(readStamp(info)));
+  // Unioned here rather than by handing one accumulator to both walks: the
+  // accumulator is not part of `sensitiveClassesIn`'s signature, because a
+  // caller who primes it gets back a set naming a class the payload does not
+  // hold. The two walks were already independent, sharing no `seen`.
+  const found = new Set<SensitivityClass>(readStamp(info));
+
+  for (const klass of sensitiveClassesIn(info)) {
+    found.add(klass);
+  }
 
   const splat: unknown = info[SPLAT];
   if (Array.isArray(splat)) {
-    sensitiveClassesIn(splat, found);
+    for (const klass of sensitiveClassesIn(splat)) {
+      found.add(klass);
+    }
   }
 
   return found;

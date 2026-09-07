@@ -993,6 +993,40 @@ describe('Redaction Helpers', () => {
     expect(containsSensitive(new Set(['plain']))).toBe(false);
   });
 
+  describe('the walks carry no accumulator a caller can reach', () => {
+    // These were optional parameters, documented as internal and published
+    // anyway. Each of the three answers below was reachable from a plain
+    // `WeakSet` or `Set`, and the first is a safety check failing open.
+    const payload = () => ({ token: new SensitiveString(CANARY, 'credential', 'api_key') });
+
+    it('does not let a visited-set decide whether a payload holds a secret', () => {
+      const obj = payload();
+      // Assignable without a cast, which is the point: an old call still
+      // type-checks and the argument is simply ignored.
+      const call: (o: unknown, seen?: WeakSet<object>) => boolean = containsSensitive;
+
+      expect(call(obj, new WeakSet([obj]))).toBe(true);
+    });
+
+    it('does not let a visited-set turn a whole payload into [Circular]', () => {
+      const obj = payload();
+      const call: (o: unknown, seen?: WeakSet<object>) => unknown = redactInStructure;
+      const out = call(obj, new WeakSet([obj]));
+
+      expect(out).toEqual({ token: '[REDACTED:credential]' });
+      expect(JSON.stringify(out)).not.toContain(CANARY);
+    });
+
+    it('does not report a class the payload does not hold', () => {
+      const call: (o: unknown, found?: Set<SensitivityClass>) => Set<SensitivityClass> =
+        sensitiveClassesIn;
+
+      expect([...call(payload(), new Set<SensitivityClass>(['sensitive']))]).toEqual([
+        'credential',
+      ]);
+    });
+  });
+
   it('test_sensitiveClassesIn', () => {
     const mixed = {
       token: new SensitiveString('secret', 'credential'),

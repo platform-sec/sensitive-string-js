@@ -62,7 +62,7 @@ function redactOwnProperties(
     if (key === omit) {
       continue;
     }
-    assignOwn(result, key, redactInStructure(value, seen));
+    assignOwn(result, key, redactWalk(value, seen));
   }
   return result;
 }
@@ -88,7 +88,6 @@ function redactOwnProperties(
  * - Circular references (replaced with '[Circular]')
  *
  * @param obj - The value to process
- * @param seen - WeakSet to track circular references (internal use)
  * @returns A new structure with all SensitiveString instances redacted
  *
  * @example
@@ -109,7 +108,21 @@ function redactOwnProperties(
  * // }
  * ```
  */
-export function redactInStructure(obj: unknown, seen = new WeakSet<object>()): unknown {
+export function redactInStructure(obj: unknown): unknown {
+  return redactWalk(obj, new WeakSet<object>());
+}
+
+/**
+ * The walk itself, carrying the set that catches a cycle.
+ *
+ * Private so the accumulator stays out of the exported signature. It used to be
+ * an optional second parameter documented as internal, which is not a control:
+ * a caller sharing one `seen` across a graph reaches an object the walk has
+ * already visited and is told '[Circular]' for the whole payload, and the same
+ * mistake on `containsSensitive` answers `false` about a payload that does hold
+ * a secret. Neither is a mistake a safety helper should let a caller make.
+ */
+function redactWalk(obj: unknown, seen: WeakSet<object>): unknown {
   // Handle primitives and null
   if (obj === null || typeof obj !== 'object') {
     return obj;
@@ -150,7 +163,7 @@ export function redactInStructure(obj: unknown, seen = new WeakSet<object>()): u
   // Arrays. `map` reads `length` and every index through the object, and a
   // Proxy around an array answers `Array.isArray` and may refuse both.
   if (Array.isArray(obj)) {
-    return probeBuiltin(() => obj.map((item) => redactInStructure(item, seen))) ?? UNREADABLE;
+    return probeBuiltin(() => obj.map((item) => redactWalk(item, seen))) ?? UNREADABLE;
   }
 
   // Date, preserved as-is for the logger to format. A Proxy around a Date
@@ -181,7 +194,7 @@ export function redactInStructure(obj: unknown, seen = new WeakSet<object>()): u
       probeBuiltin(() => {
         const result = new Map<unknown, unknown>();
         for (const [key, value] of obj) {
-          result.set(redactInStructure(key, seen), redactInStructure(value, seen));
+          result.set(redactWalk(key, seen), redactWalk(value, seen));
         }
         return result;
       }) ?? UNREADABLE
@@ -193,7 +206,7 @@ export function redactInStructure(obj: unknown, seen = new WeakSet<object>()): u
       probeBuiltin(() => {
         const result = new Set<unknown>();
         for (const value of obj) {
-          result.add(redactInStructure(value, seen));
+          result.add(redactWalk(value, seen));
         }
         return result;
       }) ?? UNREADABLE
@@ -220,9 +233,7 @@ export function redactInStructure(obj: unknown, seen = new WeakSet<object>()): u
     const called = runInsideRedaction(() => probeCall(toJson, obj));
 
     if (called.ok) {
-      return called.value === obj
-        ? redactOwnProperties(obj, seen)
-        : redactInStructure(called.value, seen);
+      return called.value === obj ? redactOwnProperties(obj, seen) : redactWalk(called.value, seen);
     }
 
     // The method refused, so the walk falls through to own properties. It also
@@ -392,10 +403,14 @@ export function createSensitiveSerializer(): (value: unknown) => unknown {
  * properties of class instances.
  *
  * @param obj - The value to check
- * @param seen - WeakSet to track circular references (internal use)
  * @returns true if any SensitiveString or serialized sensitive value is found
  */
-export function containsSensitive(obj: unknown, seen = new WeakSet<object>()): boolean {
+export function containsSensitive(obj: unknown): boolean {
+  return containsWalk(obj, new WeakSet<object>());
+}
+
+/** The walk itself. Private for the reason `redactWalk` is. */
+function containsWalk(obj: unknown, seen: WeakSet<object>): boolean {
   if (obj === null || typeof obj !== 'object') {
     return false;
   }
@@ -420,14 +435,14 @@ export function containsSensitive(obj: unknown, seen = new WeakSet<object>()): b
   // Iteration is the collection's own code, and a collection that refuses it
   // answers `true`, for the reason given at the ordinary-object branch below.
   if (Array.isArray(obj)) {
-    return probeBuiltin(() => obj.some((item) => containsSensitive(item, seen))) ?? true;
+    return probeBuiltin(() => obj.some((item) => containsWalk(item, seen))) ?? true;
   }
 
   if (obj instanceof Map) {
     return (
       probeBuiltin(() => {
         for (const [key, value] of obj) {
-          if (containsSensitive(key, seen) || containsSensitive(value, seen)) {
+          if (containsWalk(key, seen) || containsWalk(value, seen)) {
             return true;
           }
         }
@@ -440,7 +455,7 @@ export function containsSensitive(obj: unknown, seen = new WeakSet<object>()): b
     return (
       probeBuiltin(() => {
         for (const value of obj) {
-          if (containsSensitive(value, seen)) {
+          if (containsWalk(value, seen)) {
             return true;
           }
         }
@@ -461,7 +476,7 @@ export function containsSensitive(obj: unknown, seen = new WeakSet<object>()): b
       return true;
     }
 
-    return entries.some(([, value]) => containsSensitive(value, seen));
+    return entries.some(([, value]) => containsWalk(value, seen));
   }
 
   return false;
@@ -479,8 +494,6 @@ export function containsSensitive(obj: unknown, seen = new WeakSet<object>()): b
  * `containsSensitive` but has no class to contribute here.
  *
  * @param obj - The value to inspect
- * @param found - Accumulator for the classes seen so far (internal use)
- * @param seen - WeakSet to track circular references (internal use)
  * @returns The set of sensitivity classes found, empty when there are none
  *
  * @example
@@ -489,10 +502,19 @@ export function containsSensitive(obj: unknown, seen = new WeakSet<object>()): b
  * classes.has('credential'); // true
  * ```
  */
-export function sensitiveClassesIn(
+export function sensitiveClassesIn(obj: unknown): Set<SensitivityClass> {
+  return classesWalk(obj, new Set<SensitivityClass>(), new WeakSet<object>());
+}
+
+/**
+ * The walk itself. Private for the reason `redactWalk` is, and with one more:
+ * a caller who primes `found` gets back a set naming a class the payload does
+ * not contain, which is a wrong answer that reads exactly like a right one.
+ */
+function classesWalk(
   obj: unknown,
-  found = new Set<SensitivityClass>(),
-  seen = new WeakSet<object>()
+  found: Set<SensitivityClass>,
+  seen: WeakSet<object>
 ): Set<SensitivityClass> {
   if (obj === null || typeof obj !== 'object') {
     return found;
@@ -539,7 +561,7 @@ export function sensitiveClassesIn(
   if (Array.isArray(obj)) {
     probeBuiltin(() => {
       for (const item of obj) {
-        sensitiveClassesIn(item, found, seen);
+        classesWalk(item, found, seen);
       }
     });
     return found;
@@ -548,8 +570,8 @@ export function sensitiveClassesIn(
   if (obj instanceof Map) {
     probeBuiltin(() => {
       for (const [key, value] of obj) {
-        sensitiveClassesIn(key, found, seen);
-        sensitiveClassesIn(value, found, seen);
+        classesWalk(key, found, seen);
+        classesWalk(value, found, seen);
       }
     });
     return found;
@@ -558,7 +580,7 @@ export function sensitiveClassesIn(
   if (obj instanceof Set) {
     probeBuiltin(() => {
       for (const value of obj) {
-        sensitiveClassesIn(value, found, seen);
+        classesWalk(value, found, seen);
       }
     });
     return found;
@@ -571,7 +593,7 @@ export function sensitiveClassesIn(
     // `containsSensitive` can say "there may be something in here" without
     // knowing what, and this function cannot.
     for (const [, value] of probeEntries(obj) ?? []) {
-      sensitiveClassesIn(value, found, seen);
+      classesWalk(value, found, seen);
     }
   }
 
