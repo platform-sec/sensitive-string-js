@@ -121,7 +121,7 @@ describe('SensitiveString', () => {
 
       expect(result).toBe(CANARY);
       expect(auditSpy).toHaveBeenCalledTimes(1);
-      expect(auditSpy).toHaveBeenCalledWith(s, { operation: 'reveal' });
+      expect(auditSpy).toHaveBeenCalledWith(s, { operation: 'reveal' }, ctx);
     });
 
     it('test_reveal_with_als_context', () => {
@@ -138,7 +138,7 @@ describe('SensitiveString', () => {
       });
 
       expect(auditSpy).toHaveBeenCalledTimes(1);
-      expect(auditSpy).toHaveBeenCalledWith(s, { operation: 'reveal' });
+      expect(auditSpy).toHaveBeenCalledWith(s, { operation: 'reveal' }, ctx);
     });
 
     it('test_reveal_with_als_context_async', async () => {

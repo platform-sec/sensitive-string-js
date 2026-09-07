@@ -1041,7 +1041,7 @@ function resolveAuditHook(
     return undefined;
   }
 
-  return (value, details) => ambient.auditReveal?.(value, details);
+  return (value, details, context) => ambient.auditReveal?.(value, details, context);
 }
 
 /**

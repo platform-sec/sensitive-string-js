@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { RevealContext, RevealDetails } from './types.js';
+import type { AuditContext, RevealContext, RevealDetails } from './types.js';
 import { getGlobalSingleton } from './global-state.js';
 
 /**
@@ -86,16 +86,29 @@ export function createChildContext(
  *
  * @example
  * ```ts
- * await withAuditedReveals('payment-processing', (value, details) => {
- *   logger.info('Revealed sensitive value', { class: value.klass, op: details.operation });
+ * await withAuditedReveals('payment-processing', (value, details, context) => {
+ *   logger.info('Revealed sensitive value', {
+ *     class: value.klass,
+ *     op: details.operation,
+ *     ...context.tags,
+ *   });
  * }, async () => {
  *   // All reveals in this scope will be audited
  * });
  * ```
+ *
+ * @remarks
+ * `auditFn` receives the context each operation ran under, which is the one
+ * built here only while nothing nests a child over it. A two-parameter
+ * function stays valid; the third argument is there to be ignored.
  */
 export function withAuditedReveals<T>(
   name: string,
-  auditFn: (value: { readonly klass: string }, details: RevealDetails) => void,
+  auditFn: (
+    value: { readonly klass: string },
+    details: RevealDetails,
+    context: AuditContext
+  ) => void,
   fn: () => T
 ): T {
   return withRevealContext(

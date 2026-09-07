@@ -1,8 +1,8 @@
 import {
   RevealLimitExceededError,
   SensitiveString,
-  getCurrentRevealContext,
   withRevealContext,
+  type AuditContext,
 } from '@platform-sec/sensitive-string-core';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -556,12 +556,12 @@ describe('audit', () => {
     await withRevealContext(
       {
         name: 'registration',
-        auditReveal: (value) => {
+        auditReveal: (value, _details, context) => {
           seen.push({
             klass: value.klass,
-            // Core hands the hook no context, so a sink reads the one it runs
-            // under. The extension installs it around every unwrap.
-            tags: currentTags(),
+            // The context the reveal ran under, which core hands the hook. It
+            // is the per-value one the extension built, not this one.
+            tags: tagsOf(context),
           });
         },
       },
@@ -589,7 +589,7 @@ describe('audit', () => {
     const seen: (Record<string, unknown> | undefined)[] = [];
 
     await withRevealContext(
-      { name: 'rotation', auditReveal: () => seen.push(currentTags()) },
+      { name: 'rotation', auditReveal: (_value, _details, context) => seen.push(tagsOf(context)) },
       async () => {
         await prisma.$executeRaw`UPDATE "User" SET "passwordHash" = ${new SensitiveString('r', 'credential')} WHERE "id" = ${1}`;
       }
@@ -600,6 +600,6 @@ describe('audit', () => {
   });
 });
 
-function currentTags(): Record<string, unknown> | undefined {
-  return getCurrentRevealContext()?.tags;
+function tagsOf(context: AuditContext): Readonly<Record<string, unknown>> | undefined {
+  return context.tags;
 }

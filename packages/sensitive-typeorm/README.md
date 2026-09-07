@@ -264,7 +264,11 @@ bucket per column:
 
 ```ts
 await withRevealContext(
-  { name: 'req-42', auditReveal: () => logger.info('reveal', getCurrentRevealContext()?.tags) },
+  {
+    name: 'req-42',
+    auditReveal: (value, details, context) =>
+      logger.info('reveal', { klass: value.klass, ...context.tags }),
+  },
   async () => repo.insert(row)
 );
 ```
@@ -277,9 +281,11 @@ predicate, and the only way to recover that is to read the stack, which is not s
 library does in a hot path. An audit trail from this package is coarser than one from a hook with a
 statement boundary, and it says so rather than guessing `'update'`.
 
-The reveal happens under the context both explicitly and ambiently, which is not redundant: core
-hands the explicit context to a policy's `checkRevealAllowed` but calls `auditReveal(value, details)`
-with no context at all, so installing it is the only way a sink can read the table and column.
+The per-column context reaches the sink as the hook's third argument, which core hands it alongside
+the value and the operation. It is the same context the policy's `checkRevealAllowed` was asked to
+authorize, and it is not what `getCurrentRevealContext()` returns inside the hook: that is the
+caller's own context, which names where the caller stood rather than which column this write was
+for.
 
 Coalesce on `{ sink, table, column }` if the volume is a problem.
 

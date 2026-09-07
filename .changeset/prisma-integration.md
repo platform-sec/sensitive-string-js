@@ -36,9 +36,8 @@ the `values` of a `$queryRaw`, `$executeRaw` or `$queryRawTyped` template. See A
 
 Every unwrap is one `reveal()` under a child context tagged with the model, the operation and the
 argument path, layered on any ambient `withRevealContext()` so its `auditReveal` hook and tags
-survive. Core calls that hook with no context and with `details` of only `{ operation: 'reveal' }`,
-so the package installs each per-value context as the ambient one for the duration of the reveal;
-that is the only way a sink can read the tags.
+survive. Core hands that context to the hook as its third argument, which is where a sink reads the
+tags.
 
 The names in the configuration are checked against the client when the extension is applied, which
 turned out to matter as much as anything else here. Neither TypeScript nor Prisma catches a typo:

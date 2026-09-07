@@ -6,7 +6,7 @@ import {
   withDevMode,
   withRevealContext,
 } from '@platform-sec/sensitive-string-core';
-import type { RevealContext } from '@platform-sec/sensitive-string-core';
+import type { AuditContext, RevealContext } from '@platform-sec/sensitive-string-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TypeOrmConfigError, TypeOrmMarkerReadError, TypeOrmWriteRefusedError } from './errors.js';
 import { resetMarkerCache } from './marker.js';
@@ -146,17 +146,21 @@ describe('the plain-string write', () => {
 
 describe('the reveal context', () => {
   it('inherits the ambient name and reason and adds the column tags', () => {
-    const seen: (RevealContext | null)[] = [];
+    const seen: AuditContext[] = [];
+    const ambient: (RevealContext | null)[] = [];
     withRevealContext(
       {
         name: 'req-42',
         reason: 'serving a request',
         tags: { requestId: 'r1' },
-        // Core hands the hook the value alone, with no context, so the only
-        // way a sink reads the table and column is from the ambient context
-        // the transformer installs around the reveal. That installation is
-        // what this asserts.
-        auditReveal: () => seen.push(getCurrentRevealContext()),
+        // The per-column context reaches the sink as the hook's third
+        // argument. Nothing is installed for it: the transformer used to run
+        // every reveal inside a `withRevealContext` purely so a sink could
+        // find these tags, and `ambient` is what that cost bought.
+        auditReveal: (_value, _details, context) => {
+          seen.push(context);
+          ambient.push(getCurrentRevealContext());
+        },
       },
       () => {
         sensitiveColumn('sensitive', options).to(new SensitiveString(CANARY, 'sensitive'));
@@ -164,6 +168,7 @@ describe('the reveal context', () => {
     );
 
     expect(seen).toHaveLength(1);
+    expect(ambient[0]?.tags).toEqual({ requestId: 'r1' });
     const ctx = seen[0];
     expect(ctx?.name).toBe('req-42');
     expect(ctx?.reason).toBe('serving a request');
@@ -182,9 +187,9 @@ describe('the reveal context', () => {
     // to recover that is to read the stack. The audit record from this package
     // is coarser than one from a hook with a statement boundary, and it says so
     // rather than guessing 'update'.
-    const seen: (RevealContext | null)[] = [];
+    const seen: AuditContext[] = [];
     withRevealContext(
-      { name: 'r', auditReveal: () => seen.push(getCurrentRevealContext()) },
+      { name: 'r', auditReveal: (_value, _details, context) => seen.push(context) },
       () => {
         sensitiveColumn('sensitive', options).to(new SensitiveString(CANARY, 'sensitive'));
       }

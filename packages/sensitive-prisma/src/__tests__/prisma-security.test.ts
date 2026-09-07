@@ -3,9 +3,9 @@ import { inspect } from 'node:util';
 import {
   SensitiveString,
   containsSensitive,
-  getCurrentRevealContext,
   safeStringify,
   withRevealContext,
+  type AuditContext,
 } from '@platform-sec/sensitive-string-core';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -342,8 +342,8 @@ describe('audit', () => {
     await withRevealContext(
       {
         name: 'registration',
-        auditReveal: (value) => {
-          seen.push({ klass: value.klass, label: value.label, path: currentPath() });
+        auditReveal: (value, _details, context) => {
+          seen.push({ klass: value.klass, label: value.label, path: pathOf(context) });
         },
       },
       async () => {
@@ -371,7 +371,7 @@ describe('audit', () => {
     const seen: unknown[] = [];
 
     await withRevealContext(
-      { name: 'rotation', auditReveal: () => seen.push(currentPath()) },
+      { name: 'rotation', auditReveal: (_value, _details, context) => seen.push(pathOf(context)) },
       async () => {
         await prisma.$executeRaw`UPDATE "User" SET "passwordHash" = ${new SensitiveString('r', 'credential')} WHERE "id" = ${1}`;
       }
@@ -419,10 +419,6 @@ describe('Prisma query logging', () => {
   });
 });
 
-function currentPath(): unknown {
-  return currentTags()?.['path'];
-}
-
-function currentTags(): Record<string, unknown> | undefined {
-  return getCurrentRevealContext()?.tags;
+function pathOf(context: AuditContext): unknown {
+  return context.tags?.['path'];
 }

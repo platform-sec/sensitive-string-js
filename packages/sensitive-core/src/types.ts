@@ -525,6 +525,36 @@ export interface ISensitiveString {
 }
 
 /**
+ * The context an audited operation ran under, as its audit sink sees it.
+ *
+ * The three descriptive fields, and no `auditReveal`: the sink reading this is
+ * that hook, so the only use it has for its own hook is to call it, and the
+ * gate the hook runs inside is not reentrant. It is the same trio that crosses
+ * a thread boundary as a `PortableRevealContext`, for a different reason:
+ * there because a function does not clone, here because a function is not
+ * evidence.
+ *
+ * The narrowing is in the type and not in a copy. What arrives is the live
+ * `RevealContext`, which is deliberate on both counts: a sink may compare it by
+ * identity with the context it installed, and an audited reveal allocates
+ * nothing to be recorded. A caller who casts can still reach the hook on it,
+ * which is a contract being defeated rather than anything disclosed, since the
+ * object is the one that caller built.
+ *
+ * Live also means read-only by convention. `tags` is the caller's own object,
+ * shared by every reveal made under the context, so writing to it from a sink
+ * changes what later reveals report. Copy out what a record needs to keep.
+ */
+export interface AuditContext {
+  /** Descriptive name of the unit of work the operation ran under. */
+  readonly name: string;
+  /** Human-readable justification, when the context carried one. */
+  readonly reason?: string;
+  /** Freeform metadata: request ID, user ID, and whatever an integration tagged. */
+  readonly tags?: Readonly<Record<string, unknown>>;
+}
+
+/**
  * Context for tracking and auditing reveal operations.
  * Can be passed explicitly or set via AsyncLocalStorage.
  */
@@ -541,6 +571,15 @@ export interface RevealContext {
    * `details` distinguishes a full reveal from a partial one and carries the
    * mask options that produced it.
    *
+   * `context` is the context the operation actually ran under: the one passed
+   * to the call, or the ambient one when the call passed none, which is the
+   * same context the policy's `checkRevealAllowed` was asked to authorize
+   * against. It is not always the context this hook was installed on. A hook
+   * inherited through `createChildContext()` is called with the child, so an
+   * integration that tags a reveal with the table, the column or the argument
+   * path reaches a sink here rather than through `getCurrentRevealContext()`,
+   * which reports where the caller stood and not what the reveal was for.
+   *
    * The return value is ignored. A sink that must stop the reveal throws
    * synchronously; a Promise it returns is not awaited, so a rejection after an
    * `await` cannot stop anything and surfaces as an unhandled rejection.
@@ -551,7 +590,7 @@ export interface RevealContext {
    * exhausted; against a reveal budget it also charges the inner read before
    * the outer one has been charged. Read `klass` and `label`, and nothing else.
    */
-  auditReveal?(value: ISensitiveString, details: RevealDetails): void;
+  auditReveal?(value: ISensitiveString, details: RevealDetails, context: AuditContext): void;
 }
 
 /**

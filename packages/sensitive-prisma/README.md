@@ -191,11 +191,11 @@ model, the operation and the argument path.
 await withRevealContext(
   {
     name: 'password-reset',
-    auditReveal: (value) => {
-      // Core hands this hook the value and `{ operation: 'reveal' }` and no
-      // context, so read the context the reveal is running under.
-      const tags = getCurrentRevealContext()?.tags;
-      logger.info('revealed', { klass: value.klass, ...tags });
+    auditReveal: (value, _details, context) => {
+      // The context core hands the hook is the per-value one this package
+      // built, so the tags are right there. `getCurrentRevealContext()` is
+      // still this outer context, which names where the caller stood.
+      logger.info('revealed', { klass: value.klass, ...context.tags });
     },
   },
   async () => {

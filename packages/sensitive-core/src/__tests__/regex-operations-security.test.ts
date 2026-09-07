@@ -65,7 +65,7 @@ describe('SensitiveString regular-expression security', () => {
     expect(source.search(/@/, ctx)).toBe(26);
     expect(checkRevealAllowed).toHaveBeenCalledTimes(2);
     expect(auditReveal).toHaveBeenCalledTimes(2);
-    expect(auditReveal).toHaveBeenCalledWith(source, { operation: 'reveal' });
+    expect(auditReveal).toHaveBeenCalledWith(source, { operation: 'reveal' }, ctx);
   });
 
   it('authorizes and audits regex extraction exactly once per operation', () => {
@@ -92,7 +92,7 @@ describe('SensitiveString regular-expression security', () => {
     expect(Array.from(source.matchAll(/CANARY/g, ctx))).toHaveLength(1);
     expect(checkRevealAllowed).toHaveBeenCalledTimes(3);
     expect(auditReveal).toHaveBeenCalledTimes(3);
-    expect(auditReveal).toHaveBeenCalledWith(source, { operation: 'reveal' });
+    expect(auditReveal).toHaveBeenCalledWith(source, { operation: 'reveal' }, ctx);
   });
 
   it('does not pass the raw value to overridden RegExp hooks', () => {

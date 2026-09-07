@@ -2,6 +2,7 @@ import {
   SensitiveString,
   getCurrentRevealContext,
   withRevealContext,
+  type AuditContext,
   type RevealContext,
 } from '@platform-sec/sensitive-string-core';
 import { describe, expect, it, vi } from 'vitest';
@@ -21,21 +22,25 @@ function info(overrides: { model?: string | undefined; operation?: string } = {}
 /**
  * Record the context each audited reveal ran under.
  *
- * Core's audit hook is handed the value and `{ operation: 'reveal' }` and
- * nothing else, so a sink that wants to know which model, operation and
- * argument produced the reveal reads the ambient context. That is what the
- * extension installs around every unwrap, and what this captures.
+ * Core hands the audit hook the context the reveal ran under, which is the
+ * per-value one this package builds: the model, the operation and the argument
+ * path travel in its tags. The ambient context is captured alongside it, since
+ * the two are no longer the same object and the difference is the point.
  */
 function captureContexts(): {
-  hook: (value: unknown, details: unknown) => void;
-  contexts: (RevealContext | null)[];
+  hook: (value: unknown, details: unknown, context: AuditContext) => void;
+  contexts: AuditContext[];
+  ambient: (RevealContext | null)[];
 } {
-  const contexts: (RevealContext | null)[] = [];
+  const contexts: AuditContext[] = [];
+  const ambient: (RevealContext | null)[] = [];
   return {
-    hook: vi.fn(() => {
-      contexts.push(getCurrentRevealContext());
+    hook: vi.fn((_value: unknown, _details: unknown, context: AuditContext) => {
+      contexts.push(context);
+      ambient.push(getCurrentRevealContext());
     }),
     contexts,
+    ambient,
   };
 }
 
@@ -307,6 +312,25 @@ describe('revealArgs', () => {
         'data.posts.create.0.secret',
       ]);
       expect(seen.contexts[0]?.tags).toMatchObject({ model: 'User', operation: 'create' });
+    });
+
+    it('reaches the sink through the hook argument, with nothing installed ambiently', () => {
+      const seen = captureContexts();
+      const args = { data: { email: new SensitiveString(CANARY, 'sensitive') } };
+
+      withRevealContext({ name: 'handler', auditReveal: seen.hook }, () =>
+        revealArgs(args, info())
+      );
+
+      // The per-value context is what the hook is handed. It is deliberately
+      // not installed: a reveal used to cost an AsyncLocalStorage entry purely
+      // so a sink could find these tags, and the entry is what came out when
+      // core started passing the context. What is ambient during the hook is
+      // the caller's own context, which names where the caller stood.
+      expect(seen.contexts[0]?.tags?.['path']).toBe('data.email');
+      expect(seen.ambient[0]?.name).toBe('handler');
+      expect(seen.ambient[0]?.tags?.['path']).toBeUndefined();
+      expect(seen.ambient[0]).not.toBe(seen.contexts[0]);
     });
 
     it('inherits the ambient audit hook rather than replacing the context', () => {

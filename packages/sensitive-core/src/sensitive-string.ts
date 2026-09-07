@@ -611,7 +611,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     refuseHookReturn(this.policy.checkRevealAllowed?.(effectiveCtx, this, access), this.klass);
 
     if (access === 'expose') {
-      effectiveCtx?.auditReveal?.(this, details);
+      effectiveCtx?.auditReveal?.(this, details, effectiveCtx);
 
       // After the audit hook, which is free to throw and stop the reveal: what
       // is counted, charged, and recorded is what actually reached the caller.
@@ -1090,7 +1090,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     // Renewal reads no value, so it does not go through the gate, but it is
     // still an operation a policy may refuse.
     refuseHookReturn(this.policy.checkRevealAllowed?.(effectiveCtx, this, 'renew'), this.klass);
-    effectiveCtx?.auditReveal?.(this, renewAuditDetails(expiry, plan));
+    effectiveCtx?.auditReveal?.(this, renewAuditDetails(expiry, plan), effectiveCtx);
 
     expiry.deadline = plan.next;
     expiry.renewalCount++;
@@ -1156,7 +1156,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     const effectiveCtx = ctx ?? getCurrentRevealContext();
 
     try {
-      effectiveCtx?.auditReveal?.(this, revokeAuditDetails(record));
+      effectiveCtx?.auditReveal?.(this, revokeAuditDetails(record), effectiveCtx);
     } catch {
       // The value is already revoked. A sink that fails must not make it look
       // as though the revocation did.

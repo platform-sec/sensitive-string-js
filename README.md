@@ -262,8 +262,12 @@ app.post('/payment', async (req, res) => {
     name: 'payment-handler',
     reason: 'processing transaction',
     tags: { requestId: req.id, userId: req.user.id },
-    auditReveal: (value) => {
-      logger.info('Sensitive value accessed', { class: value.klass });
+    auditReveal: (value, details, context) => {
+      logger.info('Sensitive value accessed', {
+        class: value.klass,
+        operation: details.operation,
+        ...context.tags,
+      });
     }
   }, async () => {
     // All reveal() calls in this scope use this context
@@ -271,6 +275,15 @@ app.post('/payment', async (req, res) => {
   });
 });
 ```
+
+The hook's third argument is the context the operation actually ran under: the one passed to the
+call, or the ambient one when the call passed none, which is the same context the policy's
+`checkRevealAllowed` was asked to authorize. It is not always the context the hook was installed on.
+An integration that nests a child context to tag a reveal with a table, a column or an argument path
+is audited under the child, so those tags arrive here rather than through `getCurrentRevealContext()`,
+which reports where the caller stood. It carries `name`, `reason` and `tags` and no `auditReveal`,
+and it is the live context object rather than a copy, so a sink copies out what it means to keep
+instead of writing to `tags`.
 ---
 
 ## Threat Model

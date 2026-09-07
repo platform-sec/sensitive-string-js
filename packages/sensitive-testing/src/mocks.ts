@@ -1,4 +1,5 @@
 import type {
+  AuditContext,
   ISensitiveString,
   RevealContext,
   RevealDetails,
@@ -9,7 +10,11 @@ import type {
  * The audit callback shape core invokes, named so a mock factory can be typed
  * against it.
  */
-export type AuditRevealFn = (value: ISensitiveString, details: RevealDetails) => void;
+export type AuditRevealFn = (
+  value: ISensitiveString,
+  details: RevealDetails,
+  context: AuditContext
+) => void;
 
 /**
  * A factory that wraps a function in the host framework's spy, such as `vi.fn`
@@ -34,6 +39,20 @@ export interface AuditCall {
   readonly value: ISensitiveString;
   /** What the operation was, and its parameters. */
   readonly details: RevealDetails;
+  /**
+   * The context the operation ran under, copied rather than referenced.
+   *
+   * Not necessarily the mock context itself: an integration that nests a child
+   * over it to tag a reveal is audited under the child, and the child's name
+   * and tags are what appear here.
+   *
+   * A copy because the live context of a mock holds `calls`, and a record
+   * pointing back at it would make the call log a cycle that neither
+   * `JSON.stringify` nor a snapshot assertion could walk. `tags` is copied one
+   * level, so a later reveal under the same context cannot rewrite what an
+   * earlier record says.
+   */
+  readonly context: AuditContext;
 }
 
 /** Options for `mockRevealContext`. */
@@ -82,8 +101,8 @@ export function mockRevealContext(
 ): MockRevealContext {
   const calls: AuditCall[] = [];
 
-  const record: AuditRevealFn = (value, details) => {
-    calls.push({ timestamp: new Date(), value, details });
+  const record: AuditRevealFn = (value, details, context) => {
+    calls.push({ timestamp: new Date(), value, details, context: snapshot(context) });
   };
 
   const auditReveal = options.fn ? options.fn(record) : record;
@@ -120,7 +139,12 @@ export interface AuditEntry {
   readonly timestamp: Date;
   readonly klass: SensitivityClass;
   readonly label: string | undefined;
-  /** Name of the context the access was made under. */
+  /**
+   * Name of the context the access was made under.
+   *
+   * Read from the context core reports, so a reveal made under a child context
+   * is recorded under the child's name rather than this log's.
+   */
   readonly contextName: string;
   /** `reveal`, `mask`, or `renew`. */
   readonly operation: RevealDetails['operation'];
@@ -162,12 +186,12 @@ export function createMockAuditLog(name = 'mock-audit-log'): MockAuditLog {
 
   const context: RevealContext = {
     name,
-    auditReveal(value, details) {
+    auditReveal(value, details, auditedUnder) {
       entries.push({
         timestamp: new Date(),
         klass: value.klass,
         label: value.label,
-        contextName: name,
+        contextName: auditedUnder.name,
         operation: details.operation,
         details,
       });
@@ -187,6 +211,23 @@ export function createMockAuditLog(name = 'mock-audit-log'): MockAuditLog {
       entries.length = 0;
     },
   };
+}
+
+/**
+ * What a record keeps of the context an operation ran under.
+ *
+ * The descriptive fields only, one level deep. See `AuditCall.context` for why
+ * this is a copy.
+ */
+function snapshot(context: AuditContext): AuditContext {
+  const copy: { name: string; reason?: string; tags?: Record<string, unknown> } = {
+    name: context.name,
+  };
+
+  if (context.reason !== undefined) copy.reason = context.reason;
+  if (context.tags !== undefined) copy.tags = { ...context.tags };
+
+  return copy;
 }
 
 /**

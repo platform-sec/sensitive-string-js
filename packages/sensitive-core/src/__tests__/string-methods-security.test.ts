@@ -132,7 +132,7 @@ describe('SensitiveString string-method security', () => {
     expect(source.lastIndexOf('STRING', undefined, ctx)).toBe(0);
     expect(checkRevealAllowed).toHaveBeenCalledTimes(5);
     expect(auditReveal).toHaveBeenCalledTimes(5);
-    expect(auditReveal).toHaveBeenCalledWith(source, { operation: 'reveal' });
+    expect(auditReveal).toHaveBeenCalledWith(source, { operation: 'reveal' }, ctx);
   });
 
   it('authorizes and audits every transformation through explicit context', () => {
@@ -176,7 +176,7 @@ describe('SensitiveString string-method security', () => {
     }
     expect(checkRevealAllowed).toHaveBeenCalledTimes(transformations.length);
     expect(auditReveal).toHaveBeenCalledTimes(transformations.length);
-    expect(auditReveal).toHaveBeenCalledWith(source, { operation: 'reveal' });
+    expect(auditReveal).toHaveBeenCalledWith(source, { operation: 'reveal' }, ctx);
   });
 
   it('uses AsyncLocalStorage context for transformations', () => {

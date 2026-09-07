@@ -262,6 +262,17 @@ expect(ctx.auditReveal).toHaveBeenCalledTimes(1);
 `jest.fn` additionally makes `auditReveal` a spy, so the framework's own call
 assertions work on it. `reset()` clears both.
 
+Each call also records `context`, the context that operation ran under, which is
+where the tags an integration attaches to a reveal appear:
+
+```typescript
+expect(ctx.calls[0]?.context.tags).toEqual({ model: 'User', path: 'passwordHash' });
+```
+
+It is a copy of the descriptive fields rather than the context itself, one level
+deep. A record pointing at the live mock context would close a cycle through
+`calls`, which neither `JSON.stringify` nor a snapshot assertion could walk.
+
 For assertions about a whole call path rather than a single operation:
 
 ```typescript
@@ -279,6 +290,10 @@ expect(audit.getEntriesByClass('credential')).toHaveLength(1);
 An entry records the class, the label, the context name, and the operation. It
 deliberately holds no raw value and no reference to the instance, because an
 audit log is the thing most likely to end up in a failing assertion's output.
+
+`contextName` is read from the context core reports the operation under, so a
+reveal made under a nested child is recorded under the child's name rather than
+the log's own.
 
 ## How these utilities read a value
 

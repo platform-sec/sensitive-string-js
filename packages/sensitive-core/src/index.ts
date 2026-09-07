@@ -51,6 +51,7 @@ export type {
   HmacAuditDetails,
   RenewalOptions,
   RenewAuditDetails,
+  AuditContext,
   RevealAccess,
   RevealAuditDetails,
   RevealContext,

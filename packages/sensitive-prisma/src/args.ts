@@ -1,8 +1,4 @@
-import {
-  createChildContext,
-  getCurrentRevealContext,
-  withRevealContext,
-} from '@platform-sec/sensitive-string-core';
+import { createChildContext, getCurrentRevealContext } from '@platform-sec/sensitive-string-core';
 import type {
   RevealContext,
   SensitiveString,
@@ -96,19 +92,17 @@ function withPath(base: RevealContext, path: string): RevealContext {
 /**
  * Reveal one value under a context that names where in the arguments it sat.
  *
- * The context is passed to `reveal()` and installed as the ambient one for the
- * duration of the call, which is not redundant. Core hands the explicit context
- * to a policy's `checkRevealAllowed`, but it calls `auditReveal(value, details)`
- * with no context at all, and `details` for a reveal is only
- * `{ operation: 'reveal' }`. Installing the context is therefore the one way an
- * audit sink can read the model, the operation and the argument path: from
- * `getCurrentRevealContext()` inside its own hook.
+ * Passing the context is all of it. Core hands the same context to the policy's
+ * `checkRevealAllowed` and to `auditReveal` as its third argument, so a sink
+ * reads the model, the operation and the argument path from what it is given.
  *
- * The cost is one AsyncLocalStorage entry per sensitive value, paid only for
- * values that are actually wrapped.
+ * This used to install the context ambiently as well, one AsyncLocalStorage
+ * entry per sensitive value, because the hook was called with the value and the
+ * operation and nothing else: without the install, the tags reached no sink.
+ * Core's hook now carries the context, and the entry went with the workaround.
  */
 function revealAt(value: SensitiveString<SensitivityClass>, ctx: RevealContext): string {
-  return withRevealContext(ctx, () => value.reveal(ctx));
+  return value.reveal(ctx);
 }
 
 function rebuildObject(

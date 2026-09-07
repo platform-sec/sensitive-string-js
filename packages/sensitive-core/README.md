@@ -229,6 +229,42 @@ for one. It carries no secret material, resolving it needs credentials of the
 reader's own, and redacting it would make a reference-passing system
 undebuggable for no gain.
 
+## The audit hook
+
+`RevealContext.auditReveal` is called with three arguments: the value, what the operation was, and
+the context it ran under.
+
+```typescript
+await withRevealContext(
+  {
+    name: 'password-reset',
+    tags: { requestId: 'r-42' },
+    auditReveal: (value, details, context) => {
+      logger.info('accessed', {
+        klass: value.klass,
+        operation: details.operation,
+        ...context.tags,
+      });
+    },
+  },
+  async () => { /* ... */ }
+);
+```
+
+The context is the one passed to the call, or the ambient one when the call passed none, which is
+the same context the policy's `checkRevealAllowed` was asked to authorize. It is not always the
+context the hook was installed on: an integration that nests a child through `createChildContext()`
+to tag a reveal with a table, a column or an argument path is audited under the child, and that is
+what arrives here. `getCurrentRevealContext()` inside the hook answers a different question, namely
+where the caller stood.
+
+It carries `name`, `reason` and `tags`, and no `auditReveal`: the sink reading it is that hook. It
+is the live context object rather than a copy, so comparing it by identity works and an audited
+reveal allocates nothing, and a sink copies out what it means to keep rather than writing to `tags`,
+which every reveal under the context shares.
+
+A hook written with two parameters stays valid; the third is there to be ignored.
+
 ## API
 
 See the [main README](../../README.md) for full API documentation.

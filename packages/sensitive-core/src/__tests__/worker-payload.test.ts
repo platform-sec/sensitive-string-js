@@ -35,6 +35,7 @@ import {
   withWorkerPayload,
 } from '../index.js';
 import type {
+  AuditContext,
   RevealContext,
   RevealDetails,
   SensitivityClass,
@@ -255,6 +256,23 @@ describe('toWorkerPayload', () => {
       expect((calls[1] as WorkerHandoffAuditDetails).key).toBe('dsn');
       expect(JSON.stringify(calls)).not.toContain(CANARY);
       expect(JSON.stringify(calls)).not.toContain(OTHER_CANARY);
+    });
+
+    it('hands the sink the sending context, so a handoff is attributable', () => {
+      const seen: AuditContext[] = [];
+      const context: RevealContext = {
+        name: 'req-42',
+        reason: 'signing a payload',
+        tags: { requestId: 'r-1' },
+        auditReveal: (_value, _details, ctx) => {
+          seen.push(ctx);
+        },
+      };
+
+      toWorkerPayload({ token: token() }, { worker: './sign.js', context });
+
+      expect(seen).toEqual([context]);
+      expect(seen[0]?.tags).toEqual({ requestId: 'r-1' });
     });
 
     it('records a string destination as given and no destination as undefined', () => {
@@ -888,6 +906,82 @@ describe('fromWorkerPayload', () => {
       const payload = crossed(toWorkerPayload({ token: token() }, { context: { name: 'req' } }));
 
       expect(() => fromWorkerPayload(payload)).not.toThrow();
+    });
+  });
+
+  describe('the context a far-side sink is handed', () => {
+    it('is the receiving context, carrying what the sender named the work', () => {
+      const seen: AuditContext[] = [];
+      const payload = crossed(
+        toWorkerPayload(
+          { token: token() },
+          {
+            context: {
+              name: 'req-42',
+              reason: 'signing a payload',
+              tags: { requestId: 'r-1' },
+              auditReveal: () => undefined,
+            },
+          }
+        )
+      );
+
+      // The receiving side installs its own hook; the parent's could not
+      // cross. What the hook is told about is the work the sender named,
+      // which is the only attribution this side has.
+      withWorkerPayload<{ token: SensitiveString<'credential'> }, void>(
+        payload,
+        {
+          auditReveal: (_value, _details, ctx) => {
+            seen.push(ctx);
+          },
+        },
+        ({ token }) => {
+          token.reveal();
+        }
+      );
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0]?.name).toBe('req-42');
+      expect(seen[0]?.reason).toBe('signing a payload');
+      expect(seen[0]?.tags).toEqual({ requestId: 'r-1' });
+      expect(JSON.stringify(seen)).not.toContain(CANARY);
+    });
+
+    it('reaches a forwarded ambient hook with the same receiving context', () => {
+      const seen: AuditContext[] = [];
+      const payload = crossed(
+        toWorkerPayload(
+          { token: token() },
+          { context: { name: 'req-42', tags: { requestId: 'r-1' }, auditReveal: () => undefined } }
+        )
+      );
+
+      // No hook given, so `fromWorkerPayload` forwards this side's ambient
+      // one. The forwarding wrapper must pass the context through rather than
+      // swallow it, or the receiving context would be the one thing a
+      // forwarded sink cannot see.
+      withRevealContext(
+        {
+          name: 'worker-bootstrap',
+          auditReveal: (_value, _details, ctx) => {
+            seen.push(ctx);
+          },
+        },
+        () => {
+          withWorkerPayload<{ token: SensitiveString<'credential'> }, void>(
+            payload,
+            {},
+            ({ token }) => {
+              token.reveal();
+            }
+          );
+        }
+      );
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0]?.name).toBe('req-42');
+      expect(seen[0]?.tags).toEqual({ requestId: 'r-1' });
     });
   });
 

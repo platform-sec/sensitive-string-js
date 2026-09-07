@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetPolicies, withRevealContext } from '@platform-sec/sensitive-string-core';
+import {
+  createChildContext,
+  resetPolicies,
+  withRevealContext,
+} from '@platform-sec/sensitive-string-core';
 import type { RevealDetails } from '@platform-sec/sensitive-string-core';
 import { createMockAuditLog, mockRevealContext } from './mocks.js';
 import type { AuditRevealFn } from './mocks.js';
@@ -56,6 +60,32 @@ describe('mockRevealContext', () => {
     createTestSecret('credential', 'api_key').reveal();
 
     expect(ctx.calls).toHaveLength(0);
+  });
+
+  it('records the context each operation ran under, as a copy', () => {
+    const ctx = mockRevealContext('request-scope', { tags: { requestId: 'r-1' } });
+    const secret = createTestSecret('sensitive', 'email');
+
+    secret.reveal(ctx);
+    const recorded = ctx.calls[0]?.context;
+
+    expect(recorded?.name).toBe('request-scope');
+    expect(recorded?.tags).toEqual({ requestId: 'r-1' });
+    // A copy, or the log would point back at the context that holds it.
+    expect(recorded).not.toBe(ctx);
+    expect(() => JSON.stringify(ctx.calls)).not.toThrow();
+  });
+
+  it('records the child a reveal ran under, not the context the hook came from', () => {
+    const ctx = mockRevealContext('request-scope');
+    const secret = createTestSecret('sensitive', 'email');
+
+    withRevealContext(ctx, () => {
+      secret.reveal(createChildContext({ name: 'db-write', tags: { column: 'users.email' } }));
+    });
+
+    expect(ctx.calls[0]?.context.name).toBe('db-write');
+    expect(ctx.calls[0]?.context.tags).toEqual({ column: 'users.email' });
   });
 
   it('holds the instance rather than the raw value', () => {
@@ -209,6 +239,19 @@ describe('createMockAuditLog', () => {
     createTestSecret('sensitive').reveal(audit.context);
 
     expect(audit.entries[0]?.contextName).toBe('payment-handler');
+  });
+
+  it('names the context the reveal ran under, not the log it was installed on', () => {
+    const audit = createMockAuditLog('payment-handler');
+
+    // What an integration does to attribute a reveal: nest a child, keep the
+    // hook. The entry says where the reveal happened rather than where the
+    // sink was installed, which is the whole point of asserting on it.
+    withRevealContext(audit.context, () => {
+      createTestSecret('sensitive').reveal(createChildContext({ name: 'card-gateway' }));
+    });
+
+    expect(audit.entries[0]?.contextName).toBe('card-gateway');
   });
 
   it('records a mask and a renewal alongside a reveal', () => {

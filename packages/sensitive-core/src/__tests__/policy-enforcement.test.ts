@@ -277,7 +277,7 @@ describe('Policy Enforcement Security', () => {
           });
 
           expect(auditSpy).toHaveBeenCalledTimes(expectedAuditCount);
-          expect(auditSpy).toHaveBeenCalledWith(s, auditDetails);
+          expect(auditSpy).toHaveBeenCalledWith(s, auditDetails, ctx);
         });
 
         it(`${op.name} calls auditReveal via explicit context`, () => {
@@ -292,7 +292,7 @@ describe('Policy Enforcement Security', () => {
           op.execute(s, ctx);
 
           expect(auditSpy).toHaveBeenCalledTimes(expectedAuditCount);
-          expect(auditSpy).toHaveBeenCalledWith(s, auditDetails);
+          expect(auditSpy).toHaveBeenCalledWith(s, auditDetails, ctx);
         });
 
         it(`${op.name} explicit context audit overrides ALS context audit`, () => {

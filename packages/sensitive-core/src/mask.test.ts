@@ -320,36 +320,46 @@ describe('SensitiveString.mask', () => {
     it('reports the operation and the options through the ambient context', () => {
       const auditReveal = vi.fn();
       const value = sensitive('jane@example.com', 'email');
+      const ctx = { name: 'support-lookup', auditReveal };
 
-      withRevealContext({ name: 'support-lookup', auditReveal }, () => {
+      withRevealContext(ctx, () => {
         value.mask({ strategy: 'email' });
       });
 
       expect(auditReveal).toHaveBeenCalledTimes(1);
-      expect(auditReveal).toHaveBeenCalledWith(value, {
-        operation: 'mask',
-        strategy: 'email',
-        showFirst: 0,
-        showLast: 0,
-        minMasked: 4,
-        maskChar: '*',
-      });
+      expect(auditReveal).toHaveBeenCalledWith(
+        value,
+        {
+          operation: 'mask',
+          strategy: 'email',
+          showFirst: 0,
+          showLast: 0,
+          minMasked: 4,
+          maskChar: '*',
+        },
+        ctx
+      );
     });
 
     it('reports positional options', () => {
       const auditReveal = vi.fn();
       const value = sensitive('sk_live_abc123xyz9', 'api_key');
+      const ctx = { name: 'debug', auditReveal };
 
-      value.mask({ showFirst: 2, showLast: 4, maskChar: '#' }, { name: 'debug', auditReveal });
+      value.mask({ showFirst: 2, showLast: 4, maskChar: '#' }, ctx);
 
-      expect(auditReveal).toHaveBeenCalledWith(value, {
-        operation: 'mask',
-        strategy: 'positional',
-        showFirst: 2,
-        showLast: 4,
-        minMasked: 4,
-        maskChar: '#',
-      });
+      expect(auditReveal).toHaveBeenCalledWith(
+        value,
+        {
+          operation: 'mask',
+          strategy: 'positional',
+          showFirst: 2,
+          showLast: 4,
+          minMasked: 4,
+          maskChar: '#',
+        },
+        ctx
+      );
     });
 
     it('distinguishes a mask from a full reveal', () => {

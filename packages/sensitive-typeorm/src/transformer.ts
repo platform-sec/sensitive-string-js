@@ -4,7 +4,6 @@ import {
   getCurrentRevealContext,
   getDevModeConfig,
   hasPolicy,
-  withRevealContext,
 } from '@platform-sec/sensitive-string-core';
 import type { RevealContext, SensitivityClass } from '@platform-sec/sensitive-string-core';
 import { TypeOrmConfigError, TypeOrmMarkerReadError, TypeOrmWriteRefusedError } from './errors.js';
@@ -83,14 +82,17 @@ function writeContext(brand: TransformerBrand, options: SensitiveColumnOptions):
 /**
  * Reveal one value under a context that names the column it is going to.
  *
- * The context is both passed to `reveal()` and installed as the ambient one,
- * which is not redundant: core hands the explicit context to a policy's
- * `checkRevealAllowed`, but it calls `auditReveal(value, details)` with no
- * context at all. Installing it is the only way an audit sink can read the
- * table and column from inside its own hook.
+ * Core hands the same context to the policy's `checkRevealAllowed` and to
+ * `auditReveal` as its third argument, so passing it is the whole of it: a sink
+ * reads the table and the column from what it is given.
+ *
+ * This used to install the context ambiently as well, one AsyncLocalStorage
+ * entry per column write, because the hook was told the value and the operation
+ * and nothing else. Core's hook now carries the context, and the entry went
+ * with the workaround.
  */
 function revealFor(value: SensitiveString<SensitivityClass>, ctx: RevealContext): string {
-  return withRevealContext(ctx, () => value.reveal(ctx));
+  return value.reveal(ctx);
 }
 
 /**
