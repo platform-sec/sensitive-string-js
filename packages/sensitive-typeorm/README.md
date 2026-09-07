@@ -7,13 +7,18 @@ calls the transformer at all is refused rather than left to the driver.
 ## Installation
 
 ```bash
-pnpm add @platform-sec/sensitive-string-typeorm @platform-sec/sensitive-string-core
+pnpm add @platform-sec/sensitive-string-typeorm @platform-sec/sensitive-string-core \
+  @platform-sec/sensitive-string-data
 ```
 
 Both `typeorm` and the core package are peer dependencies. Core is a peer because
 `redactInStructure`, `containsSensitive` and every other structural check is an `instanceof`, and two
 copies of core in one application make all of them miss. `@platform-sec/sensitive-string-scrub` is an
 optional peer, needed only for `typeormScrubFragment`.
+
+`@platform-sec/sensitive-string-data` is a peer too, and is what holds the parts every ORM package
+in this family needs: the bound-parameter walk, the query-log redactor, the driver error sanitizer
+and the write reveal context. You install it, and you do not otherwise interact with it.
 
 No driver is a dependency, not even a dev one for the code that ships. The package never imports
 `pg`, `mysql2` or `better-sqlite3`: it refuses a bad value *before* the driver sees it, which is what

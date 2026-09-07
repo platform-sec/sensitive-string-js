@@ -6,12 +6,17 @@ including through relations, and every write unwraps through an audited `reveal(
 ## Installation
 
 ```bash
-pnpm add @platform-sec/sensitive-string-prisma @platform-sec/sensitive-string-core
+pnpm add @platform-sec/sensitive-string-prisma @platform-sec/sensitive-string-core \
+  @platform-sec/sensitive-string-data
 ```
 
 Both `@prisma/client` and the core package are peer dependencies. Core is a peer because
 `redactInStructure`, `containsSensitive` and every other structural check is an `instanceof`, and two
 copies of core in one application make all of them miss.
+
+`@platform-sec/sensitive-string-data` is a peer too, and is what holds the parts every ORM package
+in this family needs: the bound-parameter walk, the query-log redactor, the driver error sanitizer
+and the write reveal context. You install it, and you do not otherwise interact with it.
 
 ## Requirements
 
