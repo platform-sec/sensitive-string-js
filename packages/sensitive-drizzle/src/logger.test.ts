@@ -70,6 +70,22 @@ describe('assertParametersSafe', () => {
     }
   });
 
+  it('refuses a marker inside a longer string, which is how an array column arrives', () => {
+    // A `text[]` or `jsonb` column serialises its contents before the parameter
+    // array exists, so an instance inside one is already a marker embedded in a
+    // longer string by the time the guard sees it. Equality would miss it.
+    expect(() =>
+      assertParametersSafe('insert into t (tags) values ($1)', [
+        '{[REDACTED:credential],[REDACTED:credential]}',
+      ])
+    ).toThrow(DrizzleParameterRefusedError);
+    expect(() =>
+      assertParametersSafe('insert into t (meta) values ($1)', [
+        '{"token":"[REDACTED:credential]"}',
+      ])
+    ).toThrow(DrizzleParameterRefusedError);
+  });
+
   it('passes ordinary parameters through', () => {
     expect(() =>
       assertParametersSafe('select 1', ['a@example.com', 42, null, true, new Date()])

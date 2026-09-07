@@ -112,6 +112,12 @@ Two do not, because neither has a column behind it for Drizzle to consult:
 
 Both are refused by `sensitiveLogger()`, with `DrizzleParameterRefusedError`, before the driver runs.
 
+An array or JSON column reaches the guard in a third shape. `text('tags').array()` and `jsonb('meta')`
+serialise their contents to a string _before_ the parameter array exists, and a `SensitiveString`
+serialises as its redaction marker, so there is no instance left to find by then. The guard catches
+those on the marker instead, which is why it looks for a marker anywhere in a string rather than only
+for an instance.
+
 Two more are read paths rather than parameter paths, and neither can be refused because nothing goes
 wrong at the driver: ``db.select({ e: sql`${users.email}` })`` and `.values()` both return the
 plaintext, because the decoder is `sql`'s own or absent. `hydrateRawRows()` is the audited way back.

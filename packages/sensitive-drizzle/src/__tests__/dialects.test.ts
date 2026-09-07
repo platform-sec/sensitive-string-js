@@ -4,7 +4,7 @@ import { int, mysqlTable } from 'drizzle-orm/mysql-core';
 import { drizzle as mysqlDrizzle } from 'drizzle-orm/mysql2';
 import { drizzle as pgDrizzle } from 'drizzle-orm/node-postgres';
 import type { NodePgClient } from 'drizzle-orm/node-postgres';
-import { pgTable, serial, text } from 'drizzle-orm/pg-core';
+import { jsonb, pgTable, serial, text } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'vitest';
 import { checkSchema } from '../check.js';
 import { DrizzleParameterRefusedError } from '../errors.js';
@@ -138,6 +138,53 @@ describe('postgres', () => {
     expect(() =>
       checkSchema({ session: { logger: (inner as { logger: unknown }).logger } }, schema)
     ).not.toThrow();
+  });
+
+  describe('a value nested inside a parameter', () => {
+    // A `text[]` or a `jsonb` column serialises its contents to a string
+    // *before* the parameter array exists, and `SensitiveString` serialises as
+    // its redaction marker. So by the time the guard runs there is no instance
+    // left to find: the marker branch is what catches these, not the instance
+    // branch, and it is the only thing between the marker and a stored row that
+    // holds it.
+    const arrays = pgTable('arrays', {
+      id: serial('id').primaryKey(),
+      tags: text('tags').array(),
+      meta: jsonb('meta'),
+    });
+
+    it('a text[] holding instances arrives as one string carrying markers', () => {
+      const db = pgDrizzle(asClient(new StubPool()), { schema: { arrays } });
+      const { params } = db
+        .insert(arrays)
+        .values({ tags: [canary as never, canary as never] })
+        .toSQL();
+      expect(params.some((p) => p instanceof SensitiveString)).toBe(false);
+      expect(String(params[0])).toContain('[REDACTED:credential]');
+      expect(JSON.stringify(params)).not.toContain(CANARY);
+    });
+
+    it('a jsonb value holding one does the same', () => {
+      const db = pgDrizzle(asClient(new StubPool()), { schema: { arrays } });
+      const { params } = db
+        .insert(arrays)
+        .values({ meta: { token: canary } })
+        .toSQL();
+      expect(String(params[0])).toContain('[REDACTED:credential]');
+    });
+
+    it('and the guard refuses both', async () => {
+      const db = pgDrizzle(asClient(new StubPool()), {
+        schema: { arrays },
+        logger: sensitiveLogger(),
+      });
+      await expect(db.insert(arrays).values({ tags: [canary as never] })).rejects.toThrow(
+        DrizzleParameterRefusedError
+      );
+      await expect(db.insert(arrays).values({ meta: { token: canary } })).rejects.toThrow(
+        DrizzleParameterRefusedError
+      );
+    });
   });
 
   it('passes checkSchema when constructed with the guard', () => {
