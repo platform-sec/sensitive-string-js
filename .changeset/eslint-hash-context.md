@@ -2,7 +2,8 @@
 '@platform-sec/eslint-plugin-sensitive-string': minor
 ---
 
-`require-reveal-context` covers `hash()` and `hmac()`, where types are available.
+`require-reveal-context` covers the other audited reads, and a new rule keeps a password away from
+a fast digest.
 
 The library audits a digest exactly as it audits a reveal: the same gate, the same reveal budget,
 the same audit record with `operation: 'hash'` on it. An audit line saying a digest of a credential
@@ -28,7 +29,26 @@ ahead of the context is left alone, since which argument is the context stops be
 syntax can answer. The two messages now name the method they are about, so a `hash()` finding no
 longer says `reveal()`.
 
-`mask()` and `serialize()` take a context too, on the same reasoning, and are not covered yet.
+`mask()` and `serialize()` are covered on the same reasoning, and for a plainer motive than the
+digests: one returns a partial view as a plain string and the other returns the raw value in a wire
+object. What stays out is the transforms, `substring` and `map` and the rest, which audit too and
+would make the rule unusable long before they made an audit log better.
 
 A `sensitiveTypes` option names the wrapper types, defaulting to `SensitiveString`, the same way it
 does on the two type-aware rules.
+
+`no-password-fast-hash` is new, and it is the one rule in this plugin that reads a name rather than
+a shape. It reports `password.hash('sha256')` and points at `hashForStorage()` from the `kdf`
+package, because a fast digest is not password storage: a wordlist runs through SHA-256 at billions
+of guesses a second, and a salt does nothing about that for whoever has the row it is stored in.
+`hmac()` reports too, since a key does not make a fast function slow.
+
+A name, because no type separates a password from an API key: both are
+`SensitiveString<'credential'>`. That is a different question from the one `type-info.ts` refuses to
+answer by name, where a type does the job properly, and the rule's page says so rather than leaving
+the contradiction for a reader to find. The match is a case-insensitive fragment over `password`,
+`passwd`, `passphrase` and `pwd`, against the name of the value being hashed rather than whatever
+holds it: `user.password.hash()` reports, `passwordService.token.hash()` does not. `secret`, `token`
+and `key` are deliberately absent, since those are the values `hash()` is for. Warning in
+`recommended`, error in `strict`, which is the honest severity for a check whose only signal is a
+name.

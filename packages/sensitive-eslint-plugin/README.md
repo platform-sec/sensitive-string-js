@@ -58,7 +58,7 @@ Or set rules individually:
 }
 ```
 
-Those five are the untyped rules. `no-stringify-sensitive` and `prefer-safe-log`
+Those six are the untyped rules. `no-stringify-sensitive` and `prefer-safe-log`
 are set the same way, under a config that gives them a program: see
 [Type-aware linting](#type-aware-linting).
 
@@ -76,7 +76,8 @@ Syntax only, in `recommended`:
 | [no-credential-equality](docs/rules/no-credential-equality.md) | error | `x.reveal() === y`, `switch (x.reveal())` |
 | [no-network-sensitive](docs/rules/no-network-sensitive.md) | error | `fetch(url, { body: x.reveal() })` |
 | [explicit-class](docs/rules/explicit-class.md) | warn | `new SensitiveString(v)` with no class |
-| [require-reveal-context](docs/rules/require-reveal-context.md) | warn | `x.reveal()` with no context and no enclosing `withRevealContext`, and the same for `hash()` and `hmac()` where types are available |
+| [require-reveal-context](docs/rules/require-reveal-context.md) | warn | `x.reveal()` with no context and no enclosing `withRevealContext`, and the same for `mask()`, `hash()`, `hmac()` and `serialize()` where types are available |
+| [no-password-fast-hash](docs/rules/no-password-fast-hash.md) | warn | `password.hash('sha256')`, a fast digest where a KDF belongs |
 
 Type-aware, in `recommended-type-checked` only:
 
@@ -89,24 +90,25 @@ Type-aware, in `recommended-type-checked` only:
 
 | Preset | Format | Rules |
 |---|---|---|
-| `configs.recommended` | flat | the five untyped |
-| `configs.strict` | flat | the five untyped, harder |
-| `configs['recommended-type-checked']` | flat | all seven |
-| `configs['strict-type-checked']` | flat | all seven, harder |
+| `configs.recommended` | flat | the six untyped |
+| `configs.strict` | flat | the six untyped, harder |
+| `configs['recommended-type-checked']` | flat | all eight |
+| `configs['strict-type-checked']` | flat | all eight, harder |
 | `configs['disable-type-checked']` | flat | turns the two type-aware rules off |
-| `configs['legacy-recommended']` | eslintrc | the five untyped |
-| `configs['legacy-strict']` | eslintrc | the five untyped, harder |
-| `configs['legacy-recommended-type-checked']` | eslintrc | all seven |
-| `configs['legacy-strict-type-checked']` | eslintrc | all seven, harder |
+| `configs['legacy-recommended']` | eslintrc | the six untyped |
+| `configs['legacy-strict']` | eslintrc | the six untyped, harder |
+| `configs['legacy-recommended-type-checked']` | eslintrc | all eight |
+| `configs['legacy-strict-type-checked']` | eslintrc | all eight, harder |
 | `configs['legacy-disable-type-checked']` | eslintrc | turns the two type-aware rules off |
 
 Both formats configure the same rules at the same severities, and a test holds
 them to it.
 
 `recommended` errors on the three rules that catch a value escaping and warns on
-the two that ask for more auditability. Those two each have a shape they
-provably cannot see: a context installed in a caller, a class supplied through a
-spread. A warning is the honest severity for a check that can be wrong.
+the three that reason about something they cannot see: a context installed in a
+caller, a class supplied through a spread, and a password recognised by what the
+variable holding it is called. A warning is the honest severity for a check that
+can be wrong.
 
 `strict` raises everything to error, requires a `reason` in every reveal
 context, and sets `allowWithContext: false` on `no-network-sensitive`, so the
@@ -143,11 +145,11 @@ two get read as "no sensitive value is being stringified or logged here".
 
 `require-reveal-context` is a third case: it works without a program and uses
 one when it is there. `reveal()` is matched by name in every configuration;
-`hash()` and `hmac()` are checked only where the receiver's type can be read,
-because `bcrypt`, `argon2` and `node:crypto` all have a `hash` method and a
-rule that reported every `.hash()` call would be turned off within the hour. It
-stays enabled under `disable-type-checked`, where it does the half of its job
-that needs no types.
+`mask()`, `hash()`, `hmac()` and `serialize()` are checked only where the
+receiver's type can be read, because `bcrypt` and `node:crypto` have a `hash`,
+every ORM has a `serialize`, and a rule that reported those would be turned off
+within the hour. It stays enabled under `disable-type-checked`, where it does
+the half of its job that needs no types.
 
 ## Suggestions, not fixes
 

@@ -38,11 +38,14 @@ interface ContextArgument {
    *
    * `reveal` is rare enough in ordinary code that matching it by name is the
    * documented tradeoff of an untyped rule, and `magician.reveal()` being
-   * reported is the accepted cost. `hash` is not in that category: `bcrypt`,
-   * `argon2` and `node:crypto` all have one, this repository calls two of
-   * them, and a rule that reported every `.hash()` in a codebase would be
-   * turned off within the hour. Those are checked only where the receiver's
-   * type can be read, and are skipped in a file that has no type information.
+   * reported is the accepted cost. The others are not in that category:
+   * `bcrypt` and `node:crypto` have a `hash`, every ORM and form library has a
+   * `serialize`, and `mask` belongs to half the input libraries on npm. A rule
+   * that reported those in a codebase would be turned off within the hour, so
+   * they are checked only where the receiver's type can be read, and are
+   * skipped in a file that has no type information.
+   *
+   * `reveal` by name and everything else by type is the whole rule in a line.
    */
   readonly typedOnly: boolean;
 }
@@ -55,17 +58,22 @@ interface ContextArgument {
  * an audit record. A record saying a digest of a credential was taken, with
  * nothing about who took it or why, is the gap this rule exists to close.
  *
+ * `mask()` is a partial reveal that returns a plain string, and `serialize()`
+ * returns the raw value in a wire object, so both belong here for a plainer
+ * reason than the digests do.
+ *
  * One table rather than a list of names and a second list of the typed ones,
  * so the two cannot come to disagree about a method that is in one and not the
- * other.
- *
- * `mask()` and `serialize()` take a context too and are the obvious next
- * candidates. They are not here yet.
+ * other. What is not here is the transforms, `substring` and `map` and the
+ * rest: they audit too, and requiring a context on `token.trim()` would make
+ * the rule unusable long before it made an audit log better.
  */
 const CONTEXT_METHODS: ReadonlyMap<string, ContextArgument> = new Map([
   [REVEAL_METHOD, { index: 0, typedOnly: false }],
+  ['mask', { index: 1, typedOnly: true }],
   ['hash', { index: 2, typedOnly: true }],
   ['hmac', { index: 3, typedOnly: true }],
+  ['serialize', { index: 0, typedOnly: true }],
 ]);
 
 /**
@@ -114,7 +122,7 @@ export const requireRevealContext: RuleModule = {
     type: 'suggestion',
     docs: ruleDocs(
       RULE_NAME,
-      'Require an audit context on reveal(), and on hash() and hmac() where types are available, from an argument or an enclosing withRevealContext()',
+      'Require an audit context on reveal(), and on mask(), hash(), hmac() and serialize() where types are available, from an argument or an enclosing withRevealContext()',
       false
     ),
     messages: {

@@ -5,9 +5,9 @@
  *
  * A type keeps a secret wrapped. It cannot stop `console.log(secret.reveal())`,
  * because the reveal produces an ordinary string and logging a string is
- * ordinary code. Seven rules read the call instead.
+ * ordinary code. Eight rules read the call instead.
  *
- * Five of them read syntax alone, so they run under any parser and cost
+ * Six of them read syntax alone, so they run under any parser and cost
  * nothing beyond the parse:
  *
  * - `no-log-reveal` stops a revealed value reaching a logger.
@@ -15,7 +15,10 @@
  *   contents through timing.
  * - `no-network-sensitive` stops an unaudited reveal crossing the network.
  * - `explicit-class` asks for the sensitivity class at construction.
- * - `require-reveal-context` asks a reveal to say who is reading and why.
+ * - `require-reveal-context` asks a reveal to say who is reading and why, and
+ *   asks the same of the other audited reads where types are available.
+ * - `no-password-fast-hash` stops a password being stored under a digest that
+ *   a wordlist runs through at billions of guesses a second.
  *
  * Two answer a question no syntax can, "does this value carry a sensitive one
  * inside it", and so need typescript-eslint's type-aware mode:
@@ -49,6 +52,7 @@ import { explicitClass } from './rules/explicit-class.js';
 import { noCredentialEquality } from './rules/no-credential-equality.js';
 import { noLogReveal } from './rules/no-log-reveal.js';
 import { noNetworkSensitive } from './rules/no-network-sensitive.js';
+import { noPasswordFastHash } from './rules/no-password-fast-hash.js';
 import { noStringifySensitive } from './rules/no-stringify-sensitive.js';
 import { preferSafeLog } from './rules/prefer-safe-log.js';
 import { requireRevealContext } from './rules/require-reveal-context.js';
@@ -60,6 +64,7 @@ export const rules: Readonly<Record<string, RuleModule>> = {
   'no-credential-equality': noCredentialEquality,
   'no-log-reveal': noLogReveal,
   'no-network-sensitive': noNetworkSensitive,
+  'no-password-fast-hash': noPasswordFastHash,
   'no-stringify-sensitive': noStringifySensitive,
   'prefer-safe-log': preferSafeLog,
   'require-reveal-context': requireRevealContext,

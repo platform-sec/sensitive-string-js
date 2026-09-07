@@ -1638,7 +1638,7 @@ rewritten.
 
 From `@platform-sec/eslint-plugin-sensitive-string`, a dev dependency. A type keeps a secret
 wrapped; it cannot stop `console.log(secret.reveal())`, because the reveal produces an ordinary
-string and logging a string is ordinary code. Seven rules read the call instead: five from its
+string and logging a string is ordinary code. Eight rules read the call instead: six from its
 shape alone, two from the types of its arguments.
 
 ```js
@@ -1655,15 +1655,20 @@ export default [sensitive.configs.recommended];
 | `no-network-sensitive` | error | `fetch(url, { body: x.reveal() })` |
 | `explicit-class` | warn | `new SensitiveString(v)` with no class |
 | `require-reveal-context` | warn | `x.reveal()` with no context and no enclosing `withRevealContext` |
+| `no-password-fast-hash` | warn | `password.hash('sha256')`, a fast digest where a KDF belongs |
 
-The three rules that catch a value escaping are errors. The two that ask for more auditability are
-warnings, because each has a shape it provably cannot see without type information: a context
-installed in a caller, a class supplied through a spread.
+The three rules that catch a value escaping are errors. The three that reason about something they
+cannot see are warnings: a context installed in a caller, a class supplied through a spread, and a
+password recognised by what the variable holding it is called.
 
-`require-reveal-context` also covers `hash()` and `hmac()`, which the library audits exactly as it
-audits a reveal, but only in a file that has a TypeScript program: `bcrypt`, `argon2` and
-`node:crypto` all have a `hash` method, so the receiver's type is the only thing that separates
-`token.hash('sha256')` from `bcrypt.hash(password, 12)`.
+`require-reveal-context` also covers `mask()`, `hash()`, `hmac()` and `serialize()`, which the
+library audits exactly as it audits a reveal, but only in a file that has a TypeScript program:
+`bcrypt` and `node:crypto` have a `hash` method and every ORM has a `serialize`, so the receiver's
+type is the only thing that separates `token.hash('sha256')` from `bcrypt.hash(password, 12)`.
+
+`no-password-fast-hash` is the one rule here that reads a name rather than a shape, because no type
+separates a password from an API key: both are `SensitiveString<'credential'>`. It reports
+`password.hash('sha256')` and points at `hashForStorage()` from the `kdf` package.
 
 Two more rules answer a question no syntax answers, "does this value carry a sensitive one inside
 it", so they need a TypeScript program and live only in the `-type-checked` presets:

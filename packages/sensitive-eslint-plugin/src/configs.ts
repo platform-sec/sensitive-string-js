@@ -34,10 +34,11 @@ type RuleEntry = 'off' | 'warn' | 'error' | readonly ['off' | 'warn' | 'error', 
 /**
  * The default posture.
  *
- * The three rules that catch a value actually escaping are errors. The two that
- * ask for more auditability are warnings, because each has a shape it cannot
- * see (a context installed in a caller, a class supplied through a spread) and
- * a warning is the honest severity for a check that can be wrong.
+ * The three rules that catch a value actually escaping are errors. The three
+ * that reason about something they cannot see are warnings, and a warning is
+ * the honest severity for a check that can be wrong: a context installed in a
+ * caller, a class supplied through a spread, and a password recognised by what
+ * the variable holding it is called.
  */
 const RECOMMENDED_RULES: Readonly<Record<string, RuleEntry>> = {
   'no-log-reveal': 'error',
@@ -45,6 +46,7 @@ const RECOMMENDED_RULES: Readonly<Record<string, RuleEntry>> = {
   'no-network-sensitive': 'error',
   'explicit-class': 'warn',
   'require-reveal-context': 'warn',
+  'no-password-fast-hash': 'warn',
 };
 
 /**
@@ -60,6 +62,7 @@ const STRICT_RULES: Readonly<Record<string, RuleEntry>> = {
   'no-network-sensitive': ['error', { allowWithContext: false }],
   'explicit-class': 'error',
   'require-reveal-context': ['error', { requireReason: true }],
+  'no-password-fast-hash': 'error',
 };
 
 /**

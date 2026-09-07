@@ -32,6 +32,8 @@ describe('require-reveal-context', () => {
       'bcrypt.hash(password, 12);',
       "crypto.hash('sha256', payload);",
       "signer.hmac('sha256', key);",
+      'form.serialize();',
+      "input.mask('###');",
 
       // A configured wrapper.
       {
@@ -155,6 +157,8 @@ describe('require-reveal-context', () => {
       "declare class SensitiveString<C extends string = 'sensitive'> {",
       '  readonly klass: C;',
       '  reveal(ctx?: unknown): string;',
+      '  mask(options?: unknown, ctx?: unknown): string;',
+      '  serialize(ctx?: unknown): { value: string };',
       "  hash(algorithm: string, options?: unknown, ctx?: unknown): SensitiveString<'credential'>;",
       '  hmac(',
       '    algorithm: string,',
@@ -172,6 +176,8 @@ describe('require-reveal-context', () => {
       'declare const bcrypt: { hash(value: string, rounds: number): Promise<string> };',
       'declare const holder: { token: SensitiveString; hash(value: string): string };',
       'declare const untyped: any;',
+      'declare const form: { serialize(): string };',
+      'declare const input: { mask(pattern: string): void };',
       'declare const magician: { reveal(): void };',
       "declare function getToken(): SensitiveString<'credential'>;",
       'declare const key: Uint8Array;',
@@ -193,9 +199,15 @@ describe('require-reveal-context', () => {
         // Or from the scope, as for a reveal.
         code("withRevealContext(ctx, () => secret.hash('sha256'));"),
 
+        // The other two reads that hand something over.
+        code("secret.mask({ showLast: 4 }, { name: 'support' });"),
+        code("secret.serialize({ name: 'transfer' });"),
+
         // Not a wrapper, whatever the method is called.
         code('bcrypt.hash(password, 12);'),
         code("holder.hash('sha256');"),
+        code('form.serialize();'),
+        code("input.mask('###');"),
 
         // A receiver the checker knows nothing about. The rule would rather
         // say nothing than report every `.hash()` in a file that lost its
@@ -298,6 +310,26 @@ describe('require-reveal-context', () => {
             {
               messageId: 'missingContext',
               data: { method: 'hash', contextFunction: 'withRevealContext' },
+            },
+          ],
+        },
+        // mask() takes its context second, after the options it renders with.
+        {
+          code: code('secret.mask({ showLast: 4 });'),
+          errors: [
+            {
+              messageId: 'missingContext',
+              data: { method: 'mask', contextFunction: 'withRevealContext' },
+            },
+          ],
+        },
+        // serialize() takes it first, like reveal().
+        {
+          code: code('secret.serialize();'),
+          errors: [
+            {
+              messageId: 'missingContext',
+              data: { method: 'serialize', contextFunction: 'withRevealContext' },
             },
           ],
         },
