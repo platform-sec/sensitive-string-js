@@ -47,6 +47,7 @@
   },
   "peerDependencies": {
     "@platform-sec/sensitive-string-core": "^0.5.0",
+    "@platform-sec/sensitive-string-data": "^0.1.0",
     "@platform-sec/sensitive-string-scrub": "^0.1.0",
     "drizzle-orm": ">=0.30.0 <1"
   },
@@ -57,6 +58,7 @@
   },
   "devDependencies": {
     "@platform-sec/sensitive-string-core": "workspace:*",
+    "@platform-sec/sensitive-string-data": "workspace:*",
     "@platform-sec/sensitive-string-scrub": "workspace:*",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.20.1",

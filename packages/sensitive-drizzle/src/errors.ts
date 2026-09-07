@@ -122,8 +122,13 @@ export class DrizzleParameterRefusedError extends SensitiveStringError {
   readonly code = 'DRIZZLE_SENSITIVE_PARAMETER';
 
   constructor(
-    /** Index into the bound parameter array, or a key within a parameter bag. */
-    readonly parameter: number | string,
+    /**
+     * Where the value was: an index into the bound parameter array, a key
+     * within a parameter bag, or a path into a nested container such as
+     * `0.filters[1]`. Always a string, because a numeric index cannot name a
+     * position inside a container and the walk descends into one.
+     */
+    readonly parameter: string,
     /** What was found: an instance, or a marker. */
     readonly kind: 'instance' | 'marker',
     /** The statement, truncated. Never the parameters. */

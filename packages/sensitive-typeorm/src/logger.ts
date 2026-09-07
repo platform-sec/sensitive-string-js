@@ -1,4 +1,8 @@
-import { SensitiveString, containsRedactionMarker } from '@platform-sec/sensitive-string-core';
+import {
+  indexClassifiedPaths,
+  redactParameters as redactBag,
+  touchesClassifiedColumn as touches,
+} from '@platform-sec/sensitive-string-data';
 import type { DataSchema } from './schema.js';
 
 /** The part of TypeORM's `Logger` this package wraps. */
@@ -20,45 +24,16 @@ export interface LoggerLike {
 export const PARAMETER_CENSOR = '[REDACTED:typeorm-parameter]';
 
 /**
- * Every identifier in a statement, lowercased.
- *
- * Quoted in three dialects and bare, because the statement TypeORM built quotes
- * its own identifiers and a statement a caller wrote by hand may not. Parsing
- * SQL properly is not on the table here and would not help: the question is
- * only whether a classified name appears at all.
- */
-const IDENTIFIER = /"([^"]+)"|`([^`]+)`|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_$]*)/g;
-
-function identifiersIn(statement: string): Set<string> {
-  const found = new Set<string>();
-  for (const match of statement.matchAll(IDENTIFIER)) {
-    const name = match[1] ?? match[2] ?? match[3] ?? match[4];
-    if (name !== undefined) found.add(name.toLowerCase());
-  }
-  return found;
-}
-
-/**
  * The exact `table.column` entries of a specification, indexed by table.
  *
  * Only `fields` can be enumerated. A rule is a pattern with no list of names
  * behind it, so the rule half of a specification is answered the other way
  * round: every identifier the statement mentions is classified, and any one
- * that resolves to something other than `'plain'` counts.
+ * that resolves to something other than `'plain'` counts. See
+ * `touchesClassifiedColumn`.
  */
 function indexFields(schema: DataSchema): Map<string, Set<string>> {
-  const index = new Map<string, Set<string>>();
-  for (const [path, klass] of schema.classification.fields) {
-    if (klass === 'plain') continue;
-    const at = path.lastIndexOf('.');
-    if (at <= 0) continue;
-    const table = path.slice(0, at).toLowerCase();
-    const column = path.slice(at + 1).toLowerCase();
-    const columns = index.get(table) ?? new Set<string>();
-    columns.add(column);
-    index.set(table, columns);
-  }
-  return index;
+  return indexClassifiedPaths(schema.classification.fields);
 }
 
 /**
@@ -67,8 +42,8 @@ function indexFields(schema: DataSchema): Map<string, Set<string>> {
  * Deliberately generous. It answers yes when the statement names both halves of
  * a classified path anywhere in it, and yes when any identifier in it matches a
  * classification rule. Neither is proof that a classified value is among the
- * parameters, and both are cheap to be wrong about in the safe direction: a
- * log entry that loses its parameters is an inconvenience, one that keeps a
+ * parameters, and both are cheap to be wrong about in the safe direction: a log
+ * entry that loses its parameters is an inconvenience, one that keeps a
  * password is an incident.
  */
 export function touchesClassifiedColumn(
@@ -76,29 +51,14 @@ export function touchesClassifiedColumn(
   schema: DataSchema,
   fieldIndex: Map<string, Set<string>>
 ): boolean {
-  if (typeof statement !== 'string' || statement === '') return false;
-  const identifiers = identifiersIn(statement);
-
-  for (const [table, columns] of fieldIndex) {
-    // A schema-qualified key such as `public.users` is present when its last
-    // segment is, since a statement writes the qualification separately.
-    const tableName = table.slice(table.lastIndexOf('.') + 1);
-    if (!identifiers.has(tableName)) continue;
-    for (const column of columns) {
-      if (identifiers.has(column)) return true;
-    }
-  }
-
-  for (const identifier of identifiers) {
-    const klass = schema.classification.classify(identifier, [identifier]);
+  return touches(statement, {
+    paths: fieldIndex,
     // The bare identifier is asked without a table, so `fields` never answers
-    // it and only a rule can. Anything unmatched resolves to the fallback,
-    // which is why 'plain' has to be excluded explicitly: without that, a
-    // specification with the usual `fallback: 'plain'` would report every
-    // statement in the process as touching a classified column.
-    if (klass !== undefined && klass !== 'plain') return true;
-  }
-  return false;
+    // it and only a rule can. Anything unmatched resolves to `undefined` rather
+    // than to the specification's fallback, which is what keeps a spec with the
+    // usual `fallback: 'plain'` from reporting every statement in the process.
+    classify: (identifier) => schema.classification.classify(identifier, [identifier]),
+  });
 }
 
 /**
@@ -113,40 +73,15 @@ export function touchesClassifiedColumn(
  * means the transformer never ran, which is the query builder bypass, and it
  * prints as its own marker anyway; a marker means a column is already corrupt.
  * Neither should reach a log looking ordinary.
+ *
+ * The named parameter map is covered as well as the array. `DataSource.query(
+ * sql, { e: value })` reaches the logger as that object, so a redaction that
+ * only understood arrays would print every value in it, and TypeORM's own
+ * `Logger` types the argument as an array, which is why the shape is easy to
+ * miss.
  */
 export function redactParameters(parameters: unknown, touched: boolean): unknown {
-  if (typeof parameters !== 'object' || parameters === null) return parameters;
-
-  let changed = false;
-  const redactOne = (parameter: unknown): unknown => {
-    if (parameter instanceof SensitiveString) {
-      changed = true;
-      return PARAMETER_CENSOR;
-    }
-    if (typeof parameter === 'string' && (touched || containsRedactionMarker(parameter))) {
-      changed = true;
-      return PARAMETER_CENSOR;
-    }
-    return parameter;
-  };
-
-  if (Array.isArray(parameters)) {
-    const out: unknown[] = parameters.map(redactOne);
-    return changed ? out : parameters;
-  }
-
-  // A named parameter map. `DataSource.query(sql, { e: value })` reaches the
-  // logger as that object, so a redaction that only understood arrays would
-  // print every value in it. TypeORM's own `Logger` types the argument as an
-  // array, which is why this shape is easy to miss.
-  const proto: unknown = Object.getPrototypeOf(parameters);
-  if (proto !== Object.prototype && proto !== null) return parameters;
-
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(parameters as Record<string, unknown>)) {
-    out[key] = redactOne(value);
-  }
-  return changed ? out : parameters;
+  return redactBag(parameters, touched, PARAMETER_CENSOR);
 }
 
 /**

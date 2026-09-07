@@ -35,7 +35,7 @@ describe('assertParametersSafe', () => {
     } catch (error) {
       expect(error).toBeInstanceOf(DrizzleParameterRefusedError);
       const refusal = error as DrizzleParameterRefusedError;
-      expect(refusal.parameter).toBe(1);
+      expect(refusal.parameter).toBe('1');
       expect(refusal.kind).toBe('instance');
       expect(refusal.code).toBe('DRIZZLE_SENSITIVE_PARAMETER');
     }

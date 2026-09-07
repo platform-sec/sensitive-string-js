@@ -596,7 +596,7 @@ describe('audit', () => {
     );
 
     expect(seen).toHaveLength(1);
-    expect(seen[0]).toEqual({ operation: '$executeRaw', path: 'values.0' });
+    expect(seen[0]).toEqual({ sink: 'prisma', operation: '$executeRaw', path: 'values.0' });
   });
 });
 

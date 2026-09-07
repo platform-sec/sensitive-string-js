@@ -1,11 +1,11 @@
 import {
   SensitiveString,
   containsRedactionMarker,
-  createChildContext,
   getCurrentRevealContext,
   getDevModeConfig,
   hasPolicy,
 } from '@platform-sec/sensitive-string-core';
+import { buildWriteContext } from '@platform-sec/sensitive-string-data';
 import type { RevealContext, SensitivityClass } from '@platform-sec/sensitive-string-core';
 import { TypeOrmConfigError, TypeOrmMarkerReadError, TypeOrmWriteRefusedError } from './errors.js';
 import { SENSITIVE_TRANSFORMER } from './types.js';
@@ -52,30 +52,26 @@ function describe(value: unknown): string {
 /**
  * Build the context one column write reveals under.
  *
- * An ambient context established with `withRevealContext()` names the unit of
- * work the caller cares about, so its `name` and `reason` win: replacing them
- * with a constant would flatten a request-scoped audit trail into one bucket
- * per column. The table, the column and the sink travel in the tags instead,
- * and `createChildContext` is what keeps the ambient `auditReveal` hook and the
- * caller's own tags attached.
+ * `sensitive-data`'s, so that an audit sink reads the same tag names from every
+ * ORM package in this family. What is TypeORM's own is the two arguments below.
  *
  * `operation` is always `'unknown'`, and it cannot be anything else. A
  * `ValueTransformer` is called with one argument. It is not told whether this
  * value is being inserted, updated, compared against for change detection, or
  * used as a predicate, and the only way to recover that is to read the stack,
- * which is not something a security library does in a hot path.
+ * which is not something a security library does in a hot path. The reason text
+ * names all four rather than letting the shared default name two, because on
+ * this hook all four really do arrive here.
  */
 function writeContext(brand: TransformerBrand, options: SensitiveColumnOptions): RevealContext {
-  const ambient = getCurrentRevealContext();
-  return createChildContext({
-    name: ambient?.name ?? options.name ?? `typeorm:${brand.path}`,
-    reason: ambient?.reason ?? options.reason ?? 'column write, predicate or change detection',
-    tags: {
-      sink: 'typeorm',
-      operation: 'unknown',
-      ...(brand.table === undefined ? {} : { table: brand.table }),
-      ...(brand.column === undefined ? {} : { column: brand.column }),
-    },
+  return buildWriteContext({
+    sink: 'typeorm',
+    operation: 'unknown',
+    klass: brand.klass,
+    table: brand.table,
+    column: brand.column,
+    name: options.name ?? `typeorm:${brand.path}`,
+    reason: options.reason ?? 'column write, predicate or change detection',
   });
 }
 

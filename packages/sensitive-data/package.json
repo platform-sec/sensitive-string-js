@@ -1,0 +1,43 @@
+{
+  "name": "@platform-sec/sensitive-string-data",
+  "version": "0.1.0",
+  "description": "Shared layer under the data layer integrations - the bound-parameter guard and its log redactor, the statement identifier scan, the driver error sanitizer, and the write reveal context",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run --root ../.. packages/sensitive-data/",
+    "test:watch": "vitest --root ../.. packages/sensitive-data/"
+  },
+  "keywords": [
+    "security",
+    "sensitive-data",
+    "database",
+    "orm",
+    "redaction",
+    "typescript"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "peerDependencies": {
+    "@platform-sec/sensitive-string-core": "^0.5.0"
+  },
+  "devDependencies": {
+    "@platform-sec/sensitive-string-core": "workspace:*",
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

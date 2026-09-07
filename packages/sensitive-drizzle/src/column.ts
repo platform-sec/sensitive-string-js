@@ -1,11 +1,11 @@
 import {
   SensitiveString,
   containsRedactionMarker,
-  createChildContext,
   getCurrentRevealContext,
   getDevModeConfig,
   hasPolicy,
 } from '@platform-sec/sensitive-string-core';
+import { buildWriteContext } from '@platform-sec/sensitive-string-data';
 import type { RevealContext, SensitivityClass } from '@platform-sec/sensitive-string-core';
 import {
   DrizzleColumnTypeError,
@@ -91,12 +91,8 @@ function describe(value: unknown): string {
 /**
  * Build the context one column write reveals under.
  *
- * An ambient context established with `withRevealContext()` names the unit of
- * work the caller cares about, so its `name` and `reason` win: replacing them
- * with a constant would flatten a request-scoped audit trail into one bucket
- * per column. The table, the column and the sink travel in the tags instead,
- * and `createChildContext` is what keeps the ambient `auditReveal` hook and the
- * caller's own tags attached.
+ * `sensitive-data`'s, so that an audit sink reads the same tag names from every
+ * ORM package in this family. What is Drizzle's own is below.
  *
  * The ambient context does reach here, on every path, and that is measured
  * rather than assumed. Drizzle builds a statement's parameters lazily, at the
@@ -119,17 +115,14 @@ function writeContext(
   column: string,
   options: SensitiveColumnOptions
 ): RevealContext {
-  const ambient = getCurrentRevealContext();
-  return createChildContext({
-    name: ambient?.name ?? options.name ?? `drizzle:${path}`,
-    reason: ambient?.reason ?? options.reason ?? 'column write or predicate',
-    tags: {
-      sink: 'drizzle',
-      operation: 'unknown',
-      klass,
-      ...(table === undefined ? {} : { table }),
-      column,
-    },
+  return buildWriteContext({
+    sink: 'drizzle',
+    operation: 'unknown',
+    klass,
+    table,
+    column,
+    name: options.name ?? `drizzle:${path}`,
+    reason: options.reason ?? 'column write or predicate',
   });
 }
 

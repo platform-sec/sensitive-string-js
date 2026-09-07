@@ -176,6 +176,7 @@ describe('the reveal context', () => {
       requestId: 'r1',
       sink: 'typeorm',
       operation: 'unknown',
+      klass: 'sensitive',
       table: 'users',
       column: 'email',
     });

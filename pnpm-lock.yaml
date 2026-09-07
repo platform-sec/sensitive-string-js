@@ -165,6 +165,21 @@ importers:
         specifier: ^3.19.0
         version: 3.19.0
 
+  packages/sensitive-data:
+    devDependencies:
+      '@platform-sec/sensitive-string-core':
+        specifier: workspace:*
+        version: link:../sensitive-core
+      '@types/node':
+        specifier: ^22.20.1
+        version: 22.20.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(yaml@2.9.0))
+
   packages/sensitive-datadog:
     devDependencies:
       '@platform-sec/sensitive-string-core':
@@ -233,6 +248,9 @@ importers:
       '@platform-sec/sensitive-string-core':
         specifier: workspace:*
         version: link:../sensitive-core
+      '@platform-sec/sensitive-string-data':
+        specifier: workspace:*
+        version: link:../sensitive-data
       '@platform-sec/sensitive-string-scrub':
         specifier: workspace:*
         version: link:../sensitive-scrub
@@ -705,6 +723,9 @@ importers:
       '@platform-sec/sensitive-string-core':
         specifier: workspace:*
         version: link:../sensitive-core
+      '@platform-sec/sensitive-string-data':
+        specifier: workspace:*
+        version: link:../sensitive-data
       '@prisma/adapter-better-sqlite3':
         specifier: ^7.10.0
         version: 7.10.0
@@ -858,6 +879,9 @@ importers:
       '@platform-sec/sensitive-string-core':
         specifier: workspace:*
         version: link:../sensitive-core
+      '@platform-sec/sensitive-string-data':
+        specifier: workspace:*
+        version: link:../sensitive-data
       '@platform-sec/sensitive-string-scrub':
         specifier: workspace:*
         version: link:../sensitive-scrub

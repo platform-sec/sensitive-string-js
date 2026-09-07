@@ -58,6 +58,16 @@ function isSqlLike(value: unknown): value is SqlLike {
  * Layering goes through `createChildContext` so the ambient `auditReveal` hook
  * and the caller's tags survive; a freshly built context would silently drop
  * both.
+ *
+ * This does not use `buildWriteContext` from `sensitive-data`, and that is a
+ * deliberate divergence rather than an oversight. The shared builder is per
+ * column: it carries a `table`, a `column`, and one of six `WriteOperation`
+ * members. This one is per operation, built once for a whole `create` call, and
+ * its `path` is a position in a nested argument object rather than a column,
+ * while its `operation` is Prisma's own free-form name. Filling the shared
+ * shape would mean reporting `'unknown'` for an operation this hook actually
+ * knows. What is shared is the precedence rule above and the `sink` tag, so an
+ * audit sink can still tell which package produced a record.
  */
 export function buildRevealContext(attribution: RevealAttribution): RevealContext {
   const { model, operation } = attribution;
@@ -74,6 +84,7 @@ export function buildRevealContext(attribution: RevealAttribution): RevealContex
     name,
     reason,
     tags: {
+      sink: 'prisma',
       ...(model === undefined ? {} : { model }),
       ...(operation === undefined ? {} : { operation }),
     },

@@ -373,14 +373,14 @@ describe('buildRevealContext', () => {
 
     expect(ctx.name).toBe('prisma');
     expect(ctx.reason).toBe('create on User');
-    expect(ctx.tags).toEqual({ model: 'User', operation: 'create' });
+    expect(ctx.tags).toEqual({ sink: 'prisma', model: 'User', operation: 'create' });
   });
 
   it('omits the model tag and the "on <Model>" reason for a raw operation', () => {
     const ctx = buildRevealContext(info({ model: undefined, operation: '$executeRaw' }));
 
     expect(ctx.reason).toBe('$executeRaw');
-    expect(ctx.tags).toEqual({ operation: '$executeRaw' });
+    expect(ctx.tags).toEqual({ sink: 'prisma', operation: '$executeRaw' });
   });
 
   it('uses the supplied name and reason when no ambient context is active', () => {
@@ -417,7 +417,7 @@ describe('buildRevealContext', () => {
 
     expect(ctx.name).toBe('prisma');
     expect(ctx.reason).toBe('database argument');
-    expect(ctx.tags).toEqual({});
+    expect(ctx.tags).toEqual({ sink: 'prisma' });
   });
 
   it('fills in only the half the ambient context left unset', () => {
@@ -493,7 +493,11 @@ describe('revealRawArgs', () => {
       revealRawArgs(sql, info({ model: undefined, operation: '$executeRaw' }))
     );
 
-    expect(seen.contexts[0]?.tags).toEqual({ operation: '$executeRaw', path: 'values.1' });
+    expect(seen.contexts[0]?.tags).toEqual({
+      sink: 'prisma',
+      operation: '$executeRaw',
+      path: 'values.1',
+    });
   });
 
   // Prisma copies the parameters of an Unsafe call before the hook runs, so

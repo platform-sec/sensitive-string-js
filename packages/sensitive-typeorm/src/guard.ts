@@ -1,4 +1,4 @@
-import { SensitiveString, containsRedactionMarker } from '@platform-sec/sensitive-string-core';
+import { findUnsafeParameter, truncateStatement } from '@platform-sec/sensitive-string-data';
 import { TypeOrmParameterRefusedError } from './errors.js';
 
 /**
@@ -54,93 +54,21 @@ export interface GuardableDataSource {
   createQueryRunner(...args: never[]): unknown;
 }
 
-/** How much of a statement a refusal quotes. Enough to find it, short enough to log. */
-const STATEMENT_LIMIT = 200;
-
-function truncate(statement: string): string {
-  const text = typeof statement === 'string' ? statement : String(statement);
-  return text.length <= STATEMENT_LIMIT ? text : `${text.slice(0, STATEMENT_LIMIT)}...`;
-}
-
-/**
- * Whether descending into this value could find anything.
- *
- * Arrays and plain objects only. A `Date`, a `Buffer` or a driver's own wrapper
- * holds no `SensitiveString`, and walking a `Buffer`'s indices would cost more
- * than the statement it is about to be bound to. Checked before a walk starts,
- * so the common parameter shapes allocate nothing.
- */
-function isWalkable(value: object): boolean {
-  if (Array.isArray(value)) return true;
-  const proto: unknown = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
-}
-
-/** Find the first value inside a container that must not reach the driver. */
-function findOffender(
-  value: unknown,
-  path: string,
-  seen: WeakSet<object>
-): { path: string; kind: 'instance' | 'marker' } | undefined {
-  if (value instanceof SensitiveString) return { path, kind: 'instance' };
-  if (typeof value === 'string') {
-    return containsRedactionMarker(value) ? { path, kind: 'marker' } : undefined;
-  }
-  if (typeof value !== 'object' || value === null) return undefined;
-  if (seen.has(value)) return undefined;
-  if (!isWalkable(value)) return undefined;
-
-  seen.add(value);
-
-  if (Array.isArray(value)) {
-    for (const [index, item] of value.entries()) {
-      const found = findOffender(item, `${path}[${index}]`, seen);
-      if (found !== undefined) return found;
-    }
-    return undefined;
-  }
-
-  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    const found = findOffender(item, `${path}.${key}`, seen);
-    if (found !== undefined) return found;
-  }
-  return undefined;
-}
-
-/**
- * Check one bound value, allocating nothing unless it is a container.
- *
- * @throws TypeOrmParameterRefusedError If it is an instance or holds a marker.
- */
-function checkParameter(value: unknown, path: string, statement: string): void {
-  if (value === null || value === undefined) return;
-  if (value instanceof SensitiveString) {
-    throw new TypeOrmParameterRefusedError(path, 'instance', truncate(statement));
-  }
-  if (typeof value === 'string') {
-    if (containsRedactionMarker(value)) {
-      throw new TypeOrmParameterRefusedError(path, 'marker', truncate(statement));
-    }
-    return;
-  }
-  if (typeof value !== 'object' || !isWalkable(value)) return;
-
-  const found = findOffender(value, path, new WeakSet<object>());
-  if (found !== undefined) {
-    throw new TypeOrmParameterRefusedError(found.path, found.kind, truncate(statement));
-  }
-}
-
 /**
  * Check one statement's bound parameters, and refuse the ones that would
  * corrupt or leak.
  *
- * Both shapes TypeORM passes are checked. The array is the usual one; the named
+ * Every shape TypeORM passes is checked. The array is the usual one; the named
  * parameter map is the other, because `DataSource.query(sql, { e: value })`
  * hands the runner that object unchanged and a check that only understood
  * arrays would let every value in it through. `better-sqlite3` rejects named
  * placeholders, so this is one more case where the driver an application
  * develops against is not the one that would have shown the hole.
+ *
+ * The walk is `sensitive-data`'s, shared with the other ORM packages. It
+ * descends into a nested container, terminates on a cycle, and covers a `Map`
+ * and a bag whose prototype is not `Object.prototype`, which the version that
+ * lived here did not.
  *
  * Exported so a caller who builds their own query runner, or who wants the
  * check somewhere else entirely, does not have to reimplement it.
@@ -148,20 +76,9 @@ function checkParameter(value: unknown, path: string, statement: string): void {
  * @throws TypeOrmParameterRefusedError On the first offending parameter.
  */
 export function assertParametersSafe(statement: string, parameters: unknown): void {
-  if (typeof parameters !== 'object' || parameters === null) return;
-
-  if (Array.isArray(parameters)) {
-    for (let index = 0; index < parameters.length; index += 1) {
-      checkParameter(parameters[index], String(index), statement);
-    }
-    return;
-  }
-
-  // Anything else with a prototype of its own is not a parameter map TypeORM
-  // built, and descending into it would walk a driver's internals.
-  if (!isWalkable(parameters)) return;
-  for (const [key, value] of Object.entries(parameters as Record<string, unknown>)) {
-    checkParameter(value, key, statement);
+  const found = findUnsafeParameter(parameters);
+  if (found !== undefined) {
+    throw new TypeOrmParameterRefusedError(found.path, found.kind, truncateStatement(statement));
   }
 }
 
