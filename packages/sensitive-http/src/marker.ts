@@ -1,5 +1,4 @@
 import { getPolicy, getRegisteredClasses } from '@platform-sec/sensitive-string-core';
-import type { SensitivityPolicy } from '@platform-sec/sensitive-string-core';
 
 import { MarkerLeakError } from './errors.js';
 
@@ -51,16 +50,6 @@ export const MARKER_PREFIX = '[REDACTED:';
  */
 export const BASE64_NEEDLES: readonly string[] = ['W1JFREFDVEVE', 'RURBQ1RF', 'UkVEQUNURUQ6'];
 
-/** A policy that has declared how to recognize its own marker. */
-interface MarkerAwarePolicy extends SensitivityPolicy {
-  /**
-   * Set by a policy whose `redact` is value-dependent, so the guard can still
-   * recognize its output. Proposed for core rather than defined here; read
-   * duck-typed so this package works with or without it.
-   */
-  readonly markerPattern?: RegExp;
-}
-
 /**
  * Every needle the guard should look for, built at call time.
  *
@@ -72,15 +61,18 @@ interface MarkerAwarePolicy extends SensitivityPolicy {
  *
  * A policy whose `redact` is value-dependent returns something containing the
  * probe, so no literal needle can be derived from it. Such a policy is expected
- * to set `markerPattern`; when it does not, only `MARKER_PREFIX` covers it,
- * which is why the field is proposed for core.
+ * to set `markerPattern`; when it does not, only `MARKER_PREFIX` covers it, and
+ * a policy that does not use that prefix is not covered at all.
  */
 export function markerMatchers(): readonly (string | RegExp)[] {
   const matchers: (string | RegExp)[] = [MARKER_PREFIX];
 
   for (const klass of getRegisteredClasses()) {
-    const policy = getPolicy(klass) as MarkerAwarePolicy;
+    const policy = getPolicy(klass);
 
+    // Declared on `SensitivityPolicy` by core, and `deterministicRedaction()`
+    // is the first policy to set it. Checked rather than trusted, because a
+    // policy arrives from an application and the field is optional.
     if (policy.markerPattern instanceof RegExp) {
       matchers.push(policy.markerPattern);
     }

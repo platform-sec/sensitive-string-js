@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { registerPolicy, resetPolicies } from '@platform-sec/sensitive-string-core';
+import {
+  SensitiveString,
+  deterministicRedaction,
+  registerPolicy,
+  resetPolicies,
+} from '@platform-sec/sensitive-string-core';
 
 import { MarkerLeakError } from './errors.js';
 import { BASE64_NEEDLES, assertNoMarker, containsMarker, markerMatchers } from './marker.js';
@@ -35,7 +40,7 @@ describe('markerMatchers', () => {
 
     // The probe's length is the only thing such a policy would contribute, and
     // a needle of `len:29` would fire on unrelated traffic. The prefix still
-    // covers the default format, and `markerPattern` is the proposed fix.
+    // covers the default format, and `markerPattern` is what closes the rest.
     expect(markerMatchers().some((m) => typeof m === 'string' && m.startsWith('len:'))).toBe(false);
   });
 
@@ -45,11 +50,28 @@ describe('markerMatchers', () => {
         name: 'sensitive',
         redact: (value: string) => `##${value.length}##`,
         markerPattern: /##\d+##/,
-      } as never,
+      },
       { overwrite: true }
     );
 
     expect(() => assertNoMarker('body ##42##', 'request body')).toThrow(MarkerLeakError);
+  });
+
+  /**
+   * Core's first value-dependent policy, end to end. Its default rendering
+   * still starts with `[REDACTED:` and would be caught by the prefix alone; a
+   * custom prefix would not, and before the policy declared a `markerPattern`
+   * that request went out with the tag in it instead of being refused.
+   */
+  it.each([
+    ['the default prefix', { key: new Uint8Array(32).fill(7) }],
+    ['a custom prefix', { key: new Uint8Array(32).fill(7), prefix: 'PII' }],
+  ])('catches a deterministic redaction under %s', (_label, options) => {
+    registerPolicy(deterministicRedaction('sensitive', options), { overwrite: true });
+
+    const body = JSON.stringify({ email: String(new SensitiveString('a@b.com', 'sensitive')) });
+
+    expect(() => assertNoMarker(body, 'request body')).toThrow(MarkerLeakError);
   });
 });
 

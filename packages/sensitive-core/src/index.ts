@@ -151,6 +151,16 @@ export {
 } from './derive.js';
 export type { KeyedDerivationOptions } from './derive.js';
 
+// Deterministic redaction, the first caller of that derivation inside core. It
+// changes what redacted output means, so it is opt-in through a registered
+// policy and never a default.
+export {
+  createDeterministicRedactor,
+  deterministicRedaction,
+  DeterministicRedactionNotAllowedError,
+} from './deterministic.js';
+export type { DeterministicRedactorOptions } from './deterministic.js';
+
 // Template literals
 export { sensitiveTemplate, st } from './template.js';
 export type { TemplateValue, SensitiveTemplateOptions, SensitiveTemplateTag } from './template.js';

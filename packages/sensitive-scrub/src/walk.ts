@@ -47,8 +47,14 @@ type Entries = readonly (readonly [string, unknown])[];
  * `[REDACTED:<class>]`. A custom policy can produce any string it likes, so
  * this is a recognizer for the defaults rather than a proof of absence, and
  * the report says "seen", not "none".
+ *
+ * The inner bound is 96 rather than the class name's own length: under a
+ * `deterministicRedaction` policy the shape is `[REDACTED:sensitive:<tag>]`,
+ * whose inner part reaches 74 characters at the longest tag core will produce.
+ * At the old bound of 64 a tag of 55 characters or more stopped being
+ * recognized, which read as an absence of markers rather than as a limit.
  */
-const MARKER = /\[REDACTED(?::([^\]\s]{1,64}))?\]/g;
+const MARKER = /\[REDACTED(?::([^\]\s]{1,96}))?\]/g;
 
 /**
  * Read a named property, treating a refusal as absence.

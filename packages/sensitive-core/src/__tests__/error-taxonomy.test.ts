@@ -80,6 +80,11 @@ const SAMPLES: readonly (readonly [string, SensitiveStringError, string])[] = [
     new core.UnshareableConstraintError('boot', ['maxReveals']),
     'unshareable-constraint',
   ],
+  [
+    'DeterministicRedactionNotAllowedError',
+    new core.DeterministicRedactionNotAllowedError('credential'),
+    'deterministic-redaction-refused',
+  ],
 ];
 
 describe('the error taxonomy', () => {

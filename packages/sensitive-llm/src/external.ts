@@ -76,8 +76,14 @@ export class RedactedMarkerError extends Error {
  * proving absence. Not global: a global `RegExp` carries `lastIndex` between
  * calls, and a shared one on a refusal path would answer differently on every
  * second call.
+ *
+ * The inner bound is 96 rather than the class name's own length: under a
+ * `deterministicRedaction` policy the shape is `[REDACTED:sensitive:<tag>]`,
+ * whose inner part reaches 74 characters at the longest tag core will produce.
+ * At the old bound of 64 a tag of 55 characters or more stopped being
+ * recognized, which read as an absence of markers rather than as a limit.
  */
-const MARKER = /\[REDACTED(?::[^\]\s]{1,64})?\]/;
+const MARKER = /\[REDACTED(?::[^\]\s]{1,96})?\]/;
 
 /**
  * Authorize and perform a reveal destined for a third party.

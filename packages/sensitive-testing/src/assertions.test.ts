@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   SensitiveString,
+  deterministicRedaction,
   registerPolicy,
   resetPolicies,
 } from '@platform-sec/sensitive-string-core';
@@ -360,6 +361,32 @@ describe('expectRedacted', () => {
       // and `registerPolicy` rejects a partial redaction unless a caller passes
       // `skipRedactValidation` as this test does.
       expect(() => expectRedacted('user=jane', secret)).not.toThrow();
+    });
+
+    /**
+     * `expectRedacted` has said since it was written that a future
+     * deterministic redaction would pass it without the test knowing the
+     * format, because the rendering it looks for is read off the instance.
+     * That future has arrived, so the claim is now checked rather than
+     * asserted in a comment: two subjects get two tags, and a suite written
+     * against `[REDACTED:sensitive]` would have to be rewritten while one
+     * written against this assertion does not.
+     */
+    it('checks a deterministic tag, which is per-value rather than per-class', () => {
+      registerPolicy(deterministicRedaction('sensitive', { key: new Uint8Array(32).fill(5) }), {
+        overwrite: true,
+      });
+
+      const jane = createTestSecret('sensitive', 'email', { value: 'jane@example.com' });
+      const john = createTestSecret('sensitive', 'email', { value: 'john@example.com' });
+
+      expect(() => expectRedacted(`user=${String(jane)}`, jane)).not.toThrow();
+      expect(() => expectRedacted('user=[REDACTED:sensitive]', jane)).toThrow(
+        /Expected a redaction placeholder/
+      );
+      expect(() => expectRedacted(`user=${String(john)}`, jane)).toThrow(
+        /Expected a redaction placeholder/
+      );
     });
   });
 });

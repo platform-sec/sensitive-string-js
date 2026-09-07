@@ -458,6 +458,29 @@ export interface SensitivityPolicy {
    */
   redact(value: string): string;
 
+  /**
+   * How to recognize this policy's redacted output, for a policy whose
+   * `redact` depends on the value.
+   *
+   * The guards that refuse to send a redaction onward, chiefly
+   * `assertNoMarker` in `@platform-sec/sensitive-string-http`, learn a
+   * policy's marker by redacting two probes of different lengths and keeping
+   * the answer when both agree. A constant redaction gives itself away that
+   * way; a value-dependent one cannot, so it declares its shape here instead.
+   * Without it such a policy is recognized only by the default `[REDACTED:`
+   * prefix, and a policy that does not use that prefix is not recognized at
+   * all, which means a redaction leaves in a request body rather than being
+   * refused.
+   *
+   * `deterministicRedaction()` sets it. A hand-written value-dependent policy
+   * should set it too. Leave it unset for a constant redaction, which needs no
+   * help.
+   *
+   * ⚠️ Must not carry the `g` flag. A global `RegExp` keeps `lastIndex`
+   * between calls, so a shared one answers differently on every second scan.
+   */
+  readonly markerPattern?: RegExp;
+
   /** Use constant-time comparison for equals() operations */
   requireConstantTimeEquals?: boolean;
 

@@ -66,6 +66,9 @@ const raw = apiKey.reveal({ name: 'api-call', reason: 'authenticating' });
 - **Path-Based Wrapping**: Wrap sensitive fields in complex objects by path
 - **Development Mode**: `setDevMode()` records where a value came from, how often it has been
   exposed and from where, off by default and behind one guard when it is
+- **Deterministic Redaction**: `deterministicRedaction()` registers a policy whose redacted output
+  carries a keyed tag, so a log reader can tell whether two redacted lines are the same value. Opt
+  in, keyed only, and refused for `credential`
 - **Zero External Dependencies**: Only uses Node.js built-ins
 
 ## Handling Webhooks and API Payloads
@@ -169,6 +172,20 @@ instances on the far side, installs that side's own audit hook, and deletes the
 raw values from the payload object so `workerData` stops holding plaintext. The
 [main README](../../README.md#worker-threads-and-child-processes) has the full
 account, including the three things the boundary still does not close.
+
+## Deterministic redaction
+
+`deterministicRedaction(klass, { key })` builds a policy whose `redact` renders
+`[REDACTED:sensitive:5f2a91c0b74e]` instead of `[REDACTED:sensitive]`, so the log
+lines that concern one subject can be found without the subject being disclosed.
+
+It changes what redacted output means: it stops being constant and starts
+carrying a keyed fingerprint of the value, which is disclosure by design. The
+tag is an HMAC with no unkeyed mode, the key floor is 16 bytes, the tag floor is
+12 hex characters, and `credential` is refused. The policy declares a
+`markerPattern`, so the guards that refuse to send a redaction onward still
+recognize one. The [main README](../../README.md#deterministic-redaction) has
+the trade-offs, the collision arithmetic and the measured cost.
 
 ## Secret references
 

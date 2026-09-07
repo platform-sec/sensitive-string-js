@@ -1169,6 +1169,127 @@ withDevMode({ enabled: true, logReveals: { enabled: true, logger } }, () => {
 });
 ```
 
+### Deterministic Redaction
+
+```typescript
+interface DeterministicRedactorOptions {
+  key: Uint8Array | string;             // required, at least 16 bytes
+  scope?: string | readonly string[];   // domain separation, e.g. a session id
+  length?: number;                      // hex characters, 12 to 64, default 12
+  prefix?: string;                      // default 'REDACTED'
+  format?: (prefix: string, tag: string) => string;
+}
+
+deterministicRedaction(
+  klass: SensitivityClass,
+  options: DeterministicRedactorOptions
+): SensitivityPolicy;
+
+createDeterministicRedactor(
+  options: DeterministicRedactorOptions
+): (value: string) => string;
+```
+
+Three log lines saying `[REDACTED:sensitive]` may be one subject or three, and the difference is
+usually the question being asked. Registering this policy replaces the constant with a stable tag
+derived from the value, so the lines that share a subject look like they do:
+
+```typescript
+import { deterministicRedaction, registerPolicy } from '@platform-sec/sensitive-string-core';
+
+registerPolicy(
+  deterministicRedaction('sensitive', { key: process.env.REDACTION_HMAC_KEY! }),
+  { overwrite: true }
+);
+
+const email = new SensitiveString('alice@example.com', 'sensitive', 'email');
+
+logger.info(`processing ${email}`);   // processing [REDACTED:sensitive:5f2a91c0b74e]
+logger.info(`notifying ${email}`);    // notifying [REDACTED:sensitive:5f2a91c0b74e]
+logger.info(`failed for ${other}`);   // failed for [REDACTED:sensitive:c83d40e1a927]
+```
+
+⚠️ **This changes what redacted output means.** Until now it carried no information about the
+value at all; under this policy it carries a keyed fingerprint of it. Anyone holding the key and a
+guess can confirm the guess against a log line, and anyone holding neither still learns which lines
+concern the same subject. That second part is the feature, and it is still disclosure. Adopting it
+is a decision with a threat model behind it rather than a formatting option.
+
+The key is also not the only way to confirm a guess. Anyone who can get a value of their own
+choosing redacted into output they can read has an oracle: submit a guess, read its tag, compare it
+with a tag from the log. A request body echoed into a log line is the ordinary shape of that.
+HMAC-SHA256 is a PRF, so the oracle does not recover the key, and it does reduce "an attacker who
+holds the key" to "an attacker who can reach the service".
+
+The tag is an HMAC and **there is no unkeyed mode**. The values that get redacted are low-entropy
+by definition: an email address under a plain SHA-256 is a wordlist lookup, and a redacted log is
+exactly where an offline attack happens. The factory refuses without a key rather than defaulting
+to a bare digest, and the key floor is 16 bytes, the same one `hmac()` and `deriveKeyedToken`
+apply. 32 bytes from `randomBytes` or a secrets manager is the recommendation.
+
+`credential` is refused. A password or an API key is guessable by construction, so a stable tag
+turns every log line into an oracle for confirming a guess against. Tag the `sensitive` value the
+credential belongs to instead. A deployment that has weighed this and still wants it assembles the
+policy itself around `createDeterministicRedactor`, which is one line that shows up in review.
+
+The tag is 12 hex characters by default, and 12 is also the floor. At 48 bits, two distinct values
+collide with probability around one in a million at roughly 24,000 distinct values under one key
+and scope; at the 8 characters the sketch proposed, a one-in-a-thousand collision arrives at about
+3,000, which a support-ticket workload reaches in a week. A collision merges two subjects into one
+in a log, where it reads as a fact rather than as a collision, so the floor is a correctness guard
+as much as a security one. Raise `length` before a workload grows past the bound.
+
+`scope` is what bounds correlation. With none, a tag is stable for the life of the key across every
+process and restart, and whoever holds two years of logs can count how often a subject appears in
+them. A per-session or per-tenant scope narrows that:
+
+```typescript
+const sessionKey = crypto.randomBytes(16).toString('hex');
+
+registerPolicy(
+  deterministicRedaction('sensitive', { key, scope: sessionKey }),
+  { overwrite: true }
+);
+```
+
+Rotating the key does the same thing over time, and cuts correlation in both directions: an
+investigation that spans a rotation sees two unrelated tags for one subject.
+
+`deterministicRedaction` starts from the class policy currently registered and replaces only
+`redact`, so `requireConstantTimeEquals`, `allowMask`, `checkRevealAllowed`, the advisory flags and
+every deadline rule survive. Writing the policy out by hand is how a class quietly loses one of
+those.
+
+Everything the rendering reaches is covered by one registration: `toString()`, `toJSON()`,
+`inspect()`, `redactInStructure`, `redactCopy`, `safeStringify`, a `mask()` that could not meet its
+floor, and a `serialize()` payload caught by a redaction walk, which renders the same tag as the
+instance it came from.
+
+That reach includes output bound for somewhere else. The error tracking and APM integrations scrub
+through `redactCopy`, so an instance in a Sentry event, a Bugsnag report, a Rollbar item or a
+Datadog span carries the tag. What a vendor flattened into a plain object before the scrub ran does
+not, since there is no value left to derive from.
+
+The returned policy declares a `markerPattern`, so `assertNoMarker` in the HTTP clients still
+refuses to send a request body carrying a redaction. A guard learns a constant policy's marker by
+redacting two probes and keeping the answer when both agree, which a value-dependent policy defeats
+by construction; the pattern is what replaces that. A custom `format` that does not embed the tag
+verbatim yields no pattern, and such a policy is recognized only if its output starts with
+`[REDACTED:`.
+
+Two properties follow from where redaction runs, and both are deliberate. It is not a reveal, so it
+fires no audit hook, charges no reveal budget, and keeps working on an expired or revoked value: a
+dead value still emits its tag, which is the same disclosure the live one made and no new one. And
+it runs on every rendering, so there is no cache, because a cache keyed by value is a table of
+plaintexts with the lifetime of the process. Measured on Node 22.15.0, a redaction costs about
+20 ns under the constant policy and about 2.6 µs under this one, so a path logging 10,000 wrapped
+values a second spends roughly 2.6% of a core on tags.
+
+`createDeterministicRedactor` is the primitive underneath, for a caller assembling a policy by
+hand. It knows no class, so it mixes nothing extra into the derivation and refuses nothing;
+`deterministicRedaction` adds the class as a domain component, so the same string classified two
+ways gets two tags.
+
 ### Zod Schemas
 
 ```typescript
@@ -1342,6 +1463,10 @@ getPolicy(name: SensitivityClass): SensitivityPolicy;
 // Class combination logic
 defaultCombineClasses(a: SensitivityClass, b: SensitivityClass): SensitivityClass;
 ```
+
+`registerPolicy` checks the `redact` function against canary values and refuses one that returns
+the value unchanged or embeds it in its output. See [Deterministic Redaction](#deterministic-redaction)
+for the one built-in policy that makes redacted output depend on the value.
 
 ### Testing Utilities
 
@@ -1772,6 +1897,15 @@ The policy registry is process-global and shared across duplicate installed
 copies of core using `Symbol.for()`. This mutable configuration prevents
 accidental misuse; it is not a security boundary against code already running
 inside the process, which can replace a registered policy.
+
+A hand-written policy replaces every field, so a class silently loses whatever
+the object does not name: `allowMask`, `checkRevealAllowed`, the advisory flags.
+To change one field, spread the current policy over it, which is what
+[`deterministicRedaction`](#deterministic-redaction) does with `redact`:
+
+```typescript
+registerPolicy({ ...getPolicy('sensitive'), allowMask: false }, { overwrite: true });
+```
 
 ### Service-to-Service Transmission
 
