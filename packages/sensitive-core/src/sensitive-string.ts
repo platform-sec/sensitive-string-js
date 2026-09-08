@@ -11,7 +11,7 @@ import type {
   RevealContext,
   RevealDetails,
 } from './types.js';
-import { constantTimeEquals } from './compare.js';
+import { constantTimeEquals, constantTimeEqualsBytes } from './compare.js';
 import { getPolicy, defaultCombineClasses, hasPolicy } from './policy.js';
 import { getCurrentRevealContext } from './context.js';
 import { isInsideRedaction, RevealDuringRedactionError } from './redaction-scope.js';
@@ -68,6 +68,14 @@ import {
   type ResolvedRestrictions,
 } from './environment.js';
 import { snapshotRegExp } from './regexp.js';
+import {
+  additionalData,
+  openBox,
+  sealBytes,
+  sealing,
+  SealingUnavailableError,
+  utf8CodeUnits,
+} from './sealing.js';
 import { ClearedSensitiveValueError, hygiene, trackInstance } from './hygiene.js';
 
 /**
@@ -102,6 +110,39 @@ function describeNonString(value: unknown): string {
  * is handed to caller-supplied audit hooks.
  */
 const REVEAL_AUDIT_DETAILS: RevealDetails = Object.freeze({ operation: 'reveal' as const });
+
+/**
+ * Two inputs a policy's `redact` is asked about, to learn whether its output
+ * depends on what it is given.
+ *
+ * Obvious non-secrets, and never anything a caller supplied: they exist to be
+ * discarded. `registerPolicy` already runs a caller's redactor over canaries of
+ * its own at registration, so probing one is not a new kind of thing to do.
+ */
+const REDACTION_PROBE_A = 'sensitive-string-probe-a';
+const REDACTION_PROBE_B = 'sensitive-string-probe-b';
+
+/**
+ * Whether a policy's rendering depends on the value it is handed.
+ *
+ * The default policies and almost every custom one emit a constant marker and
+ * ignore the argument. Deterministic redaction does not: its whole purpose is a
+ * tag derived from the value, so two values must render differently.
+ *
+ * Only `fromBuffer` asks, and only because the answer decides whether it has to
+ * decode the plaintext to render it. A redactor that answers `true` for an
+ * unrelated reason, one that is random rather than value-derived, costs that
+ * decode and nothing else.
+ */
+function redactionReadsValue(policy: SensitivityPolicy): boolean {
+  try {
+    return policy.redact(REDACTION_PROBE_A) !== policy.redact(REDACTION_PROBE_B);
+  } catch {
+    // A broken redactor renders as the class marker anyway, through the
+    // fallback in `#sealFromBytes`. Nothing here needs the plaintext.
+    return false;
+  }
+}
 
 /**
  * How a caller uses the raw value determines authorization and auditing.
@@ -374,10 +415,38 @@ function isoDeadline(deadline: number): string {
 
 export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   /**
-   * The raw value. Using ES2022 #private for true runtime encapsulation.
-   * This field is inaccessible outside the class, even via reflection or type coercion.
+   * The raw value, when this instance is not sealed. Using ES2022 #private for
+   * true runtime encapsulation: this field is inaccessible outside the class,
+   * even via reflection or type coercion.
+   *
+   * `undefined` exactly when {@link SensitiveString.#box} is set. The two are
+   * never both present, and the one that is present is chosen once at
+   * construction and never changes afterwards.
    */
-  #value: string;
+  #value: string | undefined;
+
+  /**
+   * The value as AES-256-GCM ciphertext, when this instance is sealed.
+   *
+   * `generation || iv || ciphertext || tag`, one `Buffer`, 32 bytes of
+   * overhead. Its bytes are external to the V8 heap, so a heap snapshot does
+   * not record them, and it can be zeroed, which a string can never be.
+   *
+   * Everything that reads it goes through `#open()`, which is reachable only
+   * from inside the gate.
+   */
+  #box: Buffer | undefined;
+
+  /**
+   * The value's length in UTF-16 code units, captured at construction, for a
+   * sealed instance only.
+   *
+   * `length` is a `'safe'` read: it needs no authorization, and answering it by
+   * decrypting would put a plaintext string in the heap for a question that is
+   * documented as not sensitive. Meaningless while `#box` is `undefined`, where
+   * the string answers for itself.
+   */
+  #sealedLength = 0;
 
   /**
    * State inherited from the values this instance was derived from. Multiple
@@ -509,6 +578,99 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
 
     this.#own = state;
     this.#adopt([state]);
+
+    // Last in the constructor, so a value that fails to seal fails after every
+    // other check has passed rather than in place of one. `#derived` does its
+    // own sealing after the early return above, because a derivative takes its
+    // storage from its sources rather than from the process default.
+    if (options?.sealed ?? sealing.config.sealByDefault) {
+      this.#seal(value, options?.sealed === true && sealing.config.strict);
+    }
+  }
+
+  /**
+   * Move this instance's value from a string into a box, and drop the string.
+   *
+   * Called once, from the constructor or from `#derived`, and never again: an
+   * instance is sealed or it is not, decided before any caller can observe it.
+   *
+   * `required` decides only what happens when sealing is unavailable. Each call
+   * site works it out for itself, because the two have different reasons: the
+   * constructor asks whether the caller named `sealed: true` and whether
+   * `strict` is on, and `#derived` always requires it, because a derivative
+   * that fell back to a plaintext string is the R2 bypass the propagation
+   * exists to close. `strict` is a preference about a caller's request; it has
+   * no say over a rule.
+   */
+  #seal(value: string, required: boolean): void {
+    const bytes = Buffer.from(value, 'utf8');
+
+    try {
+      this.#sealFromBytes(bytes, value.length, value);
+    } catch (error) {
+      if (error instanceof SealingUnavailableError && !required) {
+        // The value stays a string. Not silent: `isSealed` reports false, which
+        // is the same answer it gives in a process that never configured
+        // sealing, and `strict` defaults to true precisely so a caller who
+        // asked by name is refused instead.
+        return;
+      }
+
+      throw error;
+    } finally {
+      bytes.fill(0);
+    }
+  }
+
+  /**
+   * Seal from bytes that already exist, which is the path `fromBuffer` needs.
+   *
+   * The caller owns `bytes` and zeroes them; this reads them and nothing else.
+   *
+   * `rendered` is what the class policy is asked to redact. It is the live
+   * value on the constructor path. On the `fromBuffer` path there is no live
+   * value, so it is the empty string when the policy's rendering does not
+   * depend on its argument and the decoded plaintext when it does; `fromBuffer`
+   * decides which, because only it knows what that decision costs.
+   */
+  #sealFromBytes(bytes: Buffer, codeUnits: number, rendered: string): void {
+    // The rendering is captured rather than computed later, and this is the one
+    // place in the library where a rendering outlives the value it came from.
+    // Deterministic redaction reads the raw value, so a policy that HMACs it
+    // would otherwise force a decrypt on every log line, and computing the tag
+    // after the value was sealed would be worse still.
+    //
+    // The seal goes first, and before anything is written. `sealBytes` can refuse, and
+    // `#seal` may then fall back to leaving this a plaintext value; an instance
+    // that took that path has to be indistinguishable from one that never asked
+    // to be sealed, which it would not be if it were already carrying a frozen
+    // rendering.
+    const box = sealBytes(bytes, additionalData(this.klass, this.label), this.label);
+
+    // A custom redact that throws must not undo the seal, for the reason
+    // `clear()` gives for the same fallback: refusing to protect a secret
+    // because its renderer is broken is the wrong way to fail.
+    try {
+      this.#redaction ??= this.policy.redact(rendered);
+    } catch {
+      this.#redaction = `[REDACTED:${this.klass}]`;
+    }
+
+    this.#box = box;
+    this.#sealedLength = codeUnits;
+    this.#value = undefined;
+  }
+
+  /**
+   * Decrypt this instance's box into bytes the caller owns and may zero.
+   *
+   * Private, and called only from the two gated readers, which is what
+   * `INV-SEAL-003` rests on: there is no path to a decryption that has not
+   * already run the expiry, revocation, restriction, budget, policy and audit
+   * steps.
+   */
+  #open(): Buffer {
+    return openBox(this.#box!, additionalData(this.klass, this.label), this.label);
   }
 
   /**
@@ -641,9 +803,84 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     details: RevealDetails = REVEAL_AUDIT_DETAILS
   ): string {
     if (access === 'safe') {
-      return this.#value;
+      if (this.#box !== undefined) {
+        // A safe read is one that needs no authorization, and a sealed value
+        // has none to give: decrypting for a log line would put a plaintext
+        // string in the heap on every logged object, which is the thing sealing
+        // exists to avoid. Every safe caller in this class answers a sealed
+        // value from `#redaction` or `#sealedLength` instead, so reaching here
+        // is a bug in this file rather than a caller error, and throwing is
+        // what turns "somebody added a fourth safe reader" into a test failure
+        // instead of a silent per-call decrypt.
+        throw new Error('internal: a safe read reached a sealed value');
+      }
+
+      return this.#value!;
     }
 
+    const effectiveCtx = this.#gate(access, ctx, details);
+    const value = this.#box === undefined ? this.#value! : this.#open().toString('utf8');
+
+    if (access === 'expose' && devMode.config.enabled) {
+      recordReveal(this, this.klass, this.label, value, effectiveCtx, details);
+    }
+
+    return value;
+  }
+
+  /**
+   * The raw value as UTF-8 bytes, through the same gate and in the same order.
+   *
+   * The buffer belongs to the caller, which is the point: a sealed value
+   * decrypts into it and an unsealed one encodes into it, so either way the
+   * caller may zero it when it is done. That is what makes `equals()` and
+   * `revealBytes()` leave nothing recoverable in process memory where a
+   * string-returning read leaves one copy per call.
+   *
+   * Not implemented in terms of `#readRawValue`, and it must never be: a byte
+   * read that produced a string on its way to a buffer would leave exactly the
+   * copy it exists to avoid.
+   */
+  #readRawBytes(
+    access: 'compare' | 'expose',
+    ctx?: RevealContext,
+    details: RevealDetails = REVEAL_AUDIT_DETAILS
+  ): Buffer {
+    const effectiveCtx = this.#gate(access, ctx, details);
+    const bytes = this.#box === undefined ? Buffer.from(this.#value!, 'utf8') : this.#open();
+
+    if (access === 'expose' && devMode.config.enabled) {
+      // A thunk, so the only reader of it, development mode's opt-in partial
+      // rendering, is also the only thing that can turn these bytes into a
+      // string.
+      recordReveal(
+        this,
+        this.klass,
+        this.label,
+        () => bytes.toString('utf8'),
+        effectiveCtx,
+        details
+      );
+    }
+
+    return bytes;
+  }
+
+  /**
+   * Every check a read of the raw value has to pass, in the order it has to
+   * pass them, ending with the audit record and the charge.
+   *
+   * Split out so the string reader and the byte reader run one implementation
+   * rather than two that could drift. What is left to each of them afterwards
+   * is only how the value is materialized.
+   *
+   * @returns The context the operation ran under, for the caller's own record.
+   */
+  #gate(
+    access: 'compare' | 'expose',
+    ctx: RevealContext | undefined,
+    details: RevealDetails
+  ): RevealContext | null | undefined {
     // A walk that is running a toJSON() on the object's behalf gets no raw
     // value: whatever the toJSON() returned would be logged as it is. Refused
     // before the deadline check, the policy and the audit hook, because a log
@@ -708,8 +945,9 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     }
 
     const effectiveCtx = ctx ?? getCurrentRevealContext();
-    // `access` is narrowed to 'compare' | 'expose' by the early return above, so
-    // a policy is never asked to authorize a read that only feeds redaction.
+    // `access` is 'compare' or 'expose' by this function's signature: a `'safe'`
+    // read never reaches here, so a policy is never asked to authorize a read
+    // that only feeds redaction.
     refuseHookReturn(this.policy.checkRevealAllowed?.(effectiveCtx, this, access), this.klass);
 
     if (access === 'expose') {
@@ -717,14 +955,12 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
 
       // After the audit hook, which is free to throw and stop the reveal: what
       // is counted, charged, and recorded is what actually reached the caller.
+      // The two callers record what they materialized, after this returns and
+      // after the decryption a sealed value still has to do.
       chargeReveal(this.#states);
-
-      if (devMode.config.enabled) {
-        recordReveal(this, this.klass, this.label, this.#value, effectiveCtx, details);
-      }
     }
 
-    return this.#value;
+    return effectiveCtx;
   }
 
   /**
@@ -742,6 +978,26 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       label,
       DERIVED_CONSTRUCTION as unknown as SensitiveStringOptions
     );
+    // Rule R2's tighten-only principle applied to a storage decision, and the
+    // bypass it exists to close is exact: without this, `secret.map(v => v)` on
+    // a sealed value would hand back a well-formed instance holding the same
+    // value as a plaintext string. Any source sealed seals the result, which is
+    // also the pairwise rule for `concat()` and the template literals.
+    //
+    // It costs what it says: a `substring()` of a sealed value opens the box,
+    // slices the string, and seals the slice, so a plaintext string for both
+    // exists while it runs. Sealing does not make derivation cheap; it makes
+    // the result of derivation stored the same way as its source.
+    //
+    // Placed here, in the one construction-side point every deriving method
+    // routes through, so a method added later cannot forget it.
+    if (sources.some((source) => source.#box !== undefined)) {
+      // Required, not merely requested: `strict` is off in some processes, and
+      // a derivative that quietly became a plaintext instance of a sealed
+      // value's contents is exactly the bypass this block exists to close.
+      derived.#seal(value, true);
+    }
+
     const only = sources.length === 1 ? sources[0] : undefined;
 
     // One source is the common case, and its state arrays are already exactly
@@ -885,6 +1141,61 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    */
   reveal(ctx?: RevealContext): string {
     return this.#readRawValue('expose', ctx);
+  }
+
+  /**
+   * Returns the raw (unredacted) value as UTF-8 bytes, in a buffer the caller
+   * owns and should zero.
+   *
+   * A reveal in every sense the gate cares about: same checks, same order, same
+   * audit record, and it counts against a reveal budget exactly as
+   * {@link reveal} does. What differs is only the representation, and that
+   * difference is the whole reason it exists.
+   *
+   * A string-returning reveal leaves one copy of the plaintext in process
+   * memory that garbage collection does not remove, and the copies accumulate:
+   * a thousand `reveal()` calls on a sealed value leave about a thousand. This
+   * returns bytes the caller can overwrite, so a thousand calls can leave none.
+   *
+   * Works on an unsealed value too, which encodes rather than decrypts, so a
+   * caller need not know how the value is stored to use the careful path.
+   *
+   * @param ctx - Optional explicit reveal context.
+   * @throws ClearedSensitiveValueError If the value, or one it was derived from, has been cleared.
+   * @throws ExpiredSensitiveValueError If the value has expired.
+   * @throws RevokedSensitiveValueError If the value has been revoked, or a registry it consults cannot be reached.
+   * @throws RevealLimitExceededError If `maxReveals` has been reached.
+   * @throws SealingKeyDestroyedError If `destroySealingKey()` has run since this value was sealed.
+   * @throws SealedValueIntegrityError If the stored box, its class or its label was modified.
+   *
+   * @example
+   * ```ts
+   * const bytes = token.revealBytes(ctx);
+   * try {
+   *   socket.write(bytes);
+   * } finally {
+   *   bytes.fill(0);
+   * }
+   * ```
+   */
+  revealBytes(ctx?: RevealContext): Buffer {
+    return this.#readRawBytes('expose', ctx);
+  }
+
+  /**
+   * Whether this value is held as ciphertext rather than as a string.
+   *
+   * Decided once, at construction, from the `sealed` option or the process
+   * default, and never afterwards. A derivative reports `true` when any value
+   * it was built from does.
+   *
+   * `false` in a process that never configured sealing, and `false` on a value
+   * whose `sealed: true` fell back because sealing was unavailable and `strict`
+   * was off. There is no state in which this reports `true` for a value holding
+   * a plaintext string.
+   */
+  get isSealed(): boolean {
+    return this.#box !== undefined;
   }
 
   /**
@@ -1421,10 +1732,15 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     // A custom redact that throws must not leave the value uncleared: refusing
     // to destroy a secret because its renderer is broken is the wrong way to
     // fail. The fallback is the marker the class would have emitted anyway.
-    try {
-      this.#redaction = this.policy.redact(this.#readRawValue('safe'));
-    } catch {
-      this.#redaction = `[REDACTED:${this.klass}]`;
+    // A sealed value captured its rendering at construction and has no live
+    // value to take one from now, so it keeps the one it has. The `'safe'` read
+    // below would throw on it.
+    if (this.#redaction === undefined) {
+      try {
+        this.#redaction = this.policy.redact(this.#readRawValue('safe'));
+      } catch {
+        this.#redaction = `[REDACTED:${this.klass}]`;
+      }
     }
 
     this.#ownClearedAt = now;
@@ -1435,6 +1751,17 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       own.clearedAt = now;
     }
 
+    // For an unsealed value this drops the library's reference and nothing
+    // more: JavaScript cannot overwrite a string's backing store, so the
+    // plaintext survives in process memory until the collector reclaims the
+    // page and something else reuses it.
+    //
+    // For a sealed one the box is zeroed first, which is the difference sealing
+    // makes to this method. The bytes are actually overwritten, so a dump taken
+    // afterwards holds neither the value nor anything that could become it,
+    // which is what turns `clear()` from best-effort into an erase.
+    this.#box?.fill(0);
+    this.#box = undefined;
     this.#value = '';
 
     const effectiveCtx = ctx ?? getCurrentRevealContext();
@@ -1542,6 +1869,10 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * needs more than `timingSafeEqual` alone, and for what it still leaves.
    */
   equals(other: string | SensitiveString<SensitivityClass>, ctx?: RevealContext): boolean {
+    if (this.#box !== undefined || (other instanceof SensitiveString && other.#box !== undefined)) {
+      return this.#equalsBytes(other, ctx);
+    }
+
     const value = this.#readRawValue('compare', ctx);
     const rawOther = other instanceof SensitiveString ? other.#readRawValue('compare', ctx) : other;
     const constantTime =
@@ -1553,6 +1884,57 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     }
 
     return value === rawOther;
+  }
+
+  /**
+   * Compare without either side becoming a plaintext string.
+   *
+   * The reason this path exists rather than reusing the string one: a thousand
+   * comparisons of a sealed credential leave nothing recoverable in process
+   * memory, where a thousand `reveal()` calls leave about a thousand copies.
+   * For a login endpoint, which is the archetypal `credential` workload, that
+   * makes sealing an improvement rather than a trade.
+   *
+   * The comparison is constant time whether or not either policy asks for it.
+   * Once both operands are buffers the alternative is `Buffer.equals`, a length
+   * check followed by a `memcmp`, which is the variable-time shape `compare.ts`
+   * exists to avoid; and a caller who opted into sealing has already accepted
+   * microsecond-scale costs, so the branch on the policy buys nothing worth its
+   * asymmetry. The unsealed path above is untouched, so nothing changes for a
+   * caller who did not opt in.
+   */
+  #equalsBytes(other: string | SensitiveString<SensitivityClass>, ctx?: RevealContext): boolean {
+    const mine = this.#readRawBytes('compare', ctx);
+    let theirs: Buffer | undefined;
+
+    try {
+      if (other instanceof SensitiveString) {
+        theirs = other.#readRawBytes('compare', ctx);
+      } else if (typeof other === 'string') {
+        theirs = Buffer.from(other, 'utf8');
+      } else {
+        // The declared signature allows a string or an instance, and this path
+        // refuses anything else rather than guessing. Leaving it to
+        // `Buffer.from` would be worse than it looks: `Buffer.from([])` is a
+        // valid empty buffer, so an array comparand would silently become bytes
+        // and compare, where the constant-time string path raises because
+        // `createHmac` refuses it. A comparison that answers at all for a
+        // comparand nobody meant to pass is the wrong outcome for this method.
+        throw new TypeError(
+          `SensitiveString.equals expects a string or a SensitiveString; ` +
+            `received ${describeNonString(other)}`
+        );
+      }
+
+      return constantTimeEqualsBytes(mine, theirs);
+    } finally {
+      // Both operands are this method's own: `#readRawBytes` hands back a
+      // buffer the caller owns, and the string branch encodes into a fresh one.
+      // Zeroing them is what makes row twelve of the design's measurement true,
+      // and the `finally` is so a throwing comparand does not skip it.
+      mine.fill(0);
+      theirs?.fill(0);
+    }
   }
 
   /**
@@ -1601,7 +1983,23 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     // degraded one, and a caller branching on `if (!token.length)` would read a
     // destroyed credential as an absent one.
     this.#refuseIfCleared();
-    return this.#readRawValue('safe').length;
+    return this.#rawLength();
+  }
+
+  /**
+   * The length in UTF-16 code units, without deciding whether the caller may
+   * have it.
+   *
+   * A sealed value answers from the count captured at construction. Decoding
+   * the box to measure it would put a plaintext string in the heap for a
+   * question this library documents as not sensitive, which is the trade
+   * sealing exists to refuse.
+   *
+   * Private, so `isEmpty()` does not route its answer through a public `length`
+   * a subclass could override, for the reason `#clearedFlag` is private.
+   */
+  #rawLength(): number {
+    return this.#box !== undefined ? this.#sealedLength : this.#readRawValue('safe').length;
   }
 
   /**
@@ -1611,7 +2009,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    */
   isEmpty(): boolean {
     this.#refuseIfCleared();
-    return this.#readRawValue('safe').length === 0;
+    return this.#rawLength() === 0;
   }
 
   /**
@@ -2180,6 +2578,105 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * Create a SensitiveString if the input is truthy, otherwise return null.
    * Useful for optional fields.
    */
+  /**
+   * Create a sealed SensitiveString from bytes, without the value ever becoming
+   * a JavaScript string.
+   *
+   * The reason to reach for this over the ordinary constructor: a string passed
+   * to the constructor survives in process memory after the instance drops it,
+   * permanently as far as a core dump is concerned, because JavaScript cannot
+   * overwrite a string's backing store. A value that arrives as bytes, from a
+   * KMS client or a secrets manager, need never become one.
+   *
+   * **`bytes` is zeroed before this returns.** A caller that needs to keep them
+   * must copy first. That is the point of the method rather than a side effect
+   * of it: leaving the caller's buffer intact would move the exposure rather
+   * than remove it.
+   *
+   * Seals unconditionally, so it refuses `{ sealed: false }` rather than
+   * accepting an option that contradicts its only purpose. Every other option
+   * behaves as it does on the constructor.
+   *
+   * One exception to the promise, and it is the policy's doing rather than this
+   * method's. A sealed value's redacted rendering is captured at construction,
+   * and there is no live value here to capture it from. When the class policy's
+   * rendering ignores its argument, which every default one does, that costs
+   * nothing. When the policy reads the value, which is exactly what
+   * deterministic redaction is for, the bytes are decoded once so the tag is the
+   * tag of this value rather than the shared tag of the empty string, and that
+   * one plaintext string is then in process memory for good. A process that
+   * wants both `fromBuffer`'s guarantee and a value-derived rendering cannot
+   * have both, and this resolves it in favour of a rendering that is not
+   * silently wrong.
+   *
+   * @param bytes - The value as UTF-8 bytes. Zeroed before this returns.
+   * @param klass - The sensitivity classification.
+   * @param label - Optional label for audit and compliance.
+   * @param options - Shared options, as on the constructor.
+   * @throws TypeError If `bytes` is not a Buffer, if it is not valid UTF-8, or if `options.sealed` is false.
+   * @throws SealingUnavailableError If this process cannot seal.
+   *
+   * @example
+   * ```ts
+   * const bytes = await kms.decryptToBuffer(blob);   // a Buffer, never a string
+   * const password = SensitiveString.fromBuffer(bytes, 'credential', 'db_password');
+   * // `bytes` is now zeroed.
+   * ```
+   */
+  static fromBuffer<C extends SensitivityClass>(
+    bytes: Buffer,
+    klass: C,
+    label?: string,
+    options?: SensitiveStringOptions
+  ): SensitiveString<C> {
+    if (!Buffer.isBuffer(bytes)) {
+      throw new TypeError(
+        `SensitiveString.fromBuffer expects a Buffer; received ${describeNonString(bytes)}`
+      );
+    }
+
+    if (options?.sealed === false) {
+      throw new TypeError(
+        'SensitiveString.fromBuffer always seals; pass the value to the constructor ' +
+          'instead of asking for { sealed: false }'
+      );
+    }
+
+    // Before construction, so a rejected buffer leaves no instance behind, and
+    // a walk rather than a decode: `new TextDecoder('utf-8', { fatal: true })`
+    // would validate by producing exactly the plaintext string this method
+    // exists to avoid. Invalid sequences have to be refused rather than
+    // replaced, because U+FFFD substitution changes both the value a later
+    // reveal returns and the length reported for it.
+    const codeUnits = utf8CodeUnits(bytes);
+
+    // A sealed value's redacted rendering is captured at construction, and there
+    // is no live value here to capture it from. A policy whose rendering ignores
+    // its argument, which every default one does, is happy with the empty
+    // string. One that reads the value, which is what deterministic redaction
+    // is, would otherwise give every value built this way the single shared
+    // correlation tag of `redact('')`, which is worse than no tag at all.
+    //
+    // So the plaintext is decoded only for a policy that reads it, and that
+    // process pays one permanent plaintext copy in process memory for the
+    // rendering it asked for. Documented above, and it is the one case where
+    // this method cannot keep its whole promise.
+    const rendered = redactionReadsValue(getPolicy(klass)) ? bytes.toString('utf8') : '';
+
+    try {
+      // Constructed empty and sealed afterwards from the caller's bytes. The
+      // constructor takes a string, so passing the value through it is the one
+      // thing this method may not do; `sealed: false` here keeps it from
+      // sealing the empty string on the way past.
+      const instance = new SensitiveString('', klass, label, { ...options, sealed: false });
+
+      instance.#sealFromBytes(bytes, codeUnits, rendered);
+      return instance;
+    } finally {
+      bytes.fill(0);
+    }
+  }
+
   static fromOptional<C extends SensitivityClass>(
     value: string | null | undefined,
     klass: C,

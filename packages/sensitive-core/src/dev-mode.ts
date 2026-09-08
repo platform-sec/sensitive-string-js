@@ -44,6 +44,16 @@ const TIMESTAMP_CAPACITY = 64;
 /** What a stack renders as when the runtime supplied none. */
 const NO_STACK = '    (no stack available)';
 
+/**
+ * The value an exposure is recorded for, or a way to get one.
+ *
+ * A thunk, because only `showPartialValue` reads it and a sealed value's
+ * byte-oriented reveal holds a `Buffer`. Decoding one into a string on every
+ * reveal, to decide not to print it, would put back exactly the plaintext
+ * string the byte path exists to avoid.
+ */
+type ExposedValue = string | (() => string);
+
 /** Time window options for the repeated-reveal warning. */
 export interface RepeatedRevealOptions {
   /** Reveals within one window that trigger the warning. */
@@ -600,7 +610,7 @@ function logExposure(
   record: DevRecord,
   klass: SensitivityClass,
   label: string | undefined,
-  value: string,
+  value: ExposedValue,
   ctx: RevealContext | null | undefined,
   details: RevealDetails,
   config: ResolvedDevMode
@@ -619,7 +629,14 @@ function logExposure(
   let message = `[SensitiveString] ${operation} of ${describeValue(klass, label)}`;
 
   if (config.log.showPartialValue) {
-    const partial = partialValue(value, config.log.partialLength, klass);
+    // The only reader of the value, and the reason it arrives as a thunk: a
+    // byte-oriented reveal holds a `Buffer`, and decoding one into a string to
+    // decide not to print it would undo the thing sealing exists to do.
+    const partial = partialValue(
+      typeof value === 'string' ? value : value(),
+      config.log.partialLength,
+      klass
+    );
 
     if (partial !== undefined) {
       message += ` (${partial}...)`;
@@ -699,7 +716,7 @@ export function recordReveal(
   instance: object,
   klass: SensitivityClass,
   label: string | undefined,
-  value: string,
+  value: ExposedValue,
   ctx: RevealContext | null | undefined,
   details: RevealDetails
 ): void {

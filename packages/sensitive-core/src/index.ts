@@ -164,6 +164,24 @@ export {
 } from './hygiene.js';
 export type { MemoryHygieneConfig } from './hygiene.js';
 
+// Sealing: holding the value as AES-256-GCM ciphertext in a Buffer rather than
+// as a string. Not encryption at rest, and encryption is not even what keeps a
+// sealed value out of a heap snapshot, which a plain Buffer does on its own.
+// What the key adds is that destroying it makes every sealed value in the
+// process unreadable at once, and that a byte-oriented store lets `clear()` and
+// `equals()` leave nothing behind. Off by default, per value or per process,
+// and `sealed` is documented with the cost it carries.
+export {
+  setSealing,
+  getSealing,
+  resetSealing,
+  destroySealingKey,
+  SealingUnavailableError,
+  SealingKeyDestroyedError,
+  SealedValueIntegrityError,
+} from './sealing.js';
+export type { SealingConfig } from './sealing.js';
+
 // Development mode
 export { setDevMode, getDevModeConfig, withDevMode } from './dev-mode.js';
 export type {

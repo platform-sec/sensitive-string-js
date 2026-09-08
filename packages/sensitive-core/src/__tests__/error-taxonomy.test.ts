@@ -106,6 +106,21 @@ const SAMPLES: readonly (readonly [string, SensitiveStringError, string])[] = [
     new core.SensitiveBsonError('credential', 'token'),
     'bson-serialization-refused',
   ],
+  [
+    'SealingUnavailableError',
+    new core.SealingUnavailableError('generations-exhausted', 'db_password'),
+    'sealing-unavailable',
+  ],
+  [
+    'SealingKeyDestroyedError',
+    new core.SealingKeyDestroyedError(new Date(0), new Date(1), 'db_password'),
+    'sealing-key-destroyed',
+  ],
+  [
+    'SealedValueIntegrityError',
+    new core.SealedValueIntegrityError('db_password'),
+    'sealed-value-integrity',
+  ],
 ];
 
 describe('the error taxonomy', () => {

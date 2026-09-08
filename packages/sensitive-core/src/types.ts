@@ -105,6 +105,53 @@ export interface SensitiveStringOptions {
    * what lets the wire format carry them back.
    */
   restrictions?: EnvironmentRestrictions | readonly EnvironmentRestrictions[];
+
+  /**
+   * Hold the value as AES-256-GCM ciphertext in a `Buffer` rather than as a
+   * JavaScript string.
+   *
+   * This is not encryption at rest. The key is in this process, so it defends
+   * against a heap snapshot taken while no reveal is in flight and against an
+   * accidental disclosure of the stored bytes. It does not defend against a
+   * core dump, and it does not defend against code running in this process.
+   *
+   * Two costs, and the second is the one that decides whether a value should be
+   * sealed at all:
+   *
+   * - Every operation that runs a cipher gets slower, and the ones that do not
+   *   are unchanged. Reading, constructing and deriving are one to two orders
+   *   of magnitude slower than the same operation on an unsealed value, and
+   *   deriving is the worst of the three because it decrypts and then seals the
+   *   result. Comparing is much the mildest, a small single-digit multiple,
+   *   because the constant-time path already hashes both operands. Redaction,
+   *   `length` and `isEmpty()` show no measurable difference at all: they
+   *   answer from what was captured at construction and never decrypt. No
+   *   sharper figure is given here on purpose. Repeated runs of
+   *   `__benchmarks__/sealing.bench.ts` on an idle machine moved these ratios
+   *   by a factor of three, so run `pnpm bench` on your own hardware and read
+   *   the gap between a group's members rather than any single number. Each
+   *   value also costs a couple of hundred extra bytes, most of it the box,
+   *   which lives outside the V8 heap.
+   * - **Every string-returning reveal leaves one copy of the plaintext in
+   *   process memory that garbage collection does not remove.** Measured across
+   *   two processes: a thousand `reveal()` calls leave about 940 copies, where
+   *   a thousand on an unsealed value leave two, because that returns the same
+   *   string object each time. `revealBytes()` and `equals()` leave none, so a
+   *   value read repeatedly should use those.
+   *
+   * Worth sealing: a credential loaded once at startup and held for the life of
+   * the process. Not worth sealing: a value wrapped per request, whose
+   * plaintext the caller's own parsed body still holds anyway.
+   *
+   * Two behaviours differ from an unsealed value, both deliberate. A sealed
+   * value's redacted rendering is captured at construction, so a policy
+   * registered afterwards does not change it. And rewriting `klass` or `label`
+   * at runtime makes the value unreadable rather than reclassified, because
+   * both are bound into the GCM additional data.
+   *
+   * Defaults to the process setting from `setSealing()`, which is off.
+   */
+  sealed?: boolean;
 }
 
 /**

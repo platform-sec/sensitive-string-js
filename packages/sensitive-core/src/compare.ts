@@ -85,3 +85,40 @@ function probe(value: string): Buffer {
 export function constantTimeEquals(a: string, b: string): boolean {
   return timingSafeEqual(probe(a), probe(b));
 }
+
+/**
+ * The same stand-in, for a value already held as bytes.
+ *
+ * Identical to `probe` for the same value, because `update(text, 'utf8')` and
+ * `update(Buffer.from(text, 'utf8'))` feed the HMAC the same octets. That is
+ * what lets a sealed value be compared against an unsealed one without either
+ * side converting to the other's representation.
+ */
+function probeBytes(value: Buffer): Buffer {
+  return createHmac('sha256', COMPARISON_KEY).update(value).digest();
+}
+
+/**
+ * Whether two raw values held as UTF-8 bytes are equal, under the same
+ * guarantees `constantTimeEquals` gives and for the same reasons.
+ *
+ * It exists so a sealed value never has to become a string to be compared.
+ * Decrypting into a `Buffer`, comparing here, and zeroing both operands leaves
+ * nothing recoverable in process memory; the string path leaves one copy per
+ * comparison that garbage collection does not remove.
+ *
+ * The obvious byte comparison, `a.equals(b)`, is not used and is not an
+ * option: it is a length check followed by a `memcmp`, which is the exact
+ * variable-time shape `compare.ts` exists to avoid. Hashing first costs about
+ * 5us and removes both the length branch and the byte-position one.
+ *
+ * Neither operand is zeroed here. The caller owns both and knows which of them
+ * it may write to.
+ *
+ * @param a - One raw value, as UTF-8 bytes.
+ * @param b - The other raw value, as UTF-8 bytes.
+ * @returns true when the values are byte-for-byte equal.
+ */
+export function constantTimeEqualsBytes(a: Buffer, b: Buffer): boolean {
+  return timingSafeEqual(probeBytes(a), probeBytes(b));
+}
