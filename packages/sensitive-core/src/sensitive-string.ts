@@ -15,6 +15,7 @@ import { constantTimeEquals } from './compare.js';
 import { getPolicy, defaultCombineClasses, hasPolicy } from './policy.js';
 import { getCurrentRevealContext } from './context.js';
 import { isInsideRedaction, RevealDuringRedactionError } from './redaction-scope.js';
+import { SensitiveBsonError } from './bson.js';
 import { applyMask, maskAuditDetails, planMask } from './mask.js';
 import {
   applyHash,
@@ -826,6 +827,22 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    */
   toJSON(): string {
     return this.toString();
+  }
+
+  /**
+   * Refuses BSON serialization.
+   *
+   * Called by the BSON encoder under every MongoDB write and every filter, on
+   * the ODM and the raw driver alike. It throws rather than redacting because
+   * BSON is a persistence and matching format: see {@link SensitiveBsonError}
+   * for why the two serializers differ, and why the silent outcome this
+   * replaces is worse than a leak.
+   *
+   * Nothing but a BSON encoder calls this, so it costs nothing on any other
+   * path.
+   */
+  toBSON(): never {
+    throw new SensitiveBsonError(this.klass, this.label);
   }
 
   /**

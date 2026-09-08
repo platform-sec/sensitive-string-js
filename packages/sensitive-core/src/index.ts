@@ -79,6 +79,9 @@ export { SensitiveStringError } from './errors.js';
 export { ExpiredSensitiveValueError, RenewalNotAllowedError } from './ttl.js';
 export { RevealDuringRedactionError } from './redaction-scope.js';
 
+// BSON refusal.  on the class throws this; BSON honours toBSON() and
+// ignores toJSON(), so without it a Mongo write silently persists the husk.
+export { SensitiveBsonError } from './bson.js';
 export type { RenewalRefusal } from './ttl.js';
 
 // Reveal limits and rate limiting

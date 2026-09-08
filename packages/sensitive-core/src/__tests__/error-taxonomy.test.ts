@@ -101,6 +101,11 @@ const SAMPLES: readonly (readonly [string, SensitiveStringError, string])[] = [
     new core.ClearedSensitiveValueError(new Date(0), new Date(1), 'db_password'),
     'cleared-value',
   ],
+  [
+    'SensitiveBsonError',
+    new core.SensitiveBsonError('credential', 'token'),
+    'bson-serialization-refused',
+  ],
 ];
 
 describe('the error taxonomy', () => {
