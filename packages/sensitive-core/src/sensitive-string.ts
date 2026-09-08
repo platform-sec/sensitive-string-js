@@ -67,6 +67,7 @@ import {
   type ResolvedRestrictions,
 } from './environment.js';
 import { snapshotRegExp } from './regexp.js';
+import { ClearedSensitiveValueError, hygiene, trackInstance } from './hygiene.js';
 
 /**
  * Node.js custom inspect symbol for util.inspect() and console.log().
@@ -170,6 +171,17 @@ interface SensitiveStringState {
    * the thing that moves.
    */
   readonly restrictions: readonly ResolvedRestrictions[] | undefined;
+  /**
+   * When the value this state belongs to was destroyed, epoch milliseconds, or
+   * `undefined` while it still exists.
+   *
+   * Mutable and shared, like the revocation cell: an owner's `clear()` writes
+   * it and every value derived from that owner reads it, which is how a clear
+   * refuses a substring the caller cleared nothing on. A derivative never
+   * writes it, because the state object it would write is the one its sources
+   * are still using.
+   */
+  clearedAt: number | undefined;
 }
 
 /** A state that carries reveal limits. */
@@ -395,6 +407,26 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   #own: SensitiveStringState | undefined;
 
   /**
+   * This instance's own clear, epoch milliseconds, or `undefined`.
+   *
+   * Set on any instance, owner or derivative. The shared `clearedAt` beside it
+   * says a value this one was built from was destroyed; this one says this
+   * instance dropped its own copy of the plaintext, which is a separate fact
+   * with a separate consequence: only the second releases anything.
+   */
+  #ownClearedAt: number | undefined;
+
+  /**
+   * The redacted rendering, taken by `clear()` from the live value immediately
+   * before it is dropped, or `undefined` on a value that still has one.
+   *
+   * Retaining it discloses nothing the design had not already accepted: it is
+   * the string the policy exists to emit in place of the value, so a copy of it
+   * is what a log line would have held anyway.
+   */
+  #redaction: string | undefined;
+
+  /**
    * The sensitivity classification for this value.
    */
   readonly klass: C;
@@ -438,6 +470,24 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       recordCreation(this);
     }
 
+    // Before the derived early return, and for the reason tracking exists: a
+    // derivative of 13 characters or more pins its origin's whole backing
+    // store, so it is the value a bulk clear most needs to reach, and it is
+    // usually a local whose holder a caller cannot name. Registering after the
+    // return would track origins only.
+    //
+    // Freezing goes here too, after the last own-property write and before
+    // both returns, so an owner and a derivative are frozen alike. Every
+    // assignment below this point is to a `#private` field, which `Object.freeze`
+    // does not touch.
+    if (hygiene.config.trackInstances) {
+      trackInstance(this);
+    }
+
+    if (hygiene.config.freezeInstances) {
+      Object.freeze(this);
+    }
+
     if ((options as unknown) === DERIVED_CONSTRUCTION) {
       // #derived assigns the sources' state objects immediately after this
       // returns. Planning state here would be discarded, and a policy that
@@ -453,6 +503,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       budget: planRevealBudget(options),
       revocation: planRevocation(options, label),
       restrictions: planRestrictions(options),
+      clearedAt: undefined,
     };
 
     this.#own = state;
@@ -539,6 +590,44 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   }
 
   /**
+   * The earliest clear affecting this value: its own, or one that destroyed a
+   * value it was derived from.
+   *
+   * Mirrors `#earliestDeadline`, and private for the same reason: the gate must
+   * not route its decision through a public `isCleared` that a subclass could
+   * override. Reporting the earliest rather than the most recent means an error
+   * says when the value stopped being usable rather than when the last clear in
+   * its lineage happened to run.
+   */
+  #clearedFlag(): number | undefined {
+    let earliest = this.#ownClearedAt;
+
+    for (const state of this.#states) {
+      const { clearedAt } = state;
+
+      if (clearedAt !== undefined && (earliest === undefined || clearedAt < earliest)) {
+        earliest = clearedAt;
+      }
+    }
+
+    return earliest;
+  }
+
+  /**
+   * Refuse an operation that needs a value this process has destroyed.
+   *
+   * Written once because three callers need it: the gate, and the two `'safe'`
+   * readers that are exempt from the gate and have nothing to fall back on.
+   */
+  #refuseIfCleared(): void {
+    const cleared = this.#clearedFlag();
+
+    if (cleared !== undefined) {
+      throw new ClearedSensitiveValueError(new Date(cleared), new Date(), this.label);
+    }
+  }
+
+  /**
    * The sole accessor for #value.
    *
    * Feature-level checks such as expiry, revocation, and environment
@@ -561,6 +650,18 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     if (access === 'expose' && isInsideRedaction()) {
       throw new RevealDuringRedactionError(this.klass, this.label);
     }
+
+    // First of the lifecycle checks, ahead of revocation as well as expiry.
+    // Two reasons, and neither is that a destruction outranks a revocation.
+    // It is the only one of the three that reads a plain field: it cannot
+    // fail, cannot allocate, and cannot call out of the process, where the
+    // revocation check may consult an external registry. Asking a registry
+    // about a value this process has already destroyed would let a registry
+    // outage decide which refusal a destroyed value reports. And a lapse
+    // invites a fresh fetch and a retry where a destruction says this code
+    // holds a reference past its own teardown, which is the more useful thing
+    // to be told when both are true.
+    this.#refuseIfCleared();
 
     // Ahead of the deadline, because when both refuse, the revocation is the
     // one worth reporting: expiry invites a renewal and a retry, and a revoked
@@ -710,7 +811,13 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * Safe for logging and display.
    */
   toString(): string {
-    return this.policy.redact(this.#readRawValue('safe'));
+    // An instance that destroyed its own value renders the snapshot `clear()`
+    // took from it. One that only inherited a clear still holds its own copy
+    // and redacts that live, which is why the `'safe'` path stays exempt from
+    // the cleared check: logging a sensitive value must never throw, and an
+    // error handler doing `logger.error({ err, token })` on a cleared token
+    // would otherwise lose the diagnostic it was writing.
+    return this.#redaction ?? this.policy.redact(this.#readRawValue('safe'));
   }
 
   /**
@@ -734,10 +841,17 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    */
   [NODE_INSPECT_SYMBOL](): string {
     const klassLabel = this.label ? `${this.klass}:${this.label}` : this.klass;
+    // In the order the gate would refuse them, so a value that is both cleared
+    // and expired reads as the error it would raise followed by the one it
+    // would not.
+    const cleared = this.#clearedFlag() !== undefined ? ' CLEARED' : '';
     const revoked = observedRevocation(this.#states) !== undefined ? ' REVOKED' : '';
     const expired = this.#expiredDeadline(false) !== undefined ? ' EXPIRED' : '';
     const exhausted = isBudgetExhausted(this.#constrained) ? ' EXHAUSTED' : '';
-    return `SensitiveString<${klassLabel}> { ${this.toString()}${revoked}${expired}${exhausted} }`;
+    return (
+      `SensitiveString<${klassLabel}> ` +
+      `{ ${this.toString()}${cleared}${revoked}${expired}${exhausted} }`
+    );
   }
 
   /**
@@ -1040,6 +1154,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * @param additionalTtl - Milliseconds to add. Must be positive.
    * @param options - `maxExtension` clamps the resulting deadline.
    * @param ctx - Optional reveal context for authorization and auditing.
+   * @throws ClearedSensitiveValueError If the value, or one it was derived from, has been cleared.
    * @throws RenewalNotAllowedError If renewal is refused, or a cap leaves no room to extend.
    * @throws RangeError If `additionalTtl` is not a positive, finite number.
    * @throws RevokedSensitiveValueError If the value has been revoked.
@@ -1052,6 +1167,14 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * ```
    */
   renew(additionalTtl: number, options: RenewalOptions = {}, ctx?: RevealContext): void {
+    // Renewal reads nothing, so it does not route through the gate, and
+    // without this a value that no longer exists would still have its deadline
+    // moved. Ahead of the ownership check as well, and ahead of everything
+    // else here for the same reason the gate puts it first: whatever else is
+    // true of a destroyed value, extending its life is not a thing to report
+    // success for.
+    this.#refuseIfCleared();
+
     const own = this.#own;
 
     if (own === undefined) {
@@ -1199,6 +1322,141 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   }
 
   /**
+   * Destroy this instance's copy of the plaintext, permanently.
+   *
+   * What it does is narrow, and the first paragraph of the documentation is the
+   * right place to say so: it drops **the library's** reference to the string
+   * and refuses every later read. It is not zeroing. JavaScript cannot
+   * overwrite the backing store of a string it holds a reference to, and
+   * whether the library's was the last reference is a property of the calling
+   * code rather than of this method.
+   *
+   * ```ts
+   * // Works: the library's copy is the only copy.
+   * const password = new SensitiveString(await kms.decrypt(blob), 'credential', 'db_password');
+   * await connect(password.reveal(ctx));
+   * password.clear();
+   *
+   * // Does nothing while the handler still holds req.body: req.body.token and
+   * // the instance's value are the same string object.
+   * const token = new SensitiveString(req.body.token, 'credential');
+   * token.clear();
+   * ```
+   *
+   * The second shape is not fixable from inside the library, and no boundary
+   * integration fixes it either: a body has to be parsed into strings before
+   * any field can be classified. The fix belongs to the caller, which is to
+   * drop or delete the source property once the value is wrapped.
+   *
+   * Derivatives are refused, not released. Clearing an owner refuses every
+   * value derived from it, because they share the state object this writes;
+   * clearing a derivative refuses only that derivative, because it has no
+   * shared state of its own to write. The traffic also runs the other way: a
+   * derivative of 13 characters or more is a V8 `SlicedString` pinning its
+   * origin's entire backing store, and a `concat()` result pins both operands,
+   * so an origin's `clear()` releases nothing at all until the derivatives are
+   * cleared too. Clear them, or turn on `trackInstances` and let
+   * `clearAllSensitiveValues()` find the ones you no longer hold.
+   *
+   * Redaction keeps working: `toString()`, `toJSON()` and `inspect()` render
+   * the rendering this snapshotted from the live value, so logging a cleared
+   * value never throws. `length` and `isEmpty()` refuse instead of answering
+   * `0` and `true`, which would be wrong rather than degraded.
+   *
+   * No policy is consulted. Clearing reduces exposure, so there is no
+   * confidentiality outcome a denial would protect, and the same caller could
+   * drop the reference by letting it go out of scope. It is audited, after the
+   * fact, with anything the sink throws swallowed.
+   *
+   * Irreversible, and idempotent per instance: a second call on the same
+   * instance changes nothing and reports nothing. A derivative whose origin was
+   * cleared has still not dropped its own copy, so `clear()` on it is not a
+   * no-op.
+   *
+   * @param ctx - Optional reveal context for auditing. The ambient context is used when this is omitted.
+   *
+   * @example
+   * ```ts
+   * token.clear();
+   * token.isCleared;   // true
+   * token.toString();  // '[REDACTED:credential]', unchanged
+   * token.reveal();    // throws ClearedSensitiveValueError
+   * ```
+   */
+  clear(ctx?: RevealContext): void {
+    // Guarded on this instance's own clear, never on the inherited flag. A
+    // derivative whose origin was cleared is already refused for every read,
+    // and still holds its own copy of the plaintext and its own pin on the
+    // origin's, so it still has work to do here. Guarding on #clearedFlag()
+    // would return early for every derivative a bulk clear reaches after its
+    // origin, which is precisely the set that function exists to reach.
+    if (this.#ownClearedAt !== undefined) {
+      return;
+    }
+
+    const now = Date.now();
+    const own = this.#own;
+
+    // Taken from the live value, immediately before it is dropped, so
+    // toString() keeps answering afterwards. The 'safe' path is exempt from the
+    // cleared check, so this works on an instance that inherited a clear too.
+    //
+    // A custom redact that throws must not leave the value uncleared: refusing
+    // to destroy a secret because its renderer is broken is the wrong way to
+    // fail. The fallback is the marker the class would have emitted anyway.
+    try {
+      this.#redaction = this.policy.redact(this.#readRawValue('safe'));
+    } catch {
+      this.#redaction = `[REDACTED:${this.klass}]`;
+    }
+
+    this.#ownClearedAt = now;
+
+    if (own !== undefined) {
+      // Only an owner writes shared state. A derivative shares its sources'
+      // state by reference, so writing it would destroy the value it came from.
+      own.clearedAt = now;
+    }
+
+    this.#value = '';
+
+    const effectiveCtx = ctx ?? getCurrentRevealContext();
+
+    try {
+      // After the state change, which is the inverse of renew()'s order and the
+      // same as revoke()'s. renew() audits first so a sink that throws stops the
+      // extension; a clear is not something a sink may veto, and a sink that
+      // fails must not make it look as though the destruction did not happen.
+      effectiveCtx?.auditReveal?.(
+        this,
+        { operation: 'clear', propagated: own !== undefined },
+        effectiveCtx
+      );
+    } catch {
+      // See above. The value is already gone.
+    }
+  }
+
+  /**
+   * Whether this value has been destroyed, by its own `clear()` or by one on a
+   * value it was derived from.
+   */
+  get isCleared(): boolean {
+    return this.#clearedFlag() !== undefined;
+  }
+
+  /**
+   * When this value was destroyed, or `undefined` when it was not.
+   *
+   * The earliest clear affecting it, so a derivative cleared after its origin
+   * reports the origin's time: that is when it stopped being usable.
+   */
+  get clearedAt(): Date | undefined {
+    const cleared = this.#clearedFlag();
+    return cleared === undefined ? undefined : new Date(cleared);
+  }
+
+  /**
    * How many times this value has been exposed.
    *
    * Counted for every value, whether or not it limits reveals. An exposure is
@@ -1316,15 +1574,26 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   /**
    * Get the length of the raw value.
    * Note: Length is generally not considered sensitive for most use cases.
+   *
+   * @throws ClearedSensitiveValueError If the value, or one it was derived from, has been cleared. `0` would be a wrong answer, not a degraded one.
    */
   get length(): number {
+    // The `'safe'` path is exempt from the cleared check so redaction survives
+    // one, and this reader has nothing to fall back on: after a clear it would
+    // answer `0` from the empty string. That is a wrong answer rather than a
+    // degraded one, and a caller branching on `if (!token.length)` would read a
+    // destroyed credential as an absent one.
+    this.#refuseIfCleared();
     return this.#readRawValue('safe').length;
   }
 
   /**
    * Check if the raw value is empty.
+   *
+   * @throws ClearedSensitiveValueError If the value, or one it was derived from, has been cleared. `true` would be a wrong answer, not a degraded one.
    */
   isEmpty(): boolean {
+    this.#refuseIfCleared();
     return this.#readRawValue('safe').length === 0;
   }
 

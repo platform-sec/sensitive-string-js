@@ -81,6 +81,7 @@ function describe(details: RevealDetails): string {
     case 'hmac':
     case 'renew':
     case 'revoke':
+    case 'clear':
       return details.operation;
   }
 }

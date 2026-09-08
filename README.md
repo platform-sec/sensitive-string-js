@@ -436,6 +436,11 @@ class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   readonly revocationReason?: string;
   readonly revokedAt?: Date;
   revoke(reason: string, ctx?: RevealContext): void;
+
+  // Memory hygiene: drops the library's reference, refuses every later read
+  readonly isCleared: boolean;
+  readonly clearedAt?: Date;
+  clear(ctx?: RevealContext): void;
   
   // Manipulation
   concat(other: string | SensitiveString, ctx?: RevealContext): SensitiveString;
@@ -1255,6 +1260,115 @@ All five are configuration, never any part of the protected value, so the messag
 Workers have their own environment. `AsyncLocalStorage` is per isolate and so is this singleton, so
 a worker that reads a restricted value must call `setEnvironmentInfo()` itself. Until it does, it
 reports `unknown` with no region, which refuses every allowlist.
+
+### Memory Hygiene
+
+`clear()` drops the library's reference to the plaintext and refuses every later read. It is not
+zeroing: JavaScript cannot overwrite the backing store of a string it holds a reference to, and
+there is no primitive that would let it. What it buys is that the value can leave the heap at a
+point you choose rather than whenever the last reference happens to go.
+
+```typescript
+const password = new SensitiveString(await kms.decrypt(blob), 'credential', 'db_password');
+await connect(password.reveal({ name: 'startup', reason: 'opening the pool' }));
+
+password.clear();
+password.isCleared;   // true
+password.clearedAt;   // Date
+password.toString();  // '[REDACTED:credential]', unchanged
+password.reveal();    // throws ClearedSensitiveValueError
+password.length;      // throws ClearedSensitiveValueError
+```
+
+**Whether it releases anything is a property of your code, not of this method.** The library's
+reference is the only one it can drop:
+
+```typescript
+// Works: the library's copy is the only copy.
+async function openPool() {
+  const password = new SensitiveString(await kms.decrypt(blob), 'credential', 'db_password');
+  await connect(password.reveal(ctx));
+  password.clear();
+}
+
+// Does nothing while the handler still holds req.body: req.body.token and the
+// instance's value are the same string object.
+async function handler(req) {
+  const token = new SensitiveString(req.body.token, 'credential');
+  token.clear();
+}
+```
+
+No integration fixes the second shape, and it is worth being exact about why, because the opposite
+is the natural assumption. A body has to be parsed into strings before any field can be classified,
+and `wrapSensitiveByPath` clones by reference for primitives, so the wrapped value holds the *same*
+string object the pre-wrap body holds. What the integrations give you is a wrapped body reaching the
+handler, so the handler adds no further references of its own. Dropping or deleting the source
+property once the value is wrapped is the caller's job.
+
+Derived values are refused, not released. Clearing an origin refuses everything descended from it,
+because they share the state object the clear writes; clearing a derivative refuses only that
+derivative. The traffic runs the other way too: a derivative of 13 characters or more
+[pins the origin's entire backing store](#derived-values-can-retain-the-original), so the origin's
+own `clear()` frees nothing until the derivative is cleared as well. Clear the derivatives, or turn
+on `trackInstances` and let the bulk clear find the ones you no longer hold a reference to.
+
+Redaction survives a clear. `toString()`, `toJSON()` and `inspect()` render the rendering `clear()`
+snapshotted from the live value immediately before dropping it, so `logger.error({ err, token })` on
+a cleared token never raises a second error from inside the first. `length` and `isEmpty()` refuse
+instead, because `0` and `true` would be wrong answers rather than degraded ones: a caller branching
+on `if (!token.length)` would read a destroyed credential as an absent one.
+
+Clearing is irreversible and idempotent per instance. No policy is consulted, because clearing
+reduces exposure and the same caller could drop the reference anyway; it is audited after the fact
+with `{ operation: 'clear', propagated }`, where `propagated` says whether the clear also refused
+the derivatives.
+
+#### Bulk clearing and instance freezing
+
+```typescript
+import { setMemoryHygiene, clearAllSensitiveValues } from '@platform-sec/sensitive-string-core';
+
+// Alongside registerPolicy, in the entry module: both switches are read at
+// construction, so a value built before this call is neither frozen nor tracked.
+setMemoryHygiene({ trackInstances: true, freezeInstances: true });
+
+process.on('SIGTERM', async () => {
+  await server.close();       // stop accepting, drain what is in flight
+  await pool.end();           // nothing still needs a credential
+  clearAllSensitiveValues();  // now the values are dead weight
+});
+```
+
+| Switch | Default | What it costs | What it buys |
+|---|---|---|---|
+| `trackInstances` | `false` | ~202 bytes per instance, about 87% on top of the instance itself | `clearAllSensitiveValues()` reaches derivatives whose holder you cannot name, which is the only way to break the pin above |
+| `freezeInstances` | `false` | ~51 ns per construction | `klass` and `label` writes, own-property definition, and prototype replacement all throw |
+
+Freezing blocks more than the two public fields. An own `toJSON` on an unfrozen instance replaces
+redaction outright on the path most likely to reach a log aggregator, and a `klass` rewrite
+downgrades a credential to a class with different redaction, permitted partial queries, permitted
+masking, and no constant-time comparison. It does not touch `#private` fields, so `clear()` still
+works on a frozen instance, and it does not freeze the lifecycle: `renew()` still moves a frozen
+value's deadline, because the deadline lives in a state object the instance references rather than
+on the instance. It is off by default because it is a breaking change for any consumer, or any
+framework, that decorates an instance with a property of its own.
+
+Placement inside the `SIGTERM` handler is the part that matters. Clearing at the top destroys the
+credentials in-flight requests are still using and turns a graceful drain into a wave of
+`ClearedSensitiveValueError`s. And be clear about what the window is worth: if the handler ends in
+`process.exit()`, clearing bought nothing, because the heap goes away either way. It is worth
+something while the process keeps running after the drain, and worth nothing against a dump taken
+before the signal, which is most dumps.
+
+Both switches and the tracked set are per isolate, like every other process-global here. A worker
+thread has its own, and `clearAllSensitiveValues()` on the main thread does not reach a worker's
+values.
+
+What none of this does: it does not zero anything, does not reach values your own code still
+references, does not touch memory outside the V8 heap (a secret read from `process.env` stays in the
+native environment block for the life of the process, where a core dump still finds it), and does
+not defend against code already executing in the process.
 
 ### Development Mode
 

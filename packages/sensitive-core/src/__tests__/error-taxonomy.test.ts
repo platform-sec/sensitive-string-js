@@ -96,6 +96,11 @@ const SAMPLES: readonly (readonly [string, SensitiveStringError, string])[] = [
     new core.DeterministicRedactionNotAllowedError('credential'),
     'deterministic-redaction-refused',
   ],
+  [
+    'ClearedSensitiveValueError',
+    new core.ClearedSensitiveValueError(new Date(0), new Date(1), 'db_password'),
+    'cleared-value',
+  ],
 ];
 
 describe('the error taxonomy', () => {

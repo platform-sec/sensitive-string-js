@@ -1,6 +1,7 @@
 import * as util from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  ClearedSensitiveValueError,
   registerPolicy,
   resetPolicies,
   RevealLimitExceededError,
@@ -258,12 +259,17 @@ describe('reveal budget security', () => {
 
       // Everything a caller can reach: own properties, the prototype's members,
       // and assignment through the accessors. Nothing among them writes a count.
+      //
+      // The three memory hygiene members match on `clear` and are listed rather
+      // than excluded from the pattern, so a future member that matches has to
+      // be looked at here before it can ship. None of them touches a count, and
+      // the assertion below is what says so rather than this list.
       expect(Object.getOwnPropertyNames(key)).toEqual(['klass', 'label']);
       expect(
         Object.getOwnPropertyNames(SensitiveString.prototype).filter((name) =>
           /reset|clear|reveals|revealCount/i.test(name)
         )
-      ).toEqual(['revealCount', 'revealsRemaining']);
+      ).toEqual(['clear', 'isCleared', 'clearedAt', 'revealCount', 'revealsRemaining']);
 
       expect(() => {
         (key as unknown as { revealCount: number }).revealCount = 0;
@@ -271,6 +277,13 @@ describe('reveal budget security', () => {
 
       expect(key.revealCount).toBe(1);
       expect(() => key.reveal()).toThrow(RevealLimitExceededError);
+
+      // And destroying the value does not give a spent budget back. It is the
+      // one of the three that could plausibly have: a caller who reads `clear`
+      // as "start over" would be reaching for exactly this.
+      key.clear();
+      expect(key.revealCount).toBe(1);
+      expect(() => key.reveal()).toThrow(ClearedSensitiveValueError);
     });
   });
 

@@ -451,9 +451,30 @@ export interface WorkerHandoffAuditDetails {
 }
 
 /**
+ * Audit record for a value destroyed through `clear()`.
+ *
+ * Reported after the value has been dropped, not before it, and with anything
+ * the sink throws swallowed: nothing may refuse a clear, so a broken sink must
+ * not make it look as though the destruction did not happen. That is the same
+ * rule `revoke()` follows and the opposite of `renew()`, which audits first
+ * precisely so a sink can stop it.
+ */
+export interface ClearAuditDetails {
+  readonly operation: 'clear';
+  /**
+   * Whether the clear also refused every value derived from this one.
+   *
+   * True from an owner, which writes the shared state its derivatives read;
+   * false from a derivative, which has no shared state of its own to write and
+   * so destroys only its own copy.
+   */
+  readonly propagated: boolean;
+}
+
+/**
  * What the audited operation was, so an audit sink can tell a full reveal from
- * a partial one, and either from a lifetime extension, a revocation, or a
- * handoff to another thread.
+ * a partial one, and either from a lifetime extension, a revocation, a
+ * destruction, or a handoff to another thread.
  */
 export type RevealDetails =
   | RevealAuditDetails
@@ -462,6 +483,7 @@ export type RevealDetails =
   | HmacAuditDetails
   | RenewAuditDetails
   | RevokeAuditDetails
+  | ClearAuditDetails
   | WorkerHandoffAuditDetails;
 
 /**

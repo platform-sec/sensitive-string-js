@@ -26,5 +26,16 @@ export default defineConfig({
     testTimeout: 120000,
     pool: 'forks',
     fileParallelism: false,
+    // `global.gc` for the memory hygiene retention probe, which measures
+    // whether a cleared plaintext is actually out of the heap and so has to be
+    // able to force a collection. `fileParallelism: false` above already means
+    // one fork at a time, so this costs nothing extra, and a retention test
+    // that finds `global.gc` undefined skips rather than passes.
+    //
+    // Top level, which is how Vitest 4 spells it: the `poolOptions.forks`
+    // nesting this would have used was removed, and is accepted and ignored
+    // rather than rejected, so nesting it reads as configured while the flag
+    // never reaches the fork.
+    execArgv: ['--expose-gc'],
   },
 });

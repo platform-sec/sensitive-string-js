@@ -51,6 +51,7 @@ export type {
   HmacAuditDetails,
   RenewalOptions,
   RenewAuditDetails,
+  ClearAuditDetails,
   AuditContext,
   RevealAccess,
   RevealAuditDetails,
@@ -77,6 +78,7 @@ export { SensitiveStringError } from './errors.js';
 // Expiration
 export { ExpiredSensitiveValueError, RenewalNotAllowedError } from './ttl.js';
 export { RevealDuringRedactionError } from './redaction-scope.js';
+
 export type { RenewalRefusal } from './ttl.js';
 
 // Reveal limits and rate limiting
@@ -144,6 +146,20 @@ export {
   referenceFormatVersion,
 } from './reference.js';
 export type { SensitiveValueReference } from './reference.js';
+
+// Memory hygiene. `clear()` drops the library's reference to the plaintext and
+// nothing else: JavaScript cannot zero a string, and whether the library held
+// the last reference is a property of the calling code. The two switches are
+// process-global under rule R6, both off by default, and both read at
+// construction.
+export {
+  clearAllSensitiveValues,
+  setMemoryHygiene,
+  getMemoryHygiene,
+  resetMemoryHygiene,
+  ClearedSensitiveValueError,
+} from './hygiene.js';
+export type { MemoryHygieneConfig } from './hygiene.js';
 
 // Development mode
 export { setDevMode, getDevModeConfig, withDevMode } from './dev-mode.js';
