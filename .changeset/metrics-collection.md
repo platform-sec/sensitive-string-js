@@ -68,8 +68,16 @@ many-to-one, so `a:b` and `a,b` both land on `a_b` and each computed its delta a
 baseline, inflating the counter on every flush and never recovering. And `collect()` documented an
 ordering it did not implement.
 
-Four of the five were found by review after the suite was already green, which is the useful fact
-about them. Each has a test confirmed red against the unfixed code.
+Two more were resource defects rather than formatting ones. The StatsD TCP path ignored what `write`
+returned, so a far end that accepts the connection and stops reading made Node buffer every payload
+in this process: measured, twenty thousand writes held 193 MB, none of it freed while the connection
+stayed open. And the cardinality cap bounded how many series a counter held but nothing about how
+large one was, so a thousand legal series still made a scrape as large as the caller's labels were
+long; dimension values are now truncated at ingest, where the truncated value becomes the series
+identity and the two exporters cannot be handed series that render identically.
+
+Six of the seven were found by review after the suite was already green, four of them past 100
+passing tests and two more past 109. Each has a test confirmed red against the unfixed code.
 
 StatsD goes out over `node:dgram` and `node:net`, so both exporters ship in one package with no
 third-party runtime dependency, against the design's proposal to split them. `collect()` is the

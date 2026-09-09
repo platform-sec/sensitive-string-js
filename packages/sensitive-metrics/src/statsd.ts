@@ -40,6 +40,18 @@ const DEFAULT_MAX_PACKET_SIZE = 1432;
 /** Long enough for any sensible label, short enough that one cannot fill a packet. */
 const MAX_TAG_VALUE_LENGTH = 200;
 
+/**
+ * How much unwritten TCP payload to hold before dropping metrics instead.
+ *
+ * A `write` to a socket the far end is not reading returns `false` and buffers
+ * in the process. Ignoring that is how a metrics exporter becomes a memory
+ * leak: measured on Node 22.15.0 against a server that accepts and never
+ * reads, twenty thousand writes buffered 193 MB, and nothing frees it while
+ * the connection stays open. Dropping metrics is the correct failure for this
+ * component; growing the heap of the process it is measuring is not.
+ */
+const MAX_TCP_BUFFERED_BYTES = 1_000_000;
+
 export interface StatsDExporterConfig {
   host: string;
   /** Default `8125`. */
@@ -428,7 +440,20 @@ export class StatsDExporter {
       }
 
       // Node buffers writes made before the connection completes, so there is
-      // no connecting state to handle here.
+      // no connecting state to handle here. What it does not do is stop
+      // buffering, so the backlog is what has to be checked: a far end that
+      // accepts the connection and never reads it, or one that never finishes
+      // connecting, otherwise grows this process without bound.
+      if (this.#tcp.writableLength > MAX_TCP_BUFFERED_BYTES) {
+        this.#report(
+          new Error(
+            `StatsD TCP backlog exceeded ${String(MAX_TCP_BUFFERED_BYTES)} bytes; ` +
+              'dropping this flush. The far end is not reading.'
+          )
+        );
+        return;
+      }
+
       this.#tcp.write(payload);
     } catch (error) {
       this.#report(error);

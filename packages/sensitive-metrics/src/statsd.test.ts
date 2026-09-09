@@ -301,6 +301,65 @@ describe('StatsDExporter', () => {
     expect(await server.drain()).toEqual([]);
   });
 
+  it('drops a TCP flush rather than buffering without bound when the far end stops reading', async () => {
+    // Measured on Node 22.15.0: a socket whose far end accepts and never reads
+    // buffers every write in this process. Twenty thousand writes held 193 MB,
+    // and nothing frees it while the connection is open. A metrics exporter
+    // that does that becomes a leak in the process it is measuring.
+    const { createServer } = await import('node:net');
+    const accepted: unknown[] = [];
+    const server = createServer((socket) => {
+      accepted.push(socket);
+      socket.pause();
+    });
+
+    try {
+      const port = await new Promise<number>((done) => {
+        server.listen(0, '127.0.0.1', () => {
+          const address = server.address();
+          done(typeof address === 'object' && address !== null ? address.port : 0);
+        });
+      });
+
+      const metrics = started();
+      const errors: Error[] = [];
+      const statsd = exporter(metrics, {
+        host: '127.0.0.1',
+        port,
+        protocol: 'tcp',
+        onError: (error) => errors.push(error),
+      });
+
+      // Every series has to move on every round, or the deltas shrink to
+      // nothing after the first flush and the payload never grows. This is the
+      // shape of a busy process: a steadily rising counter set, flushed faster
+      // than the far end drains it.
+      const secrets = Array.from(
+        { length: 400 },
+        (_unused, index) => new SensitiveString(CANARY, 'credential', `label_${String(index)}`)
+      );
+
+      for (let round = 0; round < 200; round++) {
+        for (const secret of secrets) {
+          void String(secret);
+        }
+
+        statsd.flush();
+
+        if (errors.some((error) => error.message.includes('backlog exceeded'))) {
+          break;
+        }
+      }
+
+      expect(errors.some((error) => error.message.includes('backlog exceeded'))).toBe(true);
+    } finally {
+      server.close();
+      for (const socket of accepted) {
+        (socket as { destroy: () => void }).destroy();
+      }
+    }
+  });
+
   it('reports a transport failure instead of throwing out of a flush', async () => {
     const metrics = started();
     const onError = vi.fn();

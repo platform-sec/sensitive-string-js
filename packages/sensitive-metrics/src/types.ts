@@ -182,6 +182,8 @@ export interface MetricsSnapshot {
     readonly total: number;
     readonly byClass: Breakdown;
     readonly byCode: Breakdown;
+    /** Empty unless `label` is one of the configured dimensions. */
+    readonly byLabel: Breakdown;
   };
   /**
    * `sensitive_values_tracked`, or `null` when `trackInstances` is off.

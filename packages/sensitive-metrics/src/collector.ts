@@ -66,6 +66,26 @@ const REFUSAL_DIMENSIONS = ['class'] as const;
  */
 const FOLDABLE = new Set(['label', 'context', 'code']);
 
+/**
+ * How long a caller-supplied dimension value may be before it is truncated.
+ *
+ * The cardinality cap bounds how many series a counter holds and says nothing
+ * about how large one is, so without this the collector's memory, and every
+ * scrape it produces, is bounded only by how long a caller's labels are. An
+ * application labelling values with a serialized request would produce a
+ * megabyte-scale `/metrics` response from a thousand perfectly legal series.
+ *
+ * Truncation happens here, at ingest, and deliberately not in an exporter.
+ * A truncated value is then the series' identity, so two labels sharing a
+ * prefix become one series everywhere and the two exporters agree. Truncating
+ * in the Prometheus exporter instead would render two distinct series with
+ * identical label sets, which is a duplicate series and a scrape the server
+ * rejects outright.
+ *
+ * Matches the StatsD tag cap, so a dimension is never shortened twice.
+ */
+const MAX_DIMENSION_LENGTH = 200;
+
 /** Anything else arriving as an `operation` is folded to this. */
 const UNKNOWN_OPERATION = 'unknown';
 
@@ -95,6 +115,18 @@ const KNOWN_OPERATIONS: ReadonlySet<string> = new Set([
   'clear',
   'worker-handoff',
 ]);
+
+/**
+ * A caller-supplied dimension value, cut to a length a metrics store can hold.
+ *
+ * Not defensive typing: `value` is annotated as a string and arrives as one
+ * from core, but a label is whatever a caller passed to the constructor and
+ * core does not check its type, so the `.length` read has to be the thing that
+ * throws into the recording guard rather than something further downstream.
+ */
+function bounded(value: string): string {
+  return value.length > MAX_DIMENSION_LENGTH ? value.slice(0, MAX_DIMENSION_LENGTH) : value;
+}
 
 function describeType(value: unknown): string {
   return value === null ? 'null' : typeof value;
@@ -327,11 +359,11 @@ export class MetricsCollector {
       const values: string[] = [value.klass, operation];
 
       if (this.config.dimensions.includes('label')) {
-        values.push(value.label ?? '');
+        values.push(bounded(value.label ?? ''));
       }
 
       if (this.config.dimensions.includes('context')) {
-        values.push(context.name);
+        values.push(bounded(context.name));
       }
 
       this.#account(this.#reveals.inc(values));
@@ -421,7 +453,7 @@ export class MetricsCollector {
 
       if (this.config.dimensions.includes('label')) {
         const label = (error as { label?: unknown }).label;
-        values.push(typeof label === 'string' ? label : '');
+        values.push(typeof label === 'string' ? bounded(label) : '');
       }
 
       this.#account(this.#refusals.inc(values));
@@ -522,6 +554,7 @@ export class MetricsCollector {
         total: this.#refusals.total(),
         byClass: this.#refusals.breakdown('class'),
         byCode: this.#refusals.breakdown('code'),
+        byLabel: this.#refusals.breakdown('label'),
       },
       valuesTracked: this.config.trackInstances ? trackedInstanceCount() : null,
       meta: {
@@ -552,9 +585,20 @@ export class MetricsCollector {
     });
   }
 
-  /** Refusals matching the class and code the filter sets. */
-  getRefusalCount(filter: { klass?: SensitivityClass | 'unknown'; code?: string } = {}): number {
-    return this.#refusals.total({ class: filter.klass, code: filter.code });
+  /**
+   * Refusals matching every field the filter sets.
+   *
+   * `klass` accepts `'unknown'` as well as a real class, because a refusal that
+   * names no class and was reported without one is recorded under that.
+   */
+  getRefusalCount(
+    filter: { klass?: SensitivityClass | 'unknown'; code?: string; label?: string } = {}
+  ): number {
+    return this.#refusals.total({
+      class: filter.klass,
+      code: filter.code,
+      label: filter.label,
+    });
   }
 
   /**
@@ -581,7 +625,7 @@ export class MetricsCollector {
       const values: string[] = [event.klass, event.surface];
 
       if (this.config.dimensions.includes('label')) {
-        values.push(event.label ?? '');
+        values.push(bounded(event.label ?? ''));
       }
 
       this.#account(this.#redactions.inc(values));

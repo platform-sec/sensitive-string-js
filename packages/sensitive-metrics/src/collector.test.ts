@@ -319,7 +319,9 @@ describe('refusal counting', () => {
       total: 1,
       byClass: { credential: 1 },
       byCode: { 'expired-value': 1 },
+      byLabel: { otp: 1 },
     });
+    expect(metrics.getRefusalCount({ label: 'otp', code: 'expired-value' })).toBe(1);
   });
 
   it('rethrows the error untouched, so it is a tee and not a handler', () => {
@@ -447,6 +449,76 @@ describe('cardinality, seen from the collector', () => {
 
     expect(snapshot.redactions.total).toBe(2);
     expect(snapshot.meta.eventsDropped).toBe(18);
+  });
+});
+
+describe('bounding a dimension value, not just the number of them', () => {
+  // The cardinality cap bounds how many series a counter holds and says
+  // nothing about how big one is. Without a length bound, a thousand legal
+  // series still make a scrape as large as the caller's labels are long.
+  it('truncates a runaway label rather than storing it whole', () => {
+    const metrics = collector();
+    metrics.start();
+
+    void String(new SensitiveString(CANARY, 'credential', 'x'.repeat(50_000)));
+
+    const [label] = Object.keys(metrics.getSnapshot().redactions.byLabel);
+
+    expect(label?.length).toBe(200);
+  });
+
+  it('truncates a context name and an error label the same way', () => {
+    const metrics = collector({ dimensions: ['label', 'context'] });
+
+    metrics.withMeteredReveals({ name: 'c'.repeat(5000) }, () => {
+      new SensitiveString(CANARY, 'credential', 'key').reveal();
+    });
+    metrics.recordRefusal(
+      new RevokedSensitiveValueError('rotated', new Date(0), 'l'.repeat(5000)),
+      'credential'
+    );
+
+    const snapshot = metrics.getSnapshot();
+
+    expect(Object.keys(snapshot.reveals.byContext)[0]?.length).toBe(200);
+    expect(Object.keys(snapshot.refusals.byLabel)[0]?.length).toBe(200);
+    expect(
+      metrics
+        .collect()
+        .some((family) =>
+          family.series.some((series) =>
+            Object.values(series.labels).some((value) => value.length > 200)
+          )
+        )
+    ).toBe(false);
+  });
+
+  it('bounds the whole scrape, which is the point of bounding one value', () => {
+    const metrics = collector({ maxSeries: 50 });
+    metrics.start();
+
+    for (let index = 0; index < 50; index++) {
+      void String(
+        new SensitiveString(CANARY, 'credential', `${'x'.repeat(20_000)}${String(index)}`)
+      );
+    }
+
+    // 50 series of 20 KB each would be a megabyte of labels.
+    expect(JSON.stringify(metrics.collect()).length).toBeLessThan(30_000);
+  });
+
+  it('makes two labels that share a truncated prefix one series, everywhere', () => {
+    // The reason truncation is at ingest rather than in an exporter: the
+    // truncated value is the series identity, so nothing downstream can be
+    // handed two distinct series that render identically.
+    const metrics = collector();
+    metrics.start();
+
+    void String(new SensitiveString(CANARY, 'credential', `${'y'.repeat(300)}_first`));
+    void String(new SensitiveString(CANARY, 'credential', `${'y'.repeat(300)}_second`));
+
+    expect(Object.keys(metrics.getSnapshot().redactions.byLabel)).toHaveLength(1);
+    expect(metrics.getRedactionCount()).toBe(2);
   });
 });
 

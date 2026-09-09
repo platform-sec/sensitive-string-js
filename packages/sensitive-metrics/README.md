@@ -199,6 +199,14 @@ createMetricsCollector({ maxSeries: 1000, onCardinalityExceeded: 'aggregate' });
 Folded series are admitted past `maxSeries`, since the point of a fold is that it has somewhere to
 go, and a hard ceiling of twice `maxSeries` sits under both.
 
+A cap on how *many* series there are says nothing about how *large* one is, so caller-supplied
+dimension values are also truncated to 200 characters when they are recorded. Without that, a
+thousand perfectly legal series still make a scrape as big as your labels are long. Truncation
+happens at the collector rather than in an exporter on purpose: the truncated value is then the
+series identity, so two labels sharing a 200-character prefix become one series everywhere and the
+exporters agree. Truncating in the Prometheus exporter instead would hand it two distinct series with
+identical label sets, which is a duplicate series and a scrape the server rejects outright.
+
 ## What the exporters escape, and why it matters
 
 Both output formats are line-oriented, and one of the label values is whatever your code passed as a
@@ -210,8 +218,7 @@ new SensitiveString(token, 'credential', 'k",surface="x"} 99\nintruder_total{a="
 
 That label closes the brace, ends the line, and writes a metric of its own into the scrape. The
 Prometheus exporter escapes `\`, `"`, `\n` and `\r`; the StatsD exporter replaces anything outside
-`[a-zA-Z0-9_-./]` and truncates at 200 characters, because `|`, `,`, `#` and a newline each rewrite a
-StatsD line. Each suite drives an injection built for its own format, and asserts that the result is
+`[a-zA-Z0-9_-./]`, because `|`, `,`, `#` and a newline each rewrite a StatsD line. Each suite drives an injection built for its own format, and asserts that the result is
 not a line: the label value is still in the output, escaped, inside one set of quotes.
 
 The Prometheus exporter also refuses, at construction rather than at the first scrape, a prefix that
@@ -261,19 +268,26 @@ DogStatsD tag syntax, UDP by default and TCP through `protocol: 'tcp'`. A transp
 `onError` if you passed one, and otherwise warns once through `process.emitWarning` and is silent
 after; there is no mode in which a flush throws.
 
+Under TCP, a flush is dropped once more than a megabyte is queued unwritten. A `write` to a socket
+the far end has stopped reading returns `false` and buffers in your process: measured on Node
+22.15.0 against a server that accepts and never reads, twenty thousand writes held 193 MB, and none
+of it is freed while the connection stays open. Dropping metrics is the right failure for this
+component; growing the heap of the process it is measuring is not. The drop is reported through
+`onError`.
+
 ## Reading the numbers programmatically
 
 ```typescript
 const snapshot = metrics.getSnapshot();
 // { redactions: { total, byClass, bySurface, byLabel },
 //   reveals:    { total, byClass, byOperation, byLabel, byContext },
-//   refusals:   { total, byClass, byCode },
+//   refusals:   { total, byClass, byCode, byLabel },
 //   valuesTracked: number | null,
 //   meta: { started, eventsAggregated, eventsDropped, recordingErrors } }
 
 metrics.getRedactionCount({ klass: 'credential', surface: 'toString' });
 metrics.getRevealCount({ operation: 'reveal', context: 'payment' });
-metrics.getRefusalCount({ code: 'expired-value' });
+metrics.getRefusalCount({ code: 'expired-value', label: 'otp' });
 ```
 
 `collect()` returns the metric families an exporter reads, which is the whole seam: a CloudWatch or
