@@ -31,8 +31,10 @@ describe('BoundedCounter', () => {
 
   it('cannot be made to collide two different label tuples on one series', () => {
     // A separator-joined key would put these two in the same series: with a
-    // comma, 'a,b' and ['a', 'b'] render identically. The length prefix is
-    // what stops a caller-chosen label from forging another tuple's identity.
+    // comma, 'a,b' and ['a', 'b'] render identically, which lets a
+    // caller-chosen label forge another tuple's identity. The trie cannot
+    // express the collision at all, because each level keys on one whole value
+    // and nothing is ever concatenated.
     const c = counter({ maxSeries: 10 });
 
     c.inc(['a,b', '']);

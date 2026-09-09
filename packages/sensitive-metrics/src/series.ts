@@ -24,12 +24,53 @@ import { OVERFLOW_LABEL } from './types.js';
  * library chooses. A hard ceiling of twice `maxSeries` sits under both, so the
  * bound holds even for a caller that hand-feeds `recordRefusal` with an error
  * class of its own carrying arbitrary codes.
+ *
+ * ## Why a trie and not one map on a composite key
+ *
+ * Series are held in nested `Map`s, one level per dimension, rather than in a
+ * single map keyed on the dimension values joined together. The joined key is
+ * the obvious implementation and it was the first one; it is about twenty
+ * times slower on the path that runs per redaction, which is the hottest path
+ * this package has.
+ *
+ * Measured on Node 22.15.0, three dimensions, three million iterations, median
+ * of five rounds:
+ *
+ * | | ns/op |
+ * |---|---|
+ * | build a length-prefixed key | 96 |
+ * | build the key, then `Map.get` it | 257 |
+ * | walk three nested maps, no key built | 12 |
+ * | `Map.get` on an already-interned key | 5 |
+ *
+ * The gap is not the string building, it is the hashing. A freshly built
+ * string has no cached hash, so every lookup hashes the whole key; the
+ * dimension values themselves are repeated strings V8 has already hashed, so a
+ * lookup keyed directly on one is nearly free. That is the whole reason for the
+ * shape below.
+ *
+ * The trie is also collision-free by construction, where the flat key had to
+ * earn it: any join at all lets one caller's label forge another tuple's key,
+ * since with a comma `{label: 'a,b'}` and `{label: 'a', context: 'b'}` are the
+ * same string. The old implementation length-prefixed each field to prevent
+ * exactly that. A trie cannot express the collision at all, because each level
+ * keys on one value and nothing is concatenated.
  */
 
 interface MutableSeries {
   readonly labels: Readonly<Record<string, string>>;
   value: number;
 }
+
+/**
+ * One level of the trie.
+ *
+ * Values are the next level down, except at the last dimension where they are
+ * series. The type is deliberately loose: a depth-indexed union buys nothing
+ * here, because the depth is fixed at construction and every walk is driven by
+ * it rather than by inspecting a node.
+ */
+type Level = Map<string, unknown>;
 
 /** How an increment was accounted for, which the collector rolls into its meta counters. */
 export type IncrementOutcome = 'recorded' | 'aggregated' | 'dropped';
@@ -45,36 +86,20 @@ export interface BoundedCounterOptions {
   readonly mode: CardinalityMode;
 }
 
-/**
- * A series key that cannot collide, whatever the label values contain.
- *
- * Length-prefixed rather than joined on a separator. Every printable
- * separator, and every control character too, is a legal Prometheus label
- * value, so any join at all lets one caller's label forge another tuple's key:
- * with a comma, `{label: 'a,b'}` and `{label: 'a', context: 'b'}` are the same
- * string. A length prefix has no such reading.
- */
-function seriesKey(values: readonly string[]): string {
-  let key = '';
-
-  for (const value of values) {
-    key += `${String(value.length)}:${value}|`;
-  }
-
-  return key;
-}
-
 export class BoundedCounter {
   readonly name: string;
   readonly help: string;
   readonly dimensions: readonly string[];
 
   readonly #foldable: readonly boolean[];
+  readonly #depth: number;
   readonly #maxSeries: number;
   readonly #ceiling: number;
   readonly #mode: CardinalityMode;
-  readonly #series = new Map<string, MutableSeries>();
+  readonly #root: Level = new Map<string, unknown>();
 
+  /** Tracked rather than derived: the trie has no cheap size of its own. */
+  #count = 0;
   #warned = false;
 
   constructor(options: BoundedCounterOptions) {
@@ -82,6 +107,7 @@ export class BoundedCounter {
     this.help = options.help;
     this.dimensions = options.dimensions;
     this.#foldable = options.dimensions.map((dimension) => options.foldable.has(dimension));
+    this.#depth = options.dimensions.length;
     this.#maxSeries = options.maxSeries;
     // Folded series are admitted past `maxSeries`, so the ceiling is what
     // makes the bound provable rather than merely likely.
@@ -96,16 +122,15 @@ export class BoundedCounter {
    * instead, and the collector counts the outcomes.
    */
   inc(values: readonly string[], by = 1): IncrementOutcome {
-    const key = seriesKey(values);
-    const existing = this.#series.get(key);
+    const existing = this.#find(values);
 
     if (existing !== undefined) {
       existing.value += by;
       return 'recorded';
     }
 
-    if (this.#series.size < this.#maxSeries) {
-      this.#create(key, values, by);
+    if (this.#count < this.#maxSeries) {
+      this.#create(values, by);
       return 'recorded';
     }
 
@@ -117,50 +142,67 @@ export class BoundedCounter {
       this.#warnOnce();
     }
 
-    const folded = values.map((value, index) =>
-      this.#foldable[index] === true ? OVERFLOW_LABEL : value
-    );
-    const foldedKey = seriesKey(folded);
+    const folded: string[] = [];
+    let foldable = false;
+
+    for (let index = 0; index < this.#depth; index++) {
+      const value = values[index] ?? '';
+
+      if (this.#foldable[index] === true) {
+        // Already folded counts as nothing left to fold, which is what keeps
+        // an overflow series from looking like a new one every time.
+        if (value !== OVERFLOW_LABEL) {
+          foldable = true;
+        }
+
+        folded.push(OVERFLOW_LABEL);
+        continue;
+      }
+
+      folded.push(value);
+    }
 
     // Nothing to fold: every dimension of this event is one the library chose,
     // so there is no overflow series to put it in that is not the series it
     // already wanted.
-    if (foldedKey === key) {
+    if (!foldable) {
       return 'dropped';
     }
 
-    const target = this.#series.get(foldedKey);
+    const target = this.#find(folded);
 
     if (target !== undefined) {
       target.value += by;
       return 'aggregated';
     }
 
-    if (this.#series.size >= this.#ceiling) {
+    if (this.#count >= this.#ceiling) {
       return 'dropped';
     }
 
-    this.#create(foldedKey, folded, by);
+    this.#create(folded, by);
     return 'aggregated';
   }
 
   /**
    * Every series, ordered by label value in dimension order.
    *
-   * Sorted rather than in insertion order so an exporter's output is stable
-   * across scrapes: a diff between two scrapes should show what changed, not
-   * which series happened to be created first.
-   *
-   * Sorted on the values rather than on the internal key, which carries a
-   * length prefix per field and would order `zz` before `aaa`. Nothing depends
-   * on the order beyond its being stable, but a scrape is read by people.
+   * Sorted rather than in trie order so an exporter's output is stable across
+   * scrapes: a diff between two scrapes should show what changed, not which
+   * series happened to be created first. Nothing depends on the order beyond
+   * its being stable, but a scrape is read by people.
    */
   collect(): readonly MetricSeries[] {
-    return [...this.#series.values()]
-      .map((series) => ({
+    const held: { series: MutableSeries; order: string[] }[] = [];
+
+    for (const series of this.#leaves(this.#root, 0)) {
+      held.push({
         series,
         order: this.dimensions.map((dimension) => series.labels[dimension] ?? ''),
-      }))
+      });
+    }
+
+    return held
       .sort((left, right) => compareValues(left.order, right.order))
       .map(({ series }) => ({ labels: series.labels, value: series.value }));
   }
@@ -169,7 +211,7 @@ export class BoundedCounter {
   total(filter?: Readonly<Record<string, string | undefined>>): number {
     let sum = 0;
 
-    for (const series of this.#series.values()) {
+    for (const series of this.#leaves(this.#root, 0)) {
       if (filter !== undefined && !matches(series.labels, filter)) {
         continue;
       }
@@ -198,7 +240,7 @@ export class BoundedCounter {
     // of recording anything.
     const out: Record<string, number> = Object.create(null) as Record<string, number>;
 
-    for (const series of this.#series.values()) {
+    for (const series of this.#leaves(this.#root, 0)) {
       const value = series.labels[dimension];
 
       if (value === undefined) {
@@ -216,15 +258,39 @@ export class BoundedCounter {
 
   /** How many distinct series are held. */
   get size(): number {
-    return this.#series.size;
+    return this.#count;
   }
 
   clear(): void {
-    this.#series.clear();
+    this.#root.clear();
+    this.#count = 0;
     this.#warned = false;
   }
 
-  #create(key: string, values: readonly string[], by: number): void {
+  /**
+   * The series at `values`, or `undefined`.
+   *
+   * The hot path, and the reason for the trie: every `get` here is keyed on a
+   * dimension value the process has seen before, so V8 has its hash cached.
+   */
+  #find(values: readonly string[]): MutableSeries | undefined {
+    let node: Level = this.#root;
+    const last = this.#depth - 1;
+
+    for (let index = 0; index < last; index++) {
+      const next = node.get(values[index] ?? '') as Level | undefined;
+
+      if (next === undefined) {
+        return undefined;
+      }
+
+      node = next;
+    }
+
+    return node.get(values[last] ?? '') as MutableSeries | undefined;
+  }
+
+  #create(values: readonly string[], by: number): void {
     // Dimension *names* are chosen by this library, so nothing here is
     // attacker-controlled the way the accumulator in `breakdown` is. Built the
     // same way regardless, so that stays true by construction if a dimension is
@@ -235,7 +301,37 @@ export class BoundedCounter {
       labels[dimension] = values[index] ?? '';
     }
 
-    this.#series.set(key, { labels: Object.freeze({ ...labels }), value: by });
+    let node: Level = this.#root;
+    const last = this.#depth - 1;
+
+    for (let index = 0; index < last; index++) {
+      const step = values[index] ?? '';
+      let next = node.get(step) as Level | undefined;
+
+      if (next === undefined) {
+        next = new Map<string, unknown>();
+        node.set(step, next);
+      }
+
+      node = next;
+    }
+
+    node.set(values[last] ?? '', { labels: Object.freeze({ ...labels }), value: by });
+    this.#count++;
+  }
+
+  *#leaves(node: Level, depth: number): Generator<MutableSeries> {
+    if (depth === this.#depth - 1) {
+      for (const series of node.values()) {
+        yield series as MutableSeries;
+      }
+
+      return;
+    }
+
+    for (const child of node.values()) {
+      yield* this.#leaves(child as Level, depth + 1);
+    }
   }
 
   #warnOnce(): void {

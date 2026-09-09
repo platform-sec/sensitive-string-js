@@ -405,6 +405,33 @@ describe('never breaking the thing it measures (INV-MET-003)', () => {
     expect(metrics.getSnapshot().meta.recordingErrors).toBe(1);
   });
 
+  it('refuses a non-string dimension explicitly, rather than by happening to throw', () => {
+    // This used to be incidental: building a composite key coerced the value
+    // and a symbol threw on the way. The trie has no such step, so a symbol
+    // would be stored happily and the failure would surface at export time as
+    // a broken /metrics response, which is a monitoring outage rather than a
+    // counted error. The check is explicit now, and this is what pins it.
+    const metrics = collector({ dimensions: ['label', 'context'] });
+    metrics.start();
+
+    void String(symbolLabelled());
+    metrics.withMeteredReveals({ name: 7 as unknown as string }, () => {
+      new SensitiveString(CANARY, 'credential', 'key').reveal();
+    });
+
+    expect(metrics.getSnapshot().meta.recordingErrors).toBe(2);
+
+    // And the export path is unharmed, which is the point of catching it here.
+    expect(() => JSON.stringify(metrics.collect())).not.toThrow();
+    for (const family of metrics.collect()) {
+      for (const series of family.series) {
+        for (const value of Object.values(series.labels)) {
+          expect(typeof value).toBe('string');
+        }
+      }
+    }
+  });
+
   it('reports a recording failure rather than a wrong number', () => {
     const metrics = collector();
     metrics.start();

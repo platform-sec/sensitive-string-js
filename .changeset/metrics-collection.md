@@ -91,7 +91,24 @@ which rule R6 asks for anyway. The other two were unvalidated configuration: `fl
 one-millisecond timer rather than an error, so the mistake shipped as a flush loop; and both
 exporters accepted a non-collector and failed at the first scrape instead of at boot.
 
-Ten of the eleven were found by review after the suite was already green: four past 100 passing
+A fourth pass added benchmarks and asked what recording costs, which found the largest defect of the
+lot. Series were held in one `Map` keyed on the dimension values joined into a length-prefixed
+composite, and that cost about 450 ns per redaction against a rendering core prices at 17 to 26 ns.
+The expense is not the string building, it is the hashing: a freshly built key has no cached hash, so
+every lookup hashes the whole string, where the dimension values are repeated strings V8 has already
+hashed. Measured over three dimensions, 96 ns to build a key, 257 ns to build it and look it up, and
+12 ns to walk three nested maps and build nothing. The counter now holds series in nested maps, one
+level per dimension: `inc` into an existing series went from 1022 ns to 16 ns in a tight loop, and
+the collector's end-to-end cost from about 450 ns to about 70 ns over a no-op observer. The shape is
+collision-free by construction too, rather than needing the length prefix to earn it.
+
+That rewrite changed one behaviour and three existing tests caught it. The composite key coerced its
+inputs, so a non-string label, which core permits, threw on the way into the key and was counted as a
+recording error; a trie has no such step and would have stored it, moving the failure to export time
+where it is a broken `/metrics` response rather than a counted error. The check is explicit now, in
+the one function every caller-supplied dimension passes through.
+
+Eleven of the twelve were found by review after the suite was already green: four past 100 passing
 tests, two past 109, three past 114, one past 129. Each has a test confirmed red against the unfixed
 code, except the two that were wrong sentences rather than wrong lines, whose tests pin the measured
 behaviour instead.

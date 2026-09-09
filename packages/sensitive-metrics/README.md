@@ -380,6 +380,37 @@ groups:
         labels: { severity: warning }
 ```
 
+## What it costs
+
+Benchmarks live in `src/__benchmarks__/` and run with `pnpm bench`. Read them as ratios inside a
+group; the absolute figures below were taken on Node 22.15.0 on one machine and describe it as much
+as the code.
+
+Per redaction, which is the cost a process pays continuously:
+
+| | ns |
+|---|---|
+| rendering, nothing observing | ~157 |
+| one no-op observer, which is core's cost to notify | ~213 |
+| one metrics collector | ~283 |
+| two collectors, as a process running a second exporter has | ~372 |
+
+So the collector adds roughly 70 ns to a rendering, and a second subscriber roughly the same again.
+The tinybench floor is about 100 ns of that, so treat the gaps rather than the absolutes as the
+measurement. A single `inc` into an existing series, timed in a tight loop instead, is about 16 ns.
+
+Per scrape, which is paid once per interval rather than per log line: about 37 µs for 100 series and
+about 2.8 ms for 1000, near enough linear, against a scrape interval measured in seconds. A StatsD
+flush is within noise of the same figures.
+
+Getting there needed one non-obvious thing. Series are held in nested `Map`s, one level per
+dimension, rather than in a single map keyed on the dimension values joined together. The joined key
+is the obvious implementation and it was the first one, and it is about twenty times slower on the
+per-redaction path. The cost is not the string building, it is the hashing: a freshly built key has
+no cached hash, so every lookup hashes the whole string, where the dimension values themselves are
+repeated strings V8 has already hashed. Measured, three dimensions: 96 ns to build a key, 257 ns to
+build it and look it up, 12 ns to walk three nested maps and build nothing.
+
 ## Two collectors are fine
 
 A collector is a subscriber, not a singleton, and core does not know it exists. A process can run

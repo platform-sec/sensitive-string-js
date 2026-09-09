@@ -126,14 +126,28 @@ const KNOWN_OPERATIONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * A caller-supplied dimension value, cut to a length a metrics store can hold.
+ * A caller-supplied dimension value, checked and cut to a length a metrics
+ * store can hold.
  *
- * Not defensive typing: `value` is annotated as a string and arrives as one
- * from core, but a label is whatever a caller passed to the constructor and
- * core does not check its type, so the `.length` read has to be the thing that
- * throws into the recording guard rather than something further downstream.
+ * The type check is not redundant. `value` is annotated as a string and
+ * arrives as one from core on every ordinary path, but a label is whatever a
+ * caller passed to the constructor and core does not check its type, so a
+ * `Symbol` reaches here as a label and a number reaches here as a context
+ * name. This function is the single funnel for every caller-supplied
+ * dimension, so it is where that has to be caught.
+ *
+ * Throwing is deliberate, and it is the recording guards in each path that
+ * turn the throw into `meta.recordingErrors`. The alternative, letting a
+ * non-string through, is worse than it sounds: the counter would hold it
+ * happily, and the failure would surface at export time as a broken
+ * `/metrics` response or a malformed datagram, which is a monitoring outage
+ * rather than a counted error.
  */
 function bounded(value: string): string {
+  if (typeof value !== 'string') {
+    throw new TypeError(`a dimension value must be a string, received ${typeof value}`);
+  }
+
   return value.length > MAX_DIMENSION_LENGTH ? value.slice(0, MAX_DIMENSION_LENGTH) : value;
 }
 
