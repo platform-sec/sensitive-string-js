@@ -6,6 +6,7 @@ import type { Socket } from 'node:dgram';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SensitiveString } from '@platform-sec/sensitive-string-core';
 import { MetricsCollector, createMetricsCollector } from './collector.js';
+import { PrometheusExporter } from './prometheus.js';
 import { StatsDExporter } from './statsd.js';
 
 const CANARY = 'LEAKED_SECRET_metrics_statsd_qwerty';
@@ -451,7 +452,32 @@ describe('StatsDExporter', () => {
     [{ host: 42 }, 'a host'],
     [{ host: '127.0.0.1', port: 0 }, 'port'],
     [{ host: '127.0.0.1', port: 70000 }, 'port'],
+    // Refused rather than clamped: setInterval turns any of these into a
+    // one-millisecond timer, so the mistake ships as a flush loop rather than
+    // as an error.
+    [{ host: '127.0.0.1', flushInterval: 0 }, 'flushInterval'],
+    [{ host: '127.0.0.1', flushInterval: -1000 }, 'flushInterval'],
+    [{ host: '127.0.0.1', flushInterval: Number.NaN }, 'flushInterval'],
+    [{ host: '127.0.0.1', flushInterval: Number.POSITIVE_INFINITY }, 'flushInterval'],
+    [{ host: '127.0.0.1', maxPacketSize: 0 }, 'maxPacketSize'],
+    [{ host: '127.0.0.1', maxPacketSize: -1 }, 'maxPacketSize'],
   ])('refuses %o at construction', (config, message) => {
     expect(() => new StatsDExporter(started(), config as never)).toThrow(message);
+  });
+
+  it('refuses a bad interval passed to start(), not just one in the config', () => {
+    const statsd = exporter(started(), { host: '127.0.0.1', port: 8125 });
+
+    expect(() => statsd.start(0)).toThrow('start(intervalMs)');
+    expect(() => statsd.start(Number.NaN)).toThrow('start(intervalMs)');
+  });
+
+  it.each([
+    ['StatsDExporter', () => new StatsDExporter({} as never, { host: '127.0.0.1' })],
+    ['PrometheusExporter', () => new PrometheusExporter({} as never)],
+  ])('%s refuses a first argument that is not a collector', (_name, build) => {
+    // At boot rather than at the first scrape or flush, where the failure is a
+    // 500 on an endpoint nobody is watching yet.
+    expect(build).toThrow('requires a metrics collector');
   });
 });

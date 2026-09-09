@@ -598,6 +598,83 @@ describe('the snapshot', () => {
   });
 });
 
+describe('lifecycle', () => {
+  it('resubscribes after a stop, keeping what it already counted', () => {
+    // Keeping the counts is the point. A counter that reset here would look
+    // like a process restart to every rate() reading it.
+    const metrics = collector();
+
+    metrics.start();
+    void String(new SensitiveString(CANARY, 'credential', 'api_key'));
+    metrics.stop();
+    void String(new SensitiveString(CANARY, 'credential', 'api_key'));
+    metrics.start();
+    void String(new SensitiveString(CANARY, 'credential', 'api_key'));
+
+    expect(metrics.getRedactionCount()).toBe(2);
+    expect(metrics.started).toBe(true);
+  });
+
+  it('survives being stopped twice, and stopped without ever starting', () => {
+    const metrics = collector();
+
+    expect(() => {
+      metrics.stop();
+    }).not.toThrow();
+
+    metrics.start();
+    metrics.stop();
+
+    expect(() => {
+      metrics.stop();
+    }).not.toThrow();
+    expect(metrics.started).toBe(false);
+  });
+
+  it('counts nothing rendered before start(), which is what the coverage claim says', () => {
+    const metrics = collector();
+
+    void String(new SensitiveString(CANARY, 'credential', 'api_key'));
+    metrics.start();
+
+    expect(metrics.getRedactionCount()).toBe(0);
+  });
+
+  it('keeps two collectors in one isolate independent', () => {
+    const first = collector();
+    const second = collector();
+
+    first.start();
+    void String(new SensitiveString(CANARY, 'credential', 'api_key'));
+    second.start();
+    void String(new SensitiveString(CANARY, 'credential', 'api_key'));
+    first.stop();
+    void String(new SensitiveString(CANARY, 'credential', 'api_key'));
+
+    expect(first.getRedactionCount()).toBe(2);
+    expect(second.getRedactionCount()).toBe(2);
+  });
+
+  it('attributes interleaved async reveals to the context each one actually ran under', () => {
+    // AsyncLocalStorage is what makes this work, and getting it wrong would
+    // mis-attribute quietly rather than fail: the total would still be right.
+    const metrics = collector({ dimensions: ['label', 'context'] });
+    const secret = new SensitiveString(CANARY, 'credential', 'api_key');
+
+    const inContext = async (name: string, rounds: number): Promise<void> =>
+      metrics.withMeteredReveals({ name }, async () => {
+        for (let round = 0; round < rounds; round++) {
+          await Promise.resolve();
+          secret.reveal();
+        }
+      });
+
+    return Promise.all([inContext('alpha', 3), inContext('beta', 5)]).then(() => {
+      expect(metrics.getSnapshot().reveals.byContext).toEqual({ alpha: 3, beta: 5 });
+    });
+  });
+});
+
 describe('reset', () => {
   it('drops the counts and keeps the subscription', () => {
     const metrics = collector();

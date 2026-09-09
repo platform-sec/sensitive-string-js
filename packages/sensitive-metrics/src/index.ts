@@ -50,7 +50,11 @@ export type { PrometheusExporterConfig } from './prometheus.js';
 export { StatsDExporter } from './statsd.js';
 export type { StatsDExporterConfig } from './statsd.js';
 
-export { OVERFLOW_LABEL } from './types.js';
+// `DIMENSION_NAMES` is exported for the same reason `collect()` is public: a
+// third exporter faces the shadowing problem the Prometheus one does, where a
+// caller-configured label that collides with a dimension produces output the
+// backend rejects rather than a row it merely misreads.
+export { DIMENSION_NAMES, OVERFLOW_LABEL } from './types.js';
 export type {
   Breakdown,
   CardinalityMode,

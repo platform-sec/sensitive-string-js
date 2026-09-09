@@ -76,8 +76,25 @@ large one was, so a thousand legal series still made a scrape as large as the ca
 long; dimension values are now truncated at ingest, where the truncated value becomes the series
 identity and the two exporters cannot be handed series that render identically.
 
-Six of the seven were found by review after the suite was already green, four of them past 100
-passing tests and two more past 109. Each has a test confirmed red against the unfixed code.
+A third pass asked where the guarantees stop rather than what an input renders as or costs, and found
+four more. Two were false sentences in the README about behaviour that was already correct, and both
+concern a boundary. `sensitive_redactions_total` covers **one isolate**, not the process: measured, a
+worker thread rendering five markers left a main-thread collector reporting zero, which inverts the
+headline number for anyone whose real work happens in a worker pool. A collector plus a StatsD
+exporter per worker composes, measured, because the agent sums the deltas; a Prometheus endpoint does
+not, because it exports only the isolate serving it. And the stated reason core is a peer dependency
+was backwards: two physical copies of core **share** the observer registry, because core keys it on
+`Symbol.for()`, so redactions from both are counted; what does not survive is `recordRefusal`, which
+recognises a refusal by `instanceof` and silently misses the other copy's. Both are now asserted,
+which rule R6 asks for anyway. The other two were unvalidated configuration: `flushInterval` and
+`maxPacketSize` accepted zero, negative and `NaN`, and `setInterval` turns any of those into a
+one-millisecond timer rather than an error, so the mistake shipped as a flush loop; and both
+exporters accepted a non-collector and failed at the first scrape instead of at boot.
+
+Ten of the eleven were found by review after the suite was already green: four past 100 passing
+tests, two past 109, three past 114, one past 129. Each has a test confirmed red against the unfixed
+code, except the two that were wrong sentences rather than wrong lines, whose tests pin the measured
+behaviour instead.
 
 StatsD goes out over `node:dgram` and `node:net`, so both exporters ship in one package with no
 third-party runtime dependency, against the design's proposal to split them. `collect()` is the

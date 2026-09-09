@@ -19,10 +19,22 @@ pnpm add @platform-sec/sensitive-string-metrics
 - Node.js 22.12+
 - `@platform-sec/sensitive-string-core` 0.5+ (peer dependency)
 
-Core is a peer dependency rather than a regular one for the usual reason: two copies of core in
-`node_modules` are two redaction-observer registries, and a collector subscribed to one counts
-nothing that happens through the other. This package has no third-party runtime dependency, and
-StatsD goes out over `node:dgram` rather than a client library.
+Core is a peer dependency rather than a regular one, and the reason is narrower than the usual one.
+Measured against two physical copies of core loaded into one process:
+
+- The **redaction counter survives it.** Core's observer registry is keyed on `Symbol.for()`
+  precisely so duplicate installs share it, so a collector subscribed through one copy counts
+  renderings from the other. This is the counter that matters most, and it is the one that is safe.
+- The **refusal counter does not.** `recordRefusal` recognises a refusal with
+  `instanceof SensitiveStringError`, and an error raised by the other copy is not an instance of your
+  copy's class. It is silently not counted, and `recordRefusal` returns `false` exactly as it does
+  for an unrelated error.
+
+So a duplicate install degrades this package quietly rather than loudly, which is the argument for
+keeping core a peer and letting your package manager dedupe it.
+
+This package has no third-party runtime dependency, and StatsD goes out over `node:dgram` rather than
+a client library.
 
 ## Quick start
 
@@ -51,9 +63,12 @@ This is the one thing to understand before building a dashboard on them.
 
 | Counter | Source | What it sees |
 |---|---|---|
-| `sensitive_redactions_total` | core's `observeRedactions()` | every rendering of a marker in the process |
+| `sensitive_redactions_total` | core's `observeRedactions()` | every rendering of a marker in this isolate, from `start()` onward |
 | `sensitive_reveals_total` | the `auditReveal` hook | only operations under a context carrying this collector |
 | `sensitive_refusals_total` | `recordRefusal()` | only what your `catch` blocks hand over |
+
+"in this isolate" is not a technicality if you use worker threads. See
+[Worker threads](#worker-threads).
 
 **Do not divide one into another.** A reveals-per-redaction ratio measures how much of your code you
 wired up, not how your system behaves.
@@ -121,6 +136,41 @@ fifteen seconds would extend the life of everything it measured.
 `sensitive_metrics_recording_errors_total`. Without them the cardinality cap and the never-throw
 contract are promises with no way to check them from a dashboard. The last one should be zero.
 
+## Worker threads
+
+A collector counts its own isolate and nothing else. Core's observer registry is a `globalThis`
+singleton, and a worker thread has its own `globalThis`, so a collector on the main thread sees
+**none** of a worker's redactions. Measured on Node 22.15.0: a worker rendering five markers left the
+main thread's collector reporting zero.
+
+That matters more here than a limitation usually does, because it silently inverts the headline
+number. An application that does its real work in a worker pool, deploys this on the main thread and
+reads a near-zero `sensitive_redactions_total` has not learned that the library prevented nothing. It
+has learned that it instrumented the wrong isolate.
+
+The fix is one collector per isolate. Whether that composes depends on the exporter:
+
+- **StatsD composes.** Each worker builds its own collector and its own `StatsDExporter` pointed at
+  the same agent, and the server sums the deltas. Measured: a worker's five redactions arrive at the
+  agent as `sensitive_redactions_total:5|c|#...` with no involvement from the main thread.
+- **Prometheus does not.** The endpoint is served by whichever isolate holds the HTTP server, and it
+  can only export the collector in that isolate. Move the numbers yourself over `postMessage`, or use
+  StatsD for the workers.
+
+```typescript
+// worker.ts
+const metrics = createMetricsCollector();
+metrics.start();
+const statsd = new StatsDExporter(metrics, { host: 'statsd.internal' });
+statsd.start(10_000);
+process.on('exit', () => statsd.stop());
+```
+
+Reveal contexts do not cross the boundary either, for the same reason: `AsyncLocalStorage` is per
+isolate. Core's `toWorkerPayload()` / `withWorkerPayload()` carry values and the portable context
+across, and the receiving side installs its own hook, so a metered context on the far side is the
+one you build there.
+
 ## Wiring the reveal counter
 
 The obvious wiring is wrong:
@@ -145,7 +195,12 @@ The counter runs last in the chain. A hook that throws stops the reveal, so coun
 reveal an audit sink refused is not counted as one that happened.
 
 `meteredContext(overrides)` returns the context without running anything, for a framework that
-installs it itself.
+installs it itself. It reads the ambient context at the moment you call it, not at the moment the
+context is installed, so build it where you intend it to inherit from.
+
+A started collector is reachable from core's process-global observer registry, which means it stays
+alive until `stop()` runs. Build one per process, or per isolate; a collector per request that is
+never stopped is a leak, and its counters keep accumulating besides.
 
 ### The context dimension is opt-in
 
@@ -291,7 +346,9 @@ metrics.getRefusalCount({ code: 'expired-value', label: 'otp' });
 ```
 
 `collect()` returns the metric families an exporter reads, which is the whole seam: a CloudWatch or
-OpenTelemetry exporter needs nothing else from the collector.
+OpenTelemetry exporter needs nothing else from the collector. If you write one, read `DIMENSION_NAMES`
+too and refuse any caller-configured label that collides with one. In Prometheus that collision is
+not a misread row, it is a scrape the server rejects whole.
 
 ## Alert rules
 
@@ -345,6 +402,12 @@ your back.
 
 The library cannot tell a label from a secret. If your code writes
 `new SensitiveString(v, 'credential', v)`, the value becomes a metric dimension, and this package
-records it. The mitigations it does have are real but partial: the context dimension is off by
-default, the cardinality cap bounds how much of it can accumulate, and no dimension is ever derived
-from the value itself. Label your values with classifications, not with data.
+records it. The same goes for a context name you pass to `withMeteredReveals`, and for the `code` on
+a `SensitiveStringError` subclass of your own. The mitigations are real but partial: the context
+dimension is off by default, the cardinality cap bounds how many such values accumulate, the length
+cap bounds how large each one is, and no dimension is ever derived from the value itself. Label your
+values with classifications, not with data.
+
+It is also not an audit log, and the two are not interchangeable. A counter answers "how many"; it
+cannot answer "who, when, and why", and a dimension fine-grained enough to try is the cardinality
+problem above wearing a different hat. Core's `auditReveal` is where that question is answered.

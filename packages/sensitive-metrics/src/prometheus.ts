@@ -129,6 +129,13 @@ export class PrometheusExporter {
   readonly #defaultLabels: readonly (readonly [string, string])[];
 
   constructor(collector: MetricsCollector, config: PrometheusExporterConfig = {}) {
+    // Checked here for the same reason the prefix is: everything this exporter
+    // refuses, it refuses at boot rather than at the first scrape, where the
+    // failure is a 500 on a monitoring endpoint nobody is watching yet.
+    if (typeof collector?.collect !== 'function') {
+      throw new TypeError('PrometheusExporter requires a metrics collector as its first argument');
+    }
+
     const prefix = config.prefix ?? '';
 
     if (prefix !== '' && !PREFIX_PATTERN.test(prefix)) {

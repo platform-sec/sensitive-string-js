@@ -31,10 +31,19 @@ import type {
  * The three counters, and what each one is actually able to see.
  *
  * `sensitive_redactions_total` comes from core's `observeRedactions()`. It has
- * complete coverage of the process from {@link MetricsCollector.start} onward,
- * needs no wiring at any call site, and counts the thing this library exists to
- * do: every rendering of a marker is a place a plain string would have been
- * written.
+ * complete coverage of *this isolate* from {@link MetricsCollector.start}
+ * onward, needs no wiring at any call site, and counts the thing this library
+ * exists to do: every rendering of a marker is a place a plain string would
+ * have been written.
+ *
+ * The isolate is the part to read carefully. Core's registry is a `globalThis`
+ * singleton and a worker thread has its own `globalThis`, so a collector on the
+ * main thread sees none of a worker's redactions. An application whose real
+ * work happens in a worker pool, instrumented only on the main thread, reads a
+ * near-zero count and has learned nothing about the library: it has learned
+ * which isolate it instrumented. Build one collector per isolate. A StatsD
+ * exporter in each composes, because the agent sums the deltas; a Prometheus
+ * endpoint does not, because it can only export the isolate serving it.
  *
  * `sensitive_reveals_total` comes from the audit hook, so it counts an
  * operation only where a context carrying this collector's hook was in force.
@@ -299,6 +308,12 @@ export class MetricsCollector {
    * installing {@link auditReveal} on a context, and the refusal counter by
    * calling {@link recordRefusal}.
    *
+   * A started collector is reachable from core's process-global registry, so it
+   * is not collectable until {@link stop} runs. Build one per isolate. Starting
+   * again after a stop resubscribes and keeps the counts already taken, which
+   * is what a scraper wants: a counter that resets looks like a process
+   * restart to every `rate()` in every dashboard reading it.
+   *
    * With `trackRedactions: false` this records the started state and
    * subscribes nothing, so an exporter still reports the other counters.
    */
@@ -386,6 +401,9 @@ export class MetricsCollector {
    * hook passed in `overrides`, then the counter. A hook that throws stops the
    * reveal, so counting last means a reveal an audit sink refused is not
    * counted as one that happened.
+   *
+   * The ambient context is read here, when this is called, and not when the
+   * returned context is installed. Build it where you mean it to inherit from.
    */
   meteredContext(overrides: Partial<RevealContext> & { name: string }): RevealContext {
     // Both hooks are called through the object they were declared on rather

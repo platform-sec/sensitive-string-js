@@ -217,6 +217,22 @@ This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under 
   the module's own export list, so a new export cannot arrive without canary coverage, and it asserts
   a canary is **present** after scrubbing a prose position, which is the documented gap rather than a
   bug.
+- `packages/sensitive-metrics/src/` contains the metrics collector and its two exporters. The
+  collector **subscribes** to core's `observeRedactions()`; it is not registered on the
+  `SensitiveString` class, and there is no process-global collector, so rule R6 does not apply to it
+  and two collectors are two independent sets of numbers. It has no third-party runtime dependency:
+  StatsD goes out over `node:dgram` and `node:net`. Four things are easy to get wrong on a later
+  edit. The three counters have three different coverages, so a dashboard that divides one into
+  another measures the wiring rather than the system, and `sensitive_redactions_total` covers **this
+  isolate** rather than the process, which silently inverts the headline number for an application
+  whose real work is in a worker pool. Every accumulator keyed on a label value is built on a null
+  prototype, because a label of `toString` or `__proto__` otherwise reads or rewrites the prototype.
+  Caller-supplied dimension values are truncated at ingest rather than in an exporter, so the
+  truncated value is the series identity and no exporter can be handed two series that render
+  identically. And `DIMENSION_NAMES` in `types.ts` is one list read by both the collector that emits
+  the dimensions and the Prometheus exporter that must refuse a `defaultLabels` entry shadowing one,
+  since a series carrying a label name twice is a scrape the server rejects whole. See
+  `scratch/docs/adrs/ADR-010-metrics-collection-implementation-deltas.md`.
 - `packages/sensitive-eslint-plugin/src/` contains the ESLint rules, their presets, and the
   parser-agnostic AST helpers they share. It has no dependencies, not even on the core package, and
   not on `typescript`: seven rules read syntax only, and the two that need types reach the checker

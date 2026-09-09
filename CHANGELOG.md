@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the metrics package, `@platform-sec/sensitive-string-metrics`. It subscribes to core's
+  `observeRedactions()` and puts `sensitive_redactions_total{class, label, surface}` first in its
+  catalog, because a redaction is the place a plain string would have been written and a reveal is
+  the sanctioned path that was already audited. Prometheus and StatsD exporters, no third-party
+  runtime dependency, and nothing registered on the `SensitiveString` class. Most of the original
+  design's catalog is absent because core has three emission points and only three: the counters for
+  creations, comparisons and destructions need emission points that do not exist, and the three
+  histograms need a bracket around an operation where the one hook available fires at a single
+  instant inside the gate. The three counters that ship have three different coverages, and
+  `sensitive_redactions_total` covers one isolate rather than the whole process, so an application
+  using worker threads needs a collector in each. Core gains one export for it,
+  `trackedInstanceCount()`, published as the `sensitive_values_tracked` gauge under a name that does
+  not claim to be a census.
+
 - Added the TypeORM integration, `@platform-sec/sensitive-string-typeorm`. Classified columns read
   back wrapped and every write unwraps through an audited reveal, both through one
   `ValueTransformer`. The transformer is not enough on its own: TypeORM does not call it for a query

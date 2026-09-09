@@ -108,6 +108,20 @@ function sanitizeTag(value: string): string {
 }
 
 /**
+ * Refuse a millisecond or byte count that is not a positive finite number.
+ *
+ * `setInterval` and the packet packer both accept nonsense and turn it into
+ * behaviour rather than an error, which is the reason to check here.
+ */
+function requirePositive(value: number, name: string): void {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw new TypeError(
+      `StatsDExporter: ${name} must be a positive finite number, received ${String(value)}`
+    );
+  }
+}
+
+/**
  * One series folded onto the key it will be sent under.
  *
  * The fold is not an optimization. Sanitizing a tag value is many-to-one, so
@@ -167,6 +181,10 @@ export class StatsDExporter {
       throw new TypeError('StatsDExporter requires a configuration object with a host');
     }
 
+    if (typeof collector?.collect !== 'function') {
+      throw new TypeError('StatsDExporter requires a metrics collector as its first argument');
+    }
+
     const port = config.port ?? DEFAULT_PORT;
 
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -175,14 +193,24 @@ export class StatsDExporter {
       );
     }
 
+    const flushInterval = config.flushInterval ?? 10_000;
+    const maxPacketSize = config.maxPacketSize ?? DEFAULT_MAX_PACKET_SIZE;
+
+    // Refused rather than clamped. `setInterval` treats a negative or NaN delay
+    // as one millisecond, so the mistake does not fail: it produces an exporter
+    // flushing a thousand times a second at whatever the far end is, which is a
+    // worse outage than a refused constructor and much harder to attribute.
+    requirePositive(flushInterval, 'flushInterval');
+    requirePositive(maxPacketSize, 'maxPacketSize');
+
     this.#collector = collector;
     this.#host = config.host;
     this.#port = port;
     this.#prefix = config.prefix ?? '';
     this.#globalTags = (config.globalTags ?? []).map((tag) => sanitizeTagPair(tag));
     this.#protocol = config.protocol ?? 'udp';
-    this.#maxPacketSize = config.maxPacketSize ?? DEFAULT_MAX_PACKET_SIZE;
-    this.#flushInterval = config.flushInterval ?? 10_000;
+    this.#maxPacketSize = maxPacketSize;
+    this.#flushInterval = flushInterval;
     this.#onError = config.onError;
   }
 
@@ -194,6 +222,8 @@ export class StatsDExporter {
    * held open by a metrics exporter.
    */
   start(intervalMs: number = this.#flushInterval): this {
+    requirePositive(intervalMs, 'start(intervalMs)');
+
     if (this.#timer !== undefined) {
       return this;
     }
