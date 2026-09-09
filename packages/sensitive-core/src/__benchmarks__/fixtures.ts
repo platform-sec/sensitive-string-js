@@ -194,6 +194,47 @@ export function recordList(count: number): Record<string, unknown>[] {
 }
 
 /**
+ * The same records with plain strings in place of the sensitive values.
+ *
+ * The control for a response filter rather than for a log line. Express,
+ * Fastify and NestJS run `redactCopy` over every JSON body they send, so a
+ * collection with nothing sensitive in it is not an edge case: it is what most
+ * endpoints return, and the gap between this and {@link recordList} is the only
+ * part of the cost that redaction is responsible for. The rest is the walk,
+ * which that response pays to establish that there was nothing to redact.
+ */
+export function plainRecordList(count: number): Record<string, unknown>[] {
+  return Array.from({ length: count }, (_unused, index) => ({
+    id: `acct_${index}`,
+    active: index % 3 !== 0,
+    email: `user${index}@example.com`,
+    apiKey: valueOfLength(48),
+  }));
+}
+
+/**
+ * `count` records of which only the last carries anything sensitive.
+ *
+ * The worst case for any strategy that detects before it redacts, and the one
+ * shape neither {@link recordList} nor {@link plainRecordList} can expose.
+ * `containsSensitive` returns on its first hit, so a list that is wrapped
+ * throughout answers in microseconds and a list wrapped only at the end costs a
+ * full walk before the redaction walk even begins. A group that measures only
+ * the first two shapes reports the check as free or nearly so, which is true of
+ * both of them and not of this.
+ */
+export function recordListWrappedLast(count: number): Record<string, unknown>[] {
+  const records = plainRecordList(count);
+  const last = records[count - 1];
+
+  if (last !== undefined) {
+    last['email'] = new SensitiveString(`user${count - 1}@example.com`, 'sensitive', 'email');
+  }
+
+  return records;
+}
+
+/**
  * A chain `depth` levels deep with one sensitive value at the bottom, for the
  * walkers whose cost is driven by nesting rather than by breadth.
  */
