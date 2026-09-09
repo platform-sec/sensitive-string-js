@@ -272,6 +272,10 @@ function visit(
 
   const container = copy as Record<string, unknown>;
 
+  // One comparison, read once per node. Anything but the documented word
+  // censors, so a misspelt option fails closed rather than open.
+  const censoring = policy.onMatch !== 'observe';
+
   for (const [key, child] of copyEntries) {
     const childPath = path === '' ? key : `${path}.${key}`;
     const childOriginal = childOf(original, key);
@@ -288,8 +292,13 @@ function visit(
     if (!redactedByStageOne && denied(key, childPath, policy.denyKeys, policy.denyPaths)) {
       // Replaced, never deleted. An absent key and a censored key look the
       // same to a reader of the event and mean different things to somebody
-      // debugging why a header was not sent at all.
-      container[key] = policy.censor;
+      // debugging why a header was not sent at all. Under 'observe' the
+      // report is still taken and the walk still stops here, so the two modes
+      // report the same payload the same way.
+      if (censoring) {
+        container[key] = policy.censor;
+      }
+
       accumulator.deniedKeys.add(key);
       continue;
     }
@@ -298,7 +307,9 @@ function visit(
       const scrubbedUrl = scrubUrl(child, policy.denyKeys, policy.censor);
 
       if (scrubbedUrl !== null) {
-        container[key] = scrubbedUrl.value;
+        if (censoring) {
+          container[key] = scrubbedUrl.value;
+        }
 
         for (const name of scrubbedUrl.replaced) {
           accumulator.deniedKeys.add(name);
@@ -318,7 +329,10 @@ function visit(
       const shape = matchValue(child, policy.denyValues);
 
       if (shape !== null) {
-        container[key] = policy.censor;
+        if (censoring) {
+          container[key] = policy.censor;
+        }
+
         accumulator.deniedValues.add(shape.name);
         continue;
       }

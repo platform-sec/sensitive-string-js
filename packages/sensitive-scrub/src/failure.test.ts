@@ -303,3 +303,32 @@ describe('composeAfter', () => {
     expect(seen[0]).toBe(hint);
   });
 });
+
+describe('guardedScrub under onMatch: observe', () => {
+  it('hands back the payload it was given when the walk throws, and still reports failed', () => {
+    const reports: ScrubReport[] = [];
+    const policy = resolveScrubPolicy({ onMatch: 'observe', onScrub: (r) => reports.push(r) });
+    const scrub = guardedScrub<Event>({ kind: 'event', policy, stub });
+    const input = unwritablePayload();
+
+    const { payload, report } = scrub(input);
+
+    // A mode that promises to change nothing cannot answer a broken walk with
+    // a stub. The vendor gets what it would have got before the install, and
+    // the report is where the operator learns the walk broke on this shape.
+    expect(payload).toBe(input);
+    expect(report.failed).toBe(true);
+    expect(reports).toEqual([report]);
+  });
+
+  it('otherwise behaves as censor mode does on the happy path', () => {
+    const policy = resolveScrubPolicy({ onMatch: 'observe' });
+    const scrub = guardedScrub<Event>({ kind: 'event', policy, stub });
+
+    const { payload, report } = scrub({ extra: { authorization: CANARY } });
+
+    expect(payload).toEqual({ extra: { authorization: CANARY } });
+    expect(report.failed).toBe(false);
+    expect(report.deniedKeys).toEqual(['authorization']);
+  });
+});

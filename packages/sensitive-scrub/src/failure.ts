@@ -106,6 +106,15 @@ function recover<P>(
 
   reportScrub(policy, report);
 
+  // A mode whose promise is to change nothing cannot replace an event with a
+  // stub, so under 'observe' the vendor gets the payload it was handed, which
+  // is what it got before this package was installed. The report still says
+  // `failed`, and that is the operator's signal that the walk broke on a
+  // shape before the switch to 'censor' would have broken it in the open.
+  if (policy.onMatch === 'observe') {
+    return { payload, report };
+  }
+
   try {
     return { payload: stub(payload, error), report };
   } catch {

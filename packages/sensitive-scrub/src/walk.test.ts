@@ -342,3 +342,89 @@ describe('objects that refuse a property read', () => {
     expect(JSON.stringify(scrub({ env: guarded }).payload)).not.toContain(CANARY);
   });
 });
+
+describe('onMatch: observe', () => {
+  const observe = (payload: unknown, policy: ScrubPolicy = {}) =>
+    scrub(payload, { ...policy, onMatch: 'observe' });
+
+  it('leaves a denied key in place and still reports it', () => {
+    const { payload, report } = observe({
+      request: { headers: { authorization: `Bearer ${CANARY}` } },
+    });
+
+    expect(payload).toEqual({ request: { headers: { authorization: `Bearer ${CANARY}` } } });
+    expect(report.deniedKeys).toEqual(['authorization']);
+  });
+
+  it('leaves a denied path in place and still reports it', () => {
+    const { payload, report } = observe({ request: { cookies: { session: CANARY } } });
+
+    expect(payload).toEqual({ request: { cookies: { session: CANARY } } });
+    expect(report.deniedKeys).toEqual(['cookies']);
+  });
+
+  it("leaves a URL's denied parameters in place and still reports their names", () => {
+    const url = `http://127.0.0.1/pay?token=${CANARY}&page=2`;
+    const { payload, report } = observe({ request: { url } }, { urlKeys: ['request.url'] });
+
+    expect(payload).toEqual({ request: { url } });
+    expect(report.deniedKeys).toEqual(['token']);
+  });
+
+  it('leaves a value-shape match in place and still reports the shape', () => {
+    const { payload, report } = observe(
+      { extra: { note: CANARY } },
+      { denyValues: [/^LEAKED_SECRET_\w+$/] }
+    );
+
+    expect(payload).toEqual({ extra: { note: CANARY } });
+    expect(report.deniedValues).toHaveLength(1);
+  });
+
+  it('still replaces a SensitiveString and a serialize() result, which stage 2 does not govern', () => {
+    const wire = new SensitiveString(CANARY, 'credential', 'tok').serialize();
+    const { payload, report } = observe({
+      extra: { s: new SensitiveString(CANARY, 'credential'), wire },
+    });
+
+    expect(JSON.stringify(payload)).not.toContain(CANARY);
+    expect(payload).toEqual({
+      extra: { s: '[REDACTED:credential]', wire: '[REDACTED:credential]' },
+    });
+    expect(report.instances).toBe(2);
+  });
+
+  it('produces the same report censor mode does for the same payload', () => {
+    const build = () => ({
+      request: {
+        headers: { authorization: `Bearer ${CANARY}`, cookie: `s=${CANARY}` },
+        url: `http://127.0.0.1/p?token=${CANARY}`,
+        data: { s: new SensitiveString(CANARY, 'credential', 'k'), note: '[REDACTED:credential]' },
+      },
+    });
+    const policy: ScrubPolicy = { urlKeys: ['request.url'], reportLabels: true };
+
+    const censored = scrub(build(), policy).report;
+    const observed = scrub(build(), { ...policy, onMatch: 'observe' }).report;
+
+    expect(observed).toEqual(censored);
+    expect(censored.deniedKeys).toEqual(['authorization', 'cookie', 'token']);
+  });
+
+  it('still hands back a copy rather than the payload it was given', () => {
+    const input = { request: { headers: { authorization: CANARY } } };
+    const { payload } = observe(input);
+
+    expect(payload).not.toBe(input);
+    expect(payload).toEqual(input);
+  });
+
+  it('fails closed on a misspelt mode', () => {
+    const { payload } = scrub(
+      { headers: { authorization: CANARY } },
+      { onMatch: 'observ' as 'observe' }
+    );
+
+    expect(JSON.stringify(payload)).not.toContain(CANARY);
+  });
+});

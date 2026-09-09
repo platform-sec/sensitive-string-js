@@ -268,3 +268,49 @@ describe('the harness itself', () => {
     expect(() => expectCanaryPresent({ a: 1 }, 'ABSENT')).toThrow(/proves nothing/);
   });
 });
+
+describe('onMatch: observe', () => {
+  // TEST-SCRUB-OBSERVE-REPORT
+  it('reports every position censor mode would have censored, and the report still carries no value', () => {
+    const canary = createCanary('observe');
+    const observing = resolveScrubPolicy({
+      urlKeys: ['request.url', 'request.query_string', 'url'],
+      onMatch: 'observe',
+      reportLabels: true,
+    });
+
+    for (const position of positions(canary)) {
+      const { payload, report } = scrubPayload(position.build(), observing, 'event');
+      const { report: censored } = scrubPayload(position.build(), policy, 'event');
+
+      // Observe mode changes what is sent and nothing about what is known.
+      expect(
+        { keys: report.deniedKeys, values: report.deniedValues, instances: report.instances },
+        position.name
+      ).toEqual({
+        keys: censored.deniedKeys,
+        values: censored.deniedValues,
+        instances: censored.instances,
+      });
+
+      if (censored.instances === 0) {
+        // A position stage 1 did not own goes to the vendor as it came under
+        // observe mode. That is the mode's contract, stated so the sweep
+        // above cannot be read as covering it.
+        expectCanaryPresent(payload, canary, `observed ${position.name}`);
+      } else {
+        // A wrapped canary, and a serialize() result, are still replaced:
+        // stage 1 is not governed by the switch. The instance count under
+        // censor mode is what says which positions those are.
+        expectNoCanary(payload, canary, `observed ${position.name}`);
+      }
+
+      expectNoCanary(report, canary, `observed report at ${position.name}`);
+      expectNoCanary(
+        [...report.classes, ...(report.labels ?? []), ...report.deniedKeys, ...report.deniedValues],
+        canary,
+        `observed report lists at ${position.name}`
+      );
+    }
+  });
+});

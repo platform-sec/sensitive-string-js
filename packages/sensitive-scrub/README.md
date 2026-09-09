@@ -110,6 +110,7 @@ const policy = resolveScrubPolicy({
   denyValues: ['jwt', 'bearer'],
   censor: '[SCRUBBED]',
   onMarker: 'tag',
+  onMatch: 'censor',
   reportLabels: false,
   onScrub: (report) => metrics.increment('scrub', report.deniedKeys.length),
 });
@@ -204,6 +205,35 @@ normal application there are two of them. A label is a user-supplied string, it 
 and the secrets manager design already forbids a derived label from carrying an account, project or
 tenancy identifier. Sending labels to a third party by default would make this package the thing that
 punishes a label somebody chose before that rule existed.
+
+## Observing before censoring
+
+```typescript
+const policy = resolveScrubPolicy({
+  onMatch: 'observe',
+  onScrub: (report) => counts.record(report.kind, report.deniedKeys, report.deniedValues),
+});
+```
+
+`onMatch: 'observe'` is a measurement mode, not an operating mode. A denylist match is left in place
+and still reported, so the payload reaches the vendor as it did before this package was installed
+and the report says what would have been censored. The report is the same one `'censor'` produces
+for the same payload, asserted across every position in the canary sweep, and it still carries no
+value.
+
+It exists for the weeks before a denylist is trusted. An operator reads the denied key names and the
+matched shapes off the reports, adds the `allowKeys` entries their application needs, and flips the
+switch with a number in hand: this many events a week carried a credential-named key, this many a
+token-shaped value. That number is also the one that argues for the next stage of adoption, since the
+report counts the raw strings nobody wrapped, which is exactly what a wrapped value's own redaction
+never sees.
+
+It governs stage 2 only. A `SensitiveString` and a `serialize()` result are replaced under either
+setting, because stage 1 touches nothing the application did not classify itself, and a wrapped
+value renders its marker under every vendor's serializer regardless. On the failure path the vendor
+gets the payload it handed over rather than a stub, since a mode whose promise is to change nothing
+cannot replace an event; the report still says `failed`, which is where the operator learns the walk
+broke on a shape before `'censor'` would have broken it in the open. A misspelt mode censors.
 
 ## The marker rule, inverted
 

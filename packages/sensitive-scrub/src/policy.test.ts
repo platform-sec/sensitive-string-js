@@ -44,8 +44,14 @@ describe('resolveScrubPolicy', () => {
 
     expect(resolved.censor).toBe(DEFAULT_CENSOR);
     expect(resolved.onMarker).toBe('tag');
+    expect(resolved.onMatch).toBe('censor');
     expect(resolved.reportLabels).toBe(false);
     expect(resolved.onScrub).toBeUndefined();
+  });
+
+  it('resolves onMatch: observe when asked, and to censor otherwise', () => {
+    expect(resolveScrubPolicy({ onMatch: 'observe' }).onMatch).toBe('observe');
+    expect(resolveScrubPolicy({ onMatch: 'censor' }).onMatch).toBe('censor');
   });
 
   it('does not censor with the library marker, so a sighting stays distinguishable', () => {
@@ -133,6 +139,13 @@ describe('mergeScrubPolicy', () => {
     const merged = mergeScrubPolicy({ denyValues: ['jwt'] }, { denyValues: ['bearer', own] });
 
     expect(merged.denyValues).toEqual(['jwt', 'bearer', own]);
+  });
+
+  it('lets the caller win on onMatch, the vendor set it otherwise, and the default stay censor', () => {
+    expect(mergeScrubPolicy({ onMatch: 'observe' }).onMatch).toBe('observe');
+    expect(mergeScrubPolicy({ onMatch: 'observe' }, { onMatch: 'censor' }).onMatch).toBe('censor');
+    expect(mergeScrubPolicy({}, { onMatch: 'observe' }).onMatch).toBe('observe');
+    expect(mergeScrubPolicy({}).onMatch).toBe('censor');
   });
 
   it('lets the caller win on the single-valued fields', () => {

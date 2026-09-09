@@ -74,6 +74,7 @@ export function resolveScrubPolicy(policy: ScrubPolicy = {}): ResolvedScrubPolic
     denyValues: compileValues(policy),
     censor: policy.censor ?? DEFAULT_CENSOR,
     onMarker: policy.onMarker ?? 'tag',
+    onMatch: policy.onMatch ?? 'censor',
     reportLabels: policy.reportLabels ?? false,
     onScrub: policy.onScrub,
   };
@@ -106,6 +107,7 @@ export function mergeScrubPolicy(vendor: ScrubPolicy, caller: ScrubPolicy = {}):
     denyValues: [...(vendor.denyValues ?? []), ...(caller.denyValues ?? [])],
     censor: caller.censor ?? vendor.censor ?? DEFAULT_CENSOR,
     onMarker: caller.onMarker ?? vendor.onMarker ?? 'tag',
+    onMatch: caller.onMatch ?? vendor.onMatch ?? 'censor',
     reportLabels: caller.reportLabels ?? vendor.reportLabels ?? false,
   };
 

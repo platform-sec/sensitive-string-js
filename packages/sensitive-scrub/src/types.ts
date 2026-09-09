@@ -66,6 +66,18 @@ export interface ScrubPolicy {
   censor?: string;
   /** What to do on seeing a redaction marker in captured data. Default `'tag'`. */
   onMarker?: 'tag' | 'ignore';
+  /**
+   * What to do on a denylist match. Default `'censor'`.
+   *
+   * `'observe'` leaves every match in place and still reports it, so a
+   * payload goes to the vendor as it did before this package was installed
+   * and the report says what would have been censored. It is a measurement
+   * mode for the weeks before a denylist is trusted, not an operating mode,
+   * and it governs stage 2 only: a `SensitiveString` and a `serialize()`
+   * result are still replaced, because that stage touches nothing the
+   * application did not classify itself.
+   */
+  onMatch?: 'censor' | 'observe';
   /** Include the labels of wrapped values in the report. Default `false`. */
   reportLabels?: boolean;
   /** Called once per payload with counts and classes. Never receives a value. */
@@ -89,6 +101,7 @@ export interface ResolvedScrubPolicy {
   readonly denyValues: readonly CompiledValuePattern[];
   readonly censor: string;
   readonly onMarker: 'tag' | 'ignore';
+  readonly onMatch: 'censor' | 'observe';
   readonly reportLabels: boolean;
   readonly onScrub: ((report: ScrubReport) => void) | undefined;
 }
