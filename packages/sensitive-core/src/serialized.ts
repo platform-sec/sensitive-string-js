@@ -1,5 +1,6 @@
 import { getPolicy, hasPolicy } from './policy.js';
 import { probeProperty } from './probe.js';
+import { notifyRedaction, redactionObservers } from './redaction-observer.js';
 import type { SensitivityClass } from './types.js';
 
 /**
@@ -51,6 +52,18 @@ export function redactSerialized(value: object): string {
   }
 
   const raw = probeProperty(value, 'value');
+  const rendering = getPolicy(klass).redact(typeof raw === 'string' ? raw : '');
 
-  return getPolicy(klass).redact(typeof raw === 'string' ? raw : '');
+  // Only the walkers call this, so the surface is always 'structure'. The
+  // class is the registered one the shape named, which the early return above
+  // already refused to echo when it was not. The label is not passed: in a
+  // wire shape it is data, and an event carrying it would let whoever built
+  // the payload choose a metric dimension. A shape naming no registered class
+  // rendered the generic marker above and is not an event, since there is no
+  // class to report it under.
+  if (redactionObservers.observers.length !== 0) {
+    notifyRedaction(klass, undefined, 'structure');
+  }
+
+  return rendering;
 }

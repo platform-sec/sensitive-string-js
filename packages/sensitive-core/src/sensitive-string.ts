@@ -77,6 +77,11 @@ import {
   utf8CodeUnits,
 } from './sealing.js';
 import { ClearedSensitiveValueError, hygiene, trackInstance } from './hygiene.js';
+import {
+  notifyRedaction,
+  redactionObservers,
+  type RedactionSurface,
+} from './redaction-observer.js';
 
 /**
  * Node.js custom inspect symbol for util.inspect() and console.log().
@@ -365,6 +370,30 @@ export type UnshareableConstraints = (
  * @internal
  */
 export let unshareableConstraints: UnshareableConstraints;
+
+/**
+ * Package-internal rendering for the structure walkers.
+ *
+ * A walker that replaced a value with `String(value)` would report the
+ * rendering to an observer as a coercion, and a coercion is the one surface an
+ * observer cannot read as a prevented leak. This renders through the class's
+ * own path under the `'structure'` surface, and answers `undefined` where the
+ * receiver refuses: a Proxy around an instance answers `instanceof` through
+ * the prototype it forwards and then fails the brand check. It also means an
+ * own or subclass `toString` no longer decides what a walker writes. Published
+ * the way `deriveSensitiveString` is, absent from `index.ts` and unreachable
+ * through the package `exports` map.
+ *
+ * @internal
+ */
+export type RenderStructureRedaction = (value: object) => string | undefined;
+
+/**
+ * Assigned once, from the static block at the end of the class body.
+ *
+ * @internal
+ */
+export let renderStructureRedaction: RenderStructureRedaction;
 
 /**
  * Secure wrapper for sensitive string data.
@@ -1030,6 +1059,13 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     deriveSensitiveString = (value, klass, label, sources) =>
       SensitiveString.#derived(value, klass, label, sources);
     serializeSensitiveString = (value, ctx, details) => value.#serialize(ctx, details);
+    renderStructureRedaction = (value) => {
+      try {
+        return (value as SensitiveString<SensitivityClass>).#render('structure');
+      } catch {
+        return undefined;
+      }
+    };
     unshareableConstraints = (value) => {
       const names = [...unshareableBudgetOptions(value.#constrained)];
 
@@ -1064,17 +1100,40 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   }
 
   /**
-   * Returns the redacted form of this value.
-   * Safe for logging and display.
+   * The redaction, rendered, and reported to the observers as one rendering on
+   * the named surface.
+   *
+   * The one place a marker is produced for a caller, so `toString()`,
+   * `toJSON()`, the inspect hook and the structure walkers all count the same
+   * way and none of them can be observed differently from the others.
    */
-  toString(): string {
+  #render(surface: RedactionSurface): string {
     // An instance that destroyed its own value renders the snapshot `clear()`
     // took from it. One that only inherited a clear still holds its own copy
     // and redacts that live, which is why the `'safe'` path stays exempt from
     // the cleared check: logging a sensitive value must never throw, and an
     // error handler doing `logger.error({ err, token })` on a cleared token
     // would otherwise lose the diagnostic it was writing.
-    return this.#redaction ?? this.policy.redact(this.#readRawValue('safe'));
+    const rendering = this.#redaction ?? this.policy.redact(this.#readRawValue('safe'));
+
+    // After the rendering rather than before, so a policy whose `redact`
+    // throws reports nothing: nothing was written. One length read is the
+    // whole of what an unobserved process pays here, and the observers get
+    // the class, the label and the surface, never `rendering`, which under a
+    // deterministic policy is a pseudonym of the value.
+    if (redactionObservers.observers.length !== 0) {
+      notifyRedaction(this.klass, this.label, surface);
+    }
+
+    return rendering;
+  }
+
+  /**
+   * Returns the redacted form of this value.
+   * Safe for logging and display.
+   */
+  toString(): string {
+    return this.#render('toString');
   }
 
   /**
@@ -1082,7 +1141,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * Automatically called by JSON.stringify().
    */
   toJSON(): string {
-    return this.toString();
+    return this.#render('toJSON');
   }
 
   /**
@@ -1123,7 +1182,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     const exhausted = isBudgetExhausted(this.#constrained) ? ' EXHAUSTED' : '';
     return (
       `SensitiveString<${klassLabel}> ` +
-      `{ ${this.toString()}${cleared}${revoked}${expired}${exhausted} }`
+      `{ ${this.#render('inspect')}${cleared}${revoked}${expired}${exhausted} }`
     );
   }
 

@@ -1,5 +1,5 @@
-import { SensitiveString } from './sensitive-string.js';
-import { UNREADABLE, probeEntries, probePrototype, probeProperty, probeString } from './probe.js';
+import { SensitiveString, renderStructureRedaction } from './sensitive-string.js';
+import { UNREADABLE, probeEntries, probePrototype, probeProperty } from './probe.js';
 import { carriesSerializedMarker, redactSerialized } from './serialized.js';
 import { assignOwn } from './own-property.js';
 
@@ -81,12 +81,14 @@ function copyRedacted(value: unknown, copies: WeakMap<object, unknown>): unknown
     return UNREADABLE;
   }
 
-  // An instance redacts itself. Guarded, because a Proxy around one answers
-  // `instanceof` through the prototype it forwards and then throws from
-  // `toString()`: the brand check refuses the proxy as a receiver. The marker
-  // loses nothing, since the redaction is the whole of what the copy keeps.
+  // An instance redacts itself, through the class's own rendering so an
+  // observer sees it under the 'structure' surface rather than as a coercion.
+  // Guarded inside the binding, because a Proxy around one answers
+  // `instanceof` through the prototype it forwards and then fails the brand
+  // check. The marker loses nothing, since the redaction is the whole of what
+  // the copy keeps.
   if (value instanceof SensitiveString) {
-    return probeString(value) ?? UNREADABLE;
+    return renderStructureRedaction(value) ?? UNREADABLE;
   }
 
   if (carriesSerializedMarker(value)) {

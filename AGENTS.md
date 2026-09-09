@@ -296,7 +296,7 @@ Write strict ES2022 TypeScript using NodeNext modules. Prettier enforces two-spa
 
 ## Testing & Security Guidelines
 
-Use Vitest `describe`/`it` blocks and name files `*.test.ts`. New behavior requires positive, edge-case, and adversarial coverage; maintain the documented target above 90%. Sensitive-value tests must use a conspicuous `CANARY` value and assert that logs, errors, inspection, and serialization do not contain it. Preserve ES `#private` fields and default redaction. Treat changes to reveal, serialization, policies, comparison, or context propagation as security-impacting.
+Use Vitest `describe`/`it` blocks and name files `*.test.ts`. New behavior requires positive, edge-case, and adversarial coverage; maintain the documented target above 90%. Sensitive-value tests must use a conspicuous `CANARY` value and assert that logs, errors, inspection, and serialization do not contain it. Preserve ES `#private` fields and default redaction. Treat changes to reveal, serialization, redaction rendering and its observers, policies, comparison, or context propagation as security-impacting.
 
 ## Commits & Pull Requests
 

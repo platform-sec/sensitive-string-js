@@ -1,4 +1,4 @@
-import { SensitiveString } from './sensitive-string.js';
+import { SensitiveString, renderStructureRedaction } from './sensitive-string.js';
 import type { SensitivityClass } from './types.js';
 import { carriesSerializedMarker, redactSerialized, serializedClass } from './serialized.js';
 import { assignOwn } from './own-property.js';
@@ -138,13 +138,14 @@ function redactWalk(obj: unknown, seen: WeakSet<object>): unknown {
     return UNREADABLE;
   }
 
-  // A SensitiveString redacts itself. Guarded, because a Proxy around an
-  // instance answers `instanceof` through the prototype it forwards and then
-  // throws from `toString()`: the private field is on the target, and the
-  // brand check refuses the proxy as a receiver. The marker loses nothing,
-  // since the redaction is the whole of what the walk keeps.
+  // A SensitiveString redacts itself, through the class's own rendering so an
+  // observer sees it under the 'structure' surface rather than as a coercion.
+  // Guarded inside the binding, because a Proxy around an instance answers
+  // `instanceof` through the prototype it forwards and then fails the brand
+  // check: the private field is on the target, not the proxy. The marker
+  // loses nothing, since the redaction is the whole of what the walk keeps.
   if (obj instanceof SensitiveString) {
-    return probeString(obj) ?? UNREADABLE;
+    return renderStructureRedaction(obj) ?? UNREADABLE;
   }
 
   // A serialize() result carries the raw value by design, and it is a plain

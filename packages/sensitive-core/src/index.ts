@@ -191,6 +191,14 @@ export type {
   RevealLogOptions,
 } from './dev-mode.js';
 
+// Redaction observers. A reveal is audited; a redaction was not recorded
+// anywhere, and it is the number that says what the library prevented: every
+// rendering of a marker is a place a plain string would have been written.
+// The event carries the class, the label and the surface, never the value or
+// its rendering, and an unobserved process pays one length read per rendering.
+export { observeRedactions } from './redaction-observer.js';
+export type { RedactionEvent, RedactionObserver, RedactionSurface } from './redaction-observer.js';
+
 // Anchored patterns for common sensitive-value formats
 export { patterns } from './patterns.js';
 

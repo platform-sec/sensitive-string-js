@@ -16,6 +16,7 @@ import { inspect } from 'node:util';
 import { bench, describe } from 'vitest';
 
 import { SensitiveString } from '../sensitive-string.js';
+import { observeRedactions } from '../redaction-observer.js';
 import { benchFloor, consume, LENGTHS, TOKEN, valueOfLength } from './fixtures.js';
 
 const credential = new SensitiveString(TOKEN, 'credential', 'access_token');
@@ -127,3 +128,64 @@ describe('redaction against the raw equivalents', () => {
 });
 
 benchFloor();
+
+/**
+ * What a redaction observer costs, off and on.
+ *
+ * The control is the production case for a process that never subscribes: one
+ * array-length read per rendering, which this harness cannot separate from
+ * the unguarded rendering because its floor exceeds the read. The isolated
+ * figure was taken the other way, two copies of `dist` in a tight loop, and is
+ * in the changeset. The observed tasks price what a process running a metrics
+ * exporter pays per rendering: one frozen event and one call per observer,
+ * plus whatever the observer does with it. Read the gap between the no-op
+ * observer and the counting one as the exporter's own cost, not the library's.
+ *
+ * `setup` and `teardown` rather than `beforeAll`, for the reason
+ * `dev-mode.bench.ts` gives: Vitest hands the third argument to the `Bench`
+ * and silently ignores task-level hooks placed anywhere else.
+ */
+describe('redaction observed', () => {
+  let stop: (() => void) | undefined;
+  const counts = new Map<string, number>();
+
+  bench('no observer (control)', () => {
+    consume(credential.toString());
+  });
+
+  bench(
+    'one no-op observer',
+    () => {
+      consume(credential.toString());
+    },
+    {
+      setup: () => {
+        stop = observeRedactions(() => undefined);
+      },
+      teardown: () => {
+        stop?.();
+        stop = undefined;
+      },
+    }
+  );
+
+  bench(
+    'one counting observer, keyed by class, label and surface',
+    () => {
+      consume(credential.toString());
+    },
+    {
+      setup: () => {
+        counts.clear();
+        stop = observeRedactions(({ klass, label, surface }) => {
+          const key = `${klass}:${label ?? ''}:${surface}`;
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+        });
+      },
+      teardown: () => {
+        stop?.();
+        stop = undefined;
+      },
+    }
+  );
+});

@@ -169,6 +169,9 @@ console.log(secret)         // SensitiveString<credential:api_key> { [REDACTED:c
 `Value: ${secret}`          // "Value: [REDACTED:credential]"
 ```
 
+Every one of these renderings can be counted, by class, label and surface and never by value: see
+[Redaction Observers](#redaction-observers).
+
 ### Objects that refuse to answer
 
 A redaction walk has to ask an arbitrary object a series of questions, and every
@@ -1491,6 +1494,60 @@ withDevMode({ enabled: true, logReveals: { enabled: true, logger } }, () => {
   secret.reveal();
 });
 ```
+
+### Redaction Observers
+
+```typescript
+const stop = observeRedactions(({ klass, label, surface }) => {
+  redactions.inc({ klass, label: label ?? '', surface });
+});
+
+// later, or never
+stop();
+```
+
+A reveal is audited. A redaction was not recorded anywhere, and it is the number that says what the
+library prevented: every rendering of a marker is a place a plain string would have been written.
+`observeRedactions` subscribes a function to every one of them in the process and returns the
+function that unsubscribes.
+
+The event is `{ klass, label, surface }`, frozen. It never carries the value, and it never carries
+the rendering either: under a deterministic-redaction policy the marker is a pseudonym of the value,
+and a metric dimension is the wrong place for one.
+
+| Surface | What rendered | How to read a count |
+|---|---|---|
+| `toString` | a coercion: a template literal, concatenation, `String()` | ambiguous. A prevented log line, or an outbound request that carried the marker, which is the shape the HTTP wrappers exist to refuse. Meaningful once they are installed |
+| `toJSON` | `JSON.stringify()`, or a serializer honouring `toJSON()` | a JSON logger and a JSON request body both arrive here |
+| `inspect` | `util.inspect()`, `console.log()` | a log line |
+| `structure` | a walker: `redactInStructure`, `redactCopy`, `safeStringify`, `safeLog`, the winston format, the pino serializer | a sink that installed redaction caught a value. The one surface with no second reading |
+
+A `serialize()` result a walker replaced reports under `structure` with no label: in a wire shape
+the label is data, and an event carrying it would let whoever built the payload choose a metric
+dimension. A shape naming no registered class renders the generic marker and is not an event.
+
+Three things an observer cannot do. It cannot change a rendering: its return value is not read,
+the event it receives is frozen, and one that throws is warned about once through
+`process.emitWarning` and swallowed after that, because a redaction is a log line. It is not called
+for its own redactions, so a dashboard that logs a wrapped value inside its observer does not
+recurse. And it cannot see the notification it subscribed during: the list is replaced rather than
+mutated, so a notification in flight sees the list it started with.
+
+The registry is process-global, like development mode and memory hygiene, and keyed on
+`Symbol.for()` so a second installed copy of core shares it. Any code in the process can subscribe
+or unsubscribe. This protects a dashboard against a missing subscription and not a secret against a
+hostile caller, since no event ever carried one.
+
+An unobserved process pays one array-length read per rendering. Measured on Node 22.15.0 in a tight
+loop over two copies of the build, one with the read removed, the difference was inside the
+run-to-run spread: at most 1.5 ns on a rendering of 17 to 26 ns. The observed path adds one frozen
+object and one call per observer.
+
+Two cautions for the dashboard this is built for. A count is not coverage: it says how often
+wrapped values reached a serializer, and nothing about the raw strings nobody wrapped, which the
+walkers never see. Put `checkSensitiveFieldsWrapped` beside it or the number flatters. And
+`toString` is the surface where adoption can break a working call, so a spike there after a new
+field is wrapped is a 401 to investigate before it is a leak to celebrate.
 
 ### Deterministic Redaction
 
