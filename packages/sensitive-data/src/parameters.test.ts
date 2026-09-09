@@ -1,5 +1,6 @@
-import { SensitiveString } from '@platform-sec/sensitive-string-core';
+import { SensitiveString, containsRedactionMarker } from '@platform-sec/sensitive-string-core';
 import { describe, expect, it } from 'vitest';
+import type { Offence } from './parameters.js';
 import { findUnsafeParameter, parameterEntries, redactParameters } from './parameters.js';
 
 const CANARY = 'LEAKED_SECRET_abc123xyz';
@@ -73,6 +74,121 @@ describe('findUnsafeParameter', () => {
   it('names no value in what it reports', () => {
     const found = findUnsafeParameter([instance(), marker()]);
     expect(JSON.stringify(found)).not.toContain(CANARY);
+  });
+});
+
+describe('findUnsafeParameter and parameterEntries agree', () => {
+  /**
+   * The walk used to be built on `parameterEntries` and is now its own, because
+   * building an entry array per statement was most of what it cost. Nothing in
+   * the types holds the two together any more, so this does: the reference below
+   * is the previous implementation, and it has to reach the same verdict and the
+   * same path on every shape either of them claims to read.
+   */
+  const reference = (params: unknown): Offence | undefined => {
+    const isWalkable = (value: object): boolean => {
+      if (Array.isArray(value)) return true;
+      const proto: unknown = Object.getPrototypeOf(value);
+      return proto === Object.prototype || proto === null;
+    };
+
+    const findOffender = (
+      value: unknown,
+      path: string,
+      seen: WeakSet<object>
+    ): Offence | undefined => {
+      if (value instanceof SensitiveString) return { path, kind: 'instance' };
+      if (typeof value === 'string') {
+        return containsRedactionMarker(value) ? { path, kind: 'marker' } : undefined;
+      }
+      if (typeof value !== 'object' || value === null) return undefined;
+      if (seen.has(value)) return undefined;
+      if (!isWalkable(value)) return undefined;
+
+      seen.add(value);
+
+      if (Array.isArray(value)) {
+        for (const [index, item] of value.entries()) {
+          const found = findOffender(item, `${path}[${String(index)}]`, seen);
+          if (found !== undefined) return found;
+        }
+        return undefined;
+      }
+
+      for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+        const found = findOffender(item, `${path}.${key}`, seen);
+        if (found !== undefined) return found;
+      }
+      return undefined;
+    };
+
+    for (const [path, value] of parameterEntries(params)) {
+      const found = findOffender(value, path, new WeakSet<object>());
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  };
+
+  /** Every bag shape either walker claims to read, clean and then poisoned. */
+  const shapes = (poison: () => unknown): unknown[] => {
+    class Params {
+      id = 1;
+      token: unknown = poison();
+    }
+
+    const cyclic: Record<string, unknown> = { id: 1, token: poison() };
+    cyclic['self'] = cyclic;
+
+    // An array that contains itself, which is a different guard from the object
+    // cycle above: without it this walk does not terminate.
+    const arrayCycle: unknown[] = [1];
+    arrayCycle.push(arrayCycle, poison());
+
+    const mutualA: Record<string, unknown> = { id: 1 };
+    const mutualB: unknown[] = [mutualA, poison()];
+    mutualA['back'] = mutualB;
+
+    return [
+      [],
+      {},
+      [1, 'plain', null, undefined, poison()],
+      [poison(), 'plain'],
+      { id: 7, name: 'plain', e: poison() },
+      new Map<string, unknown>([
+        ['id', 1],
+        ['token', poison()],
+      ]),
+      new Params(),
+      [{ filters: [1, poison()] }],
+      [{ a: { b: { c: [poison()] } } }],
+      // An array whose offence is inside a container, so the array segment is
+      // added while unwinding rather than at the point of the find. Without
+      // one of these the unwind is never exercised and can be deleted whole.
+      [[{ token: poison() }]],
+      [{ filters: [[poison()]] }],
+      [[[{ deep: { token: poison() } }]]],
+      { rows: [{ cols: [{ v: poison() }] }] },
+      [cyclic],
+      [arrayCycle],
+      arrayCycle,
+      [mutualA],
+      mutualB,
+      [Buffer.from('x'), new Date(), 42n, poison()],
+      'scalar',
+      null,
+      undefined,
+      42,
+    ];
+  };
+
+  it('reaches the same verdict and the same path on every shape', () => {
+    const poisons: (() => unknown)[] = [() => 1, () => instance(), () => marker()];
+
+    for (const poison of poisons) {
+      for (const bag of shapes(poison)) {
+        expect(findUnsafeParameter(bag)).toEqual(reference(bag));
+      }
+    }
   });
 });
 

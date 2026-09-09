@@ -76,6 +76,12 @@ describe('markerMatchers', () => {
 });
 
 describe('assertNoMarker', () => {
+  // One test in here registers a custom redaction, and the matchers are
+  // memoized on the registry version, so the reset has to be per test.
+  afterEach(() => {
+    resetPolicies();
+  });
+
   it('passes clean bytes', () => {
     expect(() => assertNoMarker('{"token":"sk_live_real"}', 'request body')).not.toThrow();
   });
@@ -102,6 +108,76 @@ describe('assertNoMarker', () => {
 
   it('treats an undecodable body as itself rather than throwing URIError', () => {
     expect(() => assertNoMarker('%%%not-encoding%%%', 'request body')).not.toThrow();
+  });
+
+  /**
+   * The decoded scan is skipped when the body holds neither `%` nor `+`, on the
+   * argument that `percentDecoded` is the identity there. These two pin the
+   * argument rather than the optimisation: the first is the case that makes the
+   * `+` half of the check load-bearing, and the second compares every answer
+   * against an implementation that always decodes.
+   */
+  it('finds a marker that only a + decodes into place, with no percent-escape anywhere', () => {
+    // A custom redaction is allowed to contain a space, and a form encoder puts
+    // that space on the wire as `+`. So this body carries the marker in an
+    // encoding that a check for `%` alone would skip and never look at.
+    registerPolicy(
+      { name: 'credential', redact: () => 'GONE FROM HERE', requireConstantTimeEquals: true },
+      { overwrite: true }
+    );
+
+    const wire = 'token=GONE+FROM+HERE';
+
+    expect(wire.includes('%')).toBe(false);
+    expect(wire.includes('GONE FROM HERE')).toBe(false);
+    expect(() => assertNoMarker(wire, 'form body')).toThrow(/percent encoding/);
+  });
+
+  it('answers exactly as an implementation that decodes unconditionally', () => {
+    const always = (wire: string): boolean => {
+      if (wire === '') return false;
+
+      const matchers = markerMatchers();
+      const hit = (text: string): boolean =>
+        matchers.some((m) => (typeof m === 'string' ? text.includes(m) : text.search(m) !== -1));
+
+      if (hit(wire)) return true;
+
+      let decoded: string;
+      try {
+        decoded = decodeURIComponent(wire.replace(/\+/g, ' '));
+      } catch {
+        decoded = wire;
+      }
+
+      return decoded !== wire && hit(decoded);
+    };
+
+    const corpus = [
+      '',
+      'plain body with no punctuation at all',
+      '{"token":"sk_live_real","n":42}',
+      '[REDACTED:credential]',
+      'token=%5BREDACTED%3Acredential%5D',
+      '?token=%5BREDACTED:credential%5D',
+      'a+b+c',
+      'a%20b',
+      '100%',
+      '%',
+      '+',
+      '%%%not-encoding%%%',
+      '%E0%A4%A',
+      'name=a+b&token=%5BREDACTED%3Asensitive%5D',
+      '[REDACTED:',
+      'REDACTED',
+      'x'.repeat(2048),
+      `${'x'.repeat(2048)}[REDACTED:credential]`,
+      `${'x'.repeat(2048)}%5BREDACTED%3Acredential%5D`,
+    ];
+
+    for (const wire of corpus) {
+      expect([wire, containsMarker(wire)]).toEqual([wire, always(wire)]);
+    }
   });
 
   it('leaves base64 alone by default and finds it when asked', () => {

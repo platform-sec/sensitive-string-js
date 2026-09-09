@@ -101,6 +101,39 @@ function percentDecoded(wire: string): string {
 }
 
 /**
+ * Whether {@link percentDecoded} could return anything but its argument.
+ *
+ * It cannot, on a string holding neither `%` nor `+`: `replace(/\+/g, ' ')` has
+ * nothing to replace, and `decodeURIComponent` changes only percent-escapes. So
+ * when this returns false the decoded scan is provably dead, and the two full
+ * copies of the body it would allocate to reach that conclusion are waste.
+ *
+ * They are also the dominant cost of the guard on an ordinary body. JSON
+ * carries neither character, so the scan below used to build two copies of
+ * every request and search a string identical to the one already searched.
+ * Measured on Node 22.15.0, `assertNoMarker` over a marker-free JSON body,
+ * median of seven rounds with each size in its own process:
+ *
+ * | body | decoding unconditionally | with this check |
+ * |---|---|---|
+ * | 1 KB | 2.6 us | 105 ns |
+ * | 16 KB | 34.9 us | 613 ns |
+ * | 128 KB | 366 us | 5.9 us |
+ *
+ * Separate processes because it matters: run back to back in one, the 1 KB
+ * figure reads about fifteen times worse than it is, since it shares a call
+ * site and a heap with the 128 KB case.
+ *
+ * `+` is checked as well as `%` because the space it decodes to can complete a
+ * marker with no percent-escape anywhere in the string: a policy whose class or
+ * label contains a space renders as `[REDACTED:my class]`, which a form encoder
+ * puts on the wire as `[REDACTED:my+class]`.
+ */
+function needsPercentDecoding(wire: string): boolean {
+  return wire.includes('%') || wire.includes('+');
+}
+
+/**
  * Throw if `wire` carries a redaction marker in any scanned encoding.
  *
  * @param wire - The outgoing representation, as this package produced it.
@@ -127,7 +160,10 @@ export function assertNoMarker(wire: string, where: string, options?: MarkerScan
     throw new MarkerLeakError(where, 'literal');
   }
 
-  if (options?.decodeForms !== false) {
+  // Skipped rather than performed and discarded when the decode cannot change
+  // the string, which is the common case and the expensive one: see
+  // `needsPercentDecoding`.
+  if (options?.decodeForms !== false && needsPercentDecoding(wire)) {
     const decoded = percentDecoded(wire);
 
     if (decoded !== wire && findLiteral(decoded, matchers)) {
