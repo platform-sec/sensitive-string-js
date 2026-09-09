@@ -1,0 +1,46 @@
+{
+  "name": "@platform-sec/sensitive-string-metrics",
+  "version": "0.1.0",
+  "description": "Aggregated metrics for sensitive data handling - redactions prevented, reveals audited, refusals raised, with Prometheus and StatsD exporters",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run --root ../.. packages/sensitive-metrics/",
+    "test:watch": "vitest --root ../.. packages/sensitive-metrics/"
+  },
+  "keywords": [
+    "security",
+    "sensitive-data",
+    "redaction",
+    "metrics",
+    "prometheus",
+    "statsd",
+    "observability",
+    "typescript"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "peerDependencies": {
+    "@platform-sec/sensitive-string-core": "^0.5.0"
+  },
+  "devDependencies": {
+    "@platform-sec/sensitive-string-core": "workspace:*",
+    "@platform-sec/sensitive-string-testing": "workspace:*",
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

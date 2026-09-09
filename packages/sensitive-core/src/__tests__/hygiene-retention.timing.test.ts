@@ -30,7 +30,7 @@ import {
   SensitiveString,
   setMemoryHygiene,
 } from '../index.js';
-import { trackedRefCount } from '../hygiene.js';
+import { trackedInstanceCount } from '../hygiene.js';
 
 const HAS_GC = typeof global.gc === 'function';
 
@@ -247,14 +247,14 @@ describe.skipIf(!HAS_GC)('what tracking does to the collector', () => {
       }
     })();
 
-    expect(trackedRefCount()).toBe(500);
+    expect(trackedInstanceCount()).toBe(500);
 
     await collectAcrossTurns(6);
 
     // Asserted as "it shrinks", not as "it empties". The callbacks run on the
     // collector's schedule across turns, so a exact figure here would be a
     // promise the runtime does not make.
-    expect(trackedRefCount()).toBeLessThan(500);
+    expect(trackedInstanceCount()).toBeLessThan(500);
   });
 
   it('does not double-count an instance a sweep already cleared', async () => {

@@ -24,7 +24,7 @@ import {
   withRevealContext,
 } from './index.js';
 import type { RevealDetails } from './index.js';
-import { trackedRefCount } from './hygiene.js';
+import { trackedInstanceCount } from './hygiene.js';
 
 const VALUE = 'a-value-worth-destroying';
 const MINUTE = 60_000;
@@ -516,9 +516,9 @@ describe('memory hygiene', () => {
         new SensitiveString(VALUE, 'sensitive', 'b'),
       ];
 
-      expect(trackedRefCount()).toBe(2);
+      expect(trackedInstanceCount()).toBe(2);
       expect(clearAllSensitiveValues()).toBe(2);
-      expect(trackedRefCount()).toBe(0);
+      expect(trackedInstanceCount()).toBe(0);
       expect(held.every((value) => value.isCleared)).toBe(true);
     });
   });
@@ -548,12 +548,12 @@ describe('memory hygiene', () => {
       setMemoryHygiene({ freezeInstances: true, trackInstances: true });
       const token = new SensitiveString(VALUE, 'sensitive', 'token');
 
-      expect(trackedRefCount()).toBe(1);
+      expect(trackedInstanceCount()).toBe(1);
 
       resetMemoryHygiene();
 
       expect(getMemoryHygiene()).toEqual({ freezeInstances: false, trackInstances: false });
-      expect(trackedRefCount()).toBe(0);
+      expect(trackedInstanceCount()).toBe(0);
       // Forgetting is not destroying.
       expect(token.isCleared).toBe(false);
     });

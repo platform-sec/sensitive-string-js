@@ -70,6 +70,9 @@ pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-http
          @platform-sec/sensitive-string-axios axios
 # ...or -got, -ky, -fetch, -undici
 
+# Metrics: redactions prevented, reveals audited, Prometheus and StatsD exporters
+pnpm add @platform-sec/sensitive-string-core @platform-sec/sensitive-string-metrics
+
 # Test utilities: canaries, leak assertions, matchers, audit mocks
 pnpm add -D @platform-sec/sensitive-string-testing
 
@@ -1368,6 +1371,14 @@ Both switches and the tracked set are per isolate, like every other process-glob
 thread has its own, and `clearAllSensitiveValues()` on the main thread does not reach a worker's
 values.
 
+`trackedInstanceCount()` reports the set's size, which is what
+`@platform-sec/sensitive-string-metrics` publishes as `sensitive_values_tracked`. Read it as a
+ceiling rather than a count: the set is pruned by a `FinalizationRegistry`, which needs at least two
+GC cycles and two macrotask turns, so a value that became garbage a moment ago is still in the number
+and there is no bound on how long it stays. There is deliberately no per-class breakdown, because
+splitting the set by class means calling `deref()` on every entry, and a `deref()` that returns an
+instance keeps it alive to the end of the current job.
+
 What none of this does: it does not zero anything, does not reach values your own code still
 references, does not touch memory outside the V8 heap (a secret read from `process.env` stays in the
 native environment block for the life of the process, where a core dump still finds it), and does
@@ -1548,6 +1559,11 @@ wrapped values reached a serializer, and nothing about the raw strings nobody wr
 walkers never see. Put `checkSensitiveFieldsWrapped` beside it or the number flatters. And
 `toString` is the surface where adoption can break a working call, so a spike there after a new
 field is wrapped is a 401 to investigate before it is a leak to celebrate.
+
+`@platform-sec/sensitive-string-metrics` is the collector this was built for: it subscribes here,
+publishes `sensitive_redactions_total{class, label, surface}`, and exports over Prometheus or StatsD
+with no third-party dependency. Nothing about the observer is specific to it, and two subscribers
+in one process are two independent sets of numbers.
 
 ### Deterministic Redaction
 

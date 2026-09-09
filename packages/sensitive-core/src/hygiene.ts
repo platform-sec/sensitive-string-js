@@ -327,12 +327,25 @@ export function resetMemoryHygiene(): void {
 /**
  * How many refs the tracked set currently holds.
  *
- * Not a census of live values, and deliberately absent from `index.ts`: it
- * lags collection by at least two GC cycles and two macrotask turns, so the
- * only honest reader of it is the suite that measures that lag.
+ * Not a census of live values, and read it as a ceiling rather than a count.
+ * It is `0` in any process that never turned `trackInstances` on, since
+ * nothing is tracked there. Where tracking is on it counts every instance
+ * built since, minus the ones a `FinalizationRegistry` has already pruned, and
+ * that pruning needs at least two GC cycles and two macrotask turns, so a value
+ * that became garbage a moment ago is still in this number and there is no
+ * bound on how long it stays.
  *
- * @internal
+ * Exported because a gauge is the one reader that wants it besides the suite
+ * measuring that lag: `@platform-sec/sensitive-string-metrics` publishes it as
+ * `sensitive_values_tracked`, under that name rather than an `active` one
+ * precisely because the lag makes "active" a claim this number cannot support.
+ *
+ * There is deliberately no per-class breakdown. Splitting the set by class
+ * means calling `deref()` on every entry, and a `deref()` that returns an
+ * instance keeps that instance alive to the end of the current job, so a
+ * gauge scraped every fifteen seconds would extend the life of everything it
+ * measured.
  */
-export function trackedRefCount(): number {
+export function trackedInstanceCount(): number {
   return hygiene.tracked.size;
 }

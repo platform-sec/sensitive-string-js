@@ -160,6 +160,7 @@ export {
   setMemoryHygiene,
   getMemoryHygiene,
   resetMemoryHygiene,
+  trackedInstanceCount,
   ClearedSensitiveValueError,
 } from './hygiene.js';
 export type { MemoryHygieneConfig } from './hygiene.js';
