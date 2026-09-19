@@ -1878,6 +1878,26 @@ containsSensitive(obj: unknown): boolean;
 // Collect the sensitivity classes present in a structure
 sensitiveClassesIn(obj: unknown): Set<SensitivityClass>;
 
+// Bulk wrapping. By path when the payload's shape is known; by classification
+// when its keys are not yours to enumerate, where a `fallback` wraps the key
+// nobody named instead of missing it. Both deep-clone, and both wrap every
+// string element of an array, the path form at a declared path and the
+// classification form wherever the spec reaches; an object or a number at a
+// declared path is left alone and reported by validateSensitiveFieldConfig.
+wrapSensitiveByPath<T>(obj: T, config: SensitiveFieldConfig): T;
+unwrapSensitiveByPath<T>(obj: T, config: SensitiveFieldConfig, ctx?: RevealContext): T;
+validateSensitiveFieldConfig(sample: unknown, config: SensitiveFieldConfig):
+  { valid: boolean; missingPaths: string[]; unwrappablePaths: string[] };
+checkSensitiveFieldsWrapped(obj: unknown, config: SensitiveFieldConfig):
+  { allWrapped: boolean; unwrappedPaths: string[] };
+wrapSensitiveByClassification<T>(
+  obj: T,
+  spec: ClassificationSpec,
+  options?: { label?: string | ((path: string, key: string) => string | undefined); options?: SensitiveStringOptions }
+): T;
+checkClassifiedFieldsWrapped(obj: unknown, spec: ClassificationSpec):
+  { allWrapped: boolean; unwrappedPaths: string[] };
+
 // The marker a walk substitutes for an object it could not read at all
 UNREADABLE: '[Unreadable]';
 

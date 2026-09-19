@@ -301,11 +301,19 @@ export type {
   CompiledClassification,
 } from './classification.js';
 
-// Path-based wrapping utilities
+// Bulk wrapping: by an enumerated path list when the payload's shape is known,
+// and by classification when its keys are not the caller's to enumerate
 export {
   wrapSensitiveByPath,
   unwrapSensitiveByPath,
   validateSensitiveFieldConfig,
   checkSensitiveFieldsWrapped,
+  wrapSensitiveByClassification,
+  checkClassifiedFieldsWrapped,
 } from './wrap.js';
-export type { SensitiveFieldConfig, SensitiveFieldOptions, WrappedResult } from './wrap.js';
+export type {
+  SensitiveFieldConfig,
+  SensitiveFieldOptions,
+  WrappedResult,
+  ClassifiedWrapOptions,
+} from './wrap.js';

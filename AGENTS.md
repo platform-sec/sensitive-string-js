@@ -5,6 +5,13 @@
 This is a pnpm workspace for Node.js 22.12+ and TypeScript. Packages live under `packages/`:
 
 - `packages/sensitive-core/src/` contains the redaction, policy, context, and wrapping APIs.
+  `destination.ts` is the recipient half of the raw-value gate: a value constructed with
+  `destinations` is revealed only under a context whose `tags.sink` and `tags.host` name a sink or
+  host it allows, and the integrations that reveal toward a socket or a driver already write those
+  tags, so a new one must write them from the real destination or every bound value refuses it.
+  `wrap.ts` holds two bulk entries and they answer different payloads: `wrapSensitiveByPath` for a
+  shape the caller knows, `wrapSensitiveByClassification` for a bag whose keys the caller does not
+  choose, where a `fallback` wraps the key nobody named instead of missing it.
   `probe.ts` holds the guarded reads every walk uses against objects it did not create: an arbitrary
   object controls the tag read, the prototype read, `has`, `toJSON`, `ownKeys`,
   `getOwnPropertyDescriptor`, every enumerable getter, `toString`, and behind a Proxy the iteration

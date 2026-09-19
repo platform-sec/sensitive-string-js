@@ -153,14 +153,60 @@ test('sensitive field config matches payload structure', () => {
 
 `missingPaths` catches a typo. `unwrappablePaths` catches the case that used to
 pass silently: a path that exists and holds something `wrapSensitiveByPath` will
-not wrap, because it wraps only where a string stands. Declaring
-`'db.replicaUrls': 'credential'` over an array of connection strings wraps
-nothing, and before this check both this function and `checkSensitiveFieldsWrapped`
-reported success. Assert on both lists, or assert on `valid`, which now covers
-them.
+not wrap, an object, a number, or an array with either in it. Declaring
+`'db.replicaUrls': 'credential'` over an array of connection strings used to
+wrap nothing while both this function and `checkSensitiveFieldsWrapped` reported
+success; the helper now wraps every string element of an array at a declared
+path, through nested arrays, and the two report functions answer for what is in
+the array. Assert on both lists, or assert on `valid`, which covers them.
 
 Configuration values may use the short class form or `{ klass, label }`. Labels
 appear in inspection and audit metadata without exposing the protected value.
+
+### Wrapping a Bag Whose Keys You Do Not Choose
+
+A path list is the right entry when the payload's shape is known. It is the
+wrong one for a header bag, a `.env` file, the return value of a plugin loaded
+at run time, or a provider credential object whose keys are data: a path list
+over such a bag is a denylist turned inside out, and the key nobody named
+arrives unwrapped, silently. `wrapSensitiveByClassification` inverts the
+default. Its spec is the classification spec the secrets and env layers use,
+`fields`, then `rules` in order, then `fallback`, and a `fallback` means every
+string leaf the spec does not call `'plain'` is wrapped:
+
+```typescript
+import { wrapSensitiveByClassification, checkClassifiedFieldsWrapped } from '@platform-sec/sensitive-string-core';
+
+// Keep two headers readable, wrap every other one, named or not.
+const headers = wrapSensitiveByClassification(req.headers, {
+  fields: { referer: 'plain', host: 'plain' },
+  fallback: 'sensitive',
+});
+
+// Everything a plugin hands back is a credential.
+const creds = wrapSensitiveByClassification(await plugin.getCredentials(), {
+  fallback: 'credential',
+});
+
+// Sixty provider shapes, one rule set: classify by key name.
+const provider = wrapSensitiveByClassification(config, {
+  rules: [{ pattern: /secret|token|password|key$/i, klass: 'credential' }],
+});
+```
+
+Strings only are wrapped; a number, a boolean and `null` keep their type, so
+`config.port === 5432` keeps working. Every element of an array of strings is
+wrapped under the array's own name, as the path helper does at a declared path.
+A value that is already wrapped is kept. `label` may be a string or a function of
+the leaf's dot path and key, and `options` are the construction options for
+every wrapped leaf. Reveal on the way out with `unwrapSensitiveByPath` and the
+list of paths that may leave, which is the allowlist this entry pairs with.
+
+`checkClassifiedFieldsWrapped(obj, spec)` walks the object and asks the spec,
+which is the direction `checkSensitiveFieldsWrapped` cannot look in: that one
+walks the config and asks the object, so a key the object carries and the
+config never named is invisible to it. Use it in a test over a sample payload,
+or as a guard before the object is logged or sent.
 
 ## Process-global state
 
