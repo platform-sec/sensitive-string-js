@@ -147,8 +147,17 @@ test('sensitive field config matches payload structure', () => {
   
   expect(result.valid).toBe(true);
   expect(result.missingPaths).toEqual([]);
+  expect(result.unwrappablePaths).toEqual([]);
 });
 ```
+
+`missingPaths` catches a typo. `unwrappablePaths` catches the case that used to
+pass silently: a path that exists and holds something `wrapSensitiveByPath` will
+not wrap, because it wraps only where a string stands. Declaring
+`'db.replicaUrls': 'credential'` over an array of connection strings wraps
+nothing, and before this check both this function and `checkSensitiveFieldsWrapped`
+reported success. Assert on both lists, or assert on `valid`, which now covers
+them.
 
 Configuration values may use the short class form or `{ klass, label }`. Labels
 appear in inspection and audit metadata without exposing the protected value.

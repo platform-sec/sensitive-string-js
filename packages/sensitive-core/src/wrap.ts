@@ -252,9 +252,16 @@ export function unwrapSensitiveByPath<T extends object>(
  * Validate that all paths in a config exist in a sample object.
  * Useful for catching typos in path configurations during testing.
  *
+ * `missingPaths` holds a declared path that is not in the object at all, which
+ * is usually a typo. `unwrappablePaths` holds one that is there and holds
+ * something `wrapSensitiveByPath` will not act on, because it wraps only where a
+ * string stands: an array of secrets, an object, a number. That case used to
+ * pass silently and is the one worth failing a test over, since the config reads
+ * as though the field is protected and nothing protects it.
+ *
  * @param sampleObj - A sample object to validate against
  * @param config - The sensitive field configuration to validate
- * @returns An object with `valid` boolean and `missingPaths` array
+ * @returns `valid`, plus `missingPaths` and `unwrappablePaths`
  *
  * @example
  * ```ts
@@ -262,24 +269,35 @@ export function unwrapSensitiveByPath<T extends object>(
  * const validation = validateSensitiveFieldConfig(samplePSPWebhook, PSP_SENSITIVE_FIELDS);
  * expect(validation.valid).toBe(true);
  * expect(validation.missingPaths).toEqual([]);
+ * expect(validation.unwrappablePaths).toEqual([]);
  * ```
  */
 export function validateSensitiveFieldConfig(
   sampleObj: unknown,
   config: SensitiveFieldConfig
-): { valid: boolean; missingPaths: string[] } {
+): { valid: boolean; missingPaths: string[]; unwrappablePaths: string[] } {
   const missingPaths: string[] = [];
+  const unwrappablePaths: string[] = [];
 
   for (const path of Object.keys(config)) {
     const value = getByPath(sampleObj, path);
-    if (value === undefined) {
+    if (value === undefined || value === null) {
       missingPaths.push(path);
+      continue;
+    }
+    // Declared, present, and nothing `wrapSensitiveByPath` will act on, because
+    // it wraps only where a string stands. Reported separately from a missing
+    // path: the path is right and the value is the wrong shape, which is a
+    // different mistake and has a different fix.
+    if (typeof value !== 'string' && !(value instanceof SensitiveString)) {
+      unwrappablePaths.push(path);
     }
   }
 
   return {
-    valid: missingPaths.length === 0,
+    valid: missingPaths.length === 0 && unwrappablePaths.length === 0,
     missingPaths,
+    unwrappablePaths,
   };
 }
 
@@ -310,8 +328,18 @@ export function checkSensitiveFieldsWrapped(
   for (const path of Object.keys(config)) {
     const value = getByPath(obj, path);
 
-    // If the field exists and is a plain string (not SensitiveString), it's unwrapped
-    if (typeof value === 'string') {
+    // Absent is not unwrapped. An optional field that is not there carries no
+    // secret, and `validateSensitiveFieldConfig` is what reports a path that
+    // should be there and is not.
+    if (value === undefined || value === null) continue;
+
+    // Anything else that is not a `SensitiveString` is unwrapped, whatever its
+    // type. Until 2026-09-19 this tested `typeof value === 'string'`, so a
+    // declared path holding an array of secrets, or an object, answered
+    // `allWrapped: true`: the guard this function's own documentation puts in a
+    // caller's path passed, and the values went out in the clear. A config that
+    // wrapped nothing was affirmed by both of this module's report functions.
+    if (!(value instanceof SensitiveString)) {
       unwrappedPaths.push(path);
     }
   }

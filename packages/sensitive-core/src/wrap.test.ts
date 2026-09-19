@@ -408,6 +408,47 @@ describe('validateSensitiveFieldConfig', () => {
     expect(result.missingPaths).toContain('credentials.apiKey');
   });
 
+  it('reports a declared path holding a value nothing will wrap', () => {
+    // The case that used to pass silently, found by the corpus study on
+    // MeltStudio/config-loader: one declaration, on a list, written once and
+    // read by nothing. `wrapSensitiveByPath` wraps only where a string stands,
+    // so the array is skipped, and before 2026-09-19 this function answered
+    // `valid: true` for a config that protected nothing.
+    const CANARY = 'LEAKED_SECRET_pg_replica_aaa111';
+    const config: SensitiveFieldConfig = {
+      'db.primaryUrl': 'credential',
+      'db.replicaUrls': 'credential',
+    };
+    const sample = { db: { primaryUrl: 'postgres://primary', replicaUrls: [CANARY] } };
+
+    const result = validateSensitiveFieldConfig(sample, config);
+
+    expect(result.valid).toBe(false);
+    expect(result.unwrappablePaths).toEqual(['db.replicaUrls']);
+    // Not a typo, so not a missing path: the two lists mean different things and
+    // have different fixes.
+    expect(result.missingPaths).toEqual([]);
+  });
+
+  it('separates a path that is absent from one that is the wrong shape', () => {
+    const config: SensitiveFieldConfig = { 'a.gone': 'credential', 'a.list': 'credential' };
+    const sample = { a: { list: ['x'] } };
+
+    const result = validateSensitiveFieldConfig(sample, config);
+
+    expect(result.missingPaths).toEqual(['a.gone']);
+    expect(result.unwrappablePaths).toEqual(['a.list']);
+  });
+
+  it('accepts a path already holding a SensitiveString', () => {
+    // Validation runs against a sample payload, which may be pre-wrapped. An
+    // instance is the goal state, not a problem to report.
+    const config: SensitiveFieldConfig = { 'user.token': 'credential' };
+    const sample = { user: { token: new SensitiveString('tok_123', 'credential') } };
+
+    expect(validateSensitiveFieldConfig(sample, config).valid).toBe(true);
+  });
+
   it('should validate PSP config against sample payload', () => {
     const result = validateSensitiveFieldConfig(PSP_AUTHORIZATION_WEBHOOK, PSP_SENSITIVE_FIELDS);
 
@@ -454,6 +495,34 @@ describe('checkSensitiveFieldsWrapped', () => {
 
     expect(result.allWrapped).toBe(true);
     expect(result.unwrappedPaths).toEqual([]);
+  });
+
+  it('reports a declared path holding an unwrapped non-string', () => {
+    // The fail-open this function's own documentation walked a caller into:
+    // `if (!check.allWrapped) throw` was the documented guard, and a config
+    // declaring a list of secrets passed it while the secrets went out in the
+    // clear. The canary is the point: it must not reach a serialized surface
+    // while the check says everything is wrapped.
+    const CANARY = 'LEAKED_SECRET_replica_bbb222';
+    const config: SensitiveFieldConfig = { 'db.replicaUrls': 'credential' };
+    const wrapped = wrapSensitiveByPath({ db: { replicaUrls: [CANARY] } }, config);
+
+    const result = checkSensitiveFieldsWrapped(wrapped, config);
+
+    expect(result.allWrapped).toBe(false);
+    expect(result.unwrappedPaths).toEqual(['db.replicaUrls']);
+    // And the reason it matters, stated as the canary test the house style asks
+    // for: the value the guard vouched for is still in the output.
+    expect(JSON.stringify(wrapped)).toContain(CANARY);
+  });
+
+  it('does not count an absent field as unwrapped', () => {
+    // An optional field that is not there carries no secret.
+    // `validateSensitiveFieldConfig` is what reports a path that should exist.
+    const config: SensitiveFieldConfig = { 'user.token': 'credential' };
+
+    expect(checkSensitiveFieldsWrapped({ user: {} }, config).allWrapped).toBe(true);
+    expect(checkSensitiveFieldsWrapped({ user: { token: null } }, config).allWrapped).toBe(true);
   });
 
   it('should verify PSP webhook is properly wrapped', () => {
