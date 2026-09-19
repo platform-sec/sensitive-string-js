@@ -107,6 +107,24 @@ export interface SensitiveStringOptions {
   restrictions?: EnvironmentRestrictions | readonly EnvironmentRestrictions[];
 
   /**
+   * Where this value may go: the sinks and the hosts it may be revealed toward.
+   *
+   * Checked on every exposing read against the `sink` and `host` tags of the
+   * reveal context the read runs under, in the same gate expiry, revocation
+   * and the environment restrictions sit in. The integrations write those two
+   * tags on every reveal they perform, the HTTP clients from the request URL;
+   * a context that states neither is refused, because a reveal that does not
+   * say where the value is going is the reveal this option exists to stop.
+   *
+   * A comparison is not checked: `equals()` sends the value nowhere.
+   *
+   * A list is accepted as well as a single binding, and every binding has to
+   * pass. That is what lets a value derived from two bound values carry both,
+   * and what lets the wire format carry them back.
+   */
+  destinations?: DestinationBinding | readonly DestinationBinding[];
+
+  /**
    * Hold the value as AES-256-GCM ciphertext in a `Buffer` rather than as a
    * JavaScript string.
    *
@@ -248,6 +266,42 @@ export interface SerializedEnvironmentRestrictions {
   deniedRegions?: string[];
   allowedDatacenters?: string[];
   deniedDatacenters?: string[];
+}
+
+/**
+ * Where a value may go.
+ *
+ * Each list that is present is an allowlist over one tag of the reveal context,
+ * and a context that does not state that tag is refused. There is no denylist:
+ * "may go to these and nowhere else" is the statement a recipient binding
+ * makes, and a list of places a credential must not go is the artefact that
+ * is always one entry short.
+ */
+export interface DestinationBinding {
+  /**
+   * Sinks this value may be revealed toward, matched literally against the
+   * context's `tags.sink`: `'http'` for the HTTP clients, the driver name for
+   * the data layer, the sink name given to `sendToExternal`.
+   */
+  sinks?: readonly string[] | undefined;
+
+  /**
+   * Hosts this value may be revealed toward, matched against the context's
+   * `tags.host`, which the HTTP clients set to `new URL(url).host`: the
+   * lowercase hostname, with the port when it is not the scheme's default.
+   *
+   * An entry is that literal form or `*.` followed by a domain, which matches
+   * every host at least one label below it and not the domain itself. A URL,
+   * a path or a userinfo is refused at construction rather than sitting in the
+   * list matching nothing.
+   */
+  hosts?: readonly string[] | undefined;
+}
+
+/** The wire form of a {@link DestinationBinding}: the same two lists. */
+export interface SerializedDestinationBinding {
+  sinks?: string[];
+  hosts?: string[];
 }
 
 /**
@@ -846,4 +900,14 @@ export interface SerializedSensitiveString {
    * nothing about the rest.
    */
   restrictions?: SerializedEnvironmentRestrictions[];
+  /**
+   * Where the receiver may reveal this value toward.
+   *
+   * Bindings travel for the reason restrictions do: a credential that may only
+   * go to one host is still that credential after it crosses a service
+   * boundary, and the receiving process is the one about to make the request.
+   * They may only tighten, and an entry with an unknown key is rejected rather
+   * than ignored.
+   */
+  destinations?: SerializedDestinationBinding[];
 }

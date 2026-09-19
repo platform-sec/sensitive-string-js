@@ -67,6 +67,14 @@ import {
   UnserializableRestrictionError,
   type ResolvedRestrictions,
 } from './environment.js';
+import {
+  checkDestinations,
+  deserializeDestinations,
+  NO_DESTINATIONS,
+  planDestinations,
+  serializeDestinations,
+  type ResolvedDestination,
+} from './destination.js';
 import { snapshotRegExp } from './regexp.js';
 import {
   additionalData,
@@ -219,6 +227,12 @@ interface SensitiveStringState {
    */
   readonly restrictions: readonly ResolvedRestrictions[] | undefined;
   /**
+   * Where this value may go, or `undefined` when it may go anywhere. Frozen at
+   * construction like the restrictions above; what moves is the context each
+   * read runs under.
+   */
+  readonly destinations: readonly ResolvedDestination[] | undefined;
+  /**
    * When the value this state belongs to was destroyed, epoch milliseconds, or
    * `undefined` while it still exists.
    *
@@ -286,6 +300,22 @@ function restrictedStates(
   }
 
   return restrictions ?? NO_RESTRICTIONS;
+}
+
+/**
+ * Every destination binding these states carry, flattened, on the same shape
+ * and for the same reason as the restricted view above.
+ */
+function boundStates(states: readonly SensitiveStringState[]): readonly ResolvedDestination[] {
+  let destinations: ResolvedDestination[] | undefined;
+
+  for (const state of states) {
+    if (state.destinations !== undefined) {
+      (destinations ??= []).push(...state.destinations);
+    }
+  }
+
+  return destinations ?? NO_DESTINATIONS;
 }
 
 /**
@@ -498,6 +528,12 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   #restrictions: readonly ResolvedRestrictions[] = NO_RESTRICTIONS;
 
   /**
+   * The destination bindings of every state above, flattened, so the gate
+   * answers with a length check on a value that has none.
+   */
+  #destinations: readonly ResolvedDestination[] = NO_DESTINATIONS;
+
+  /**
    * This instance's own state, or undefined when it was derived from other
    * values. Only an owner may renew: a derivative shares its sources' state by
    * reference, so renewing through one would silently extend the lifetime of
@@ -602,6 +638,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       budget: planRevealBudget(options),
       revocation: planRevocation(options, label),
       restrictions: planRestrictions(options),
+      destinations: planDestinations(options),
       clearedAt: undefined,
     };
 
@@ -712,11 +749,13 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   #adopt(
     states: readonly SensitiveStringState[],
     constrained?: readonly ConstrainedState[],
-    restricted?: readonly ResolvedRestrictions[]
+    restricted?: readonly ResolvedRestrictions[],
+    bound?: readonly ResolvedDestination[]
   ): void {
     this.#states = states;
     this.#constrained = constrained ?? constrainedStates(states);
     this.#restrictions = restricted ?? restrictedStates(states);
+    this.#destinations = bound ?? boundStates(states);
   }
 
   /**
@@ -964,6 +1003,20 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       checkEnvironmentRestrictions(this.#restrictions, this.label);
     }
 
+    const effectiveCtx = ctx ?? getCurrentRevealContext();
+
+    // Beside the environment restrictions, because it is the other "where"
+    // check: that one asks where the process is, this one asks where the
+    // plaintext is about to go, and the answer is the context's own `sink`
+    // and `host` tags. Before the budget and the hooks for the reason the
+    // checks above are: a refused read is not a reveal. A comparison is not
+    // checked, because `equals()` sends the value nowhere; every other access
+    // hands plaintext out of the library, and a bound value hands it out only
+    // toward a stated destination, hashing and a worker handoff included.
+    if (access === 'expose' && this.#destinations.length !== 0) {
+      checkDestinations(this.#destinations, effectiveCtx, this.label);
+    }
+
     // The same rule one step later, and the same reason the budget is decided
     // here but charged below: a refusal is not a reveal, and neither is a read
     // an audit hook stopped. A comparison is not charged and so is not refused
@@ -973,7 +1026,6 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       checkRevealBudget(this.#constrained, this.label);
     }
 
-    const effectiveCtx = ctx ?? getCurrentRevealContext();
     // `access` is 'compare' or 'expose' by this function's signature: a `'safe'`
     // read never reaches here, so a policy is never asked to authorize a read
     // that only feeds redaction.
@@ -1033,7 +1085,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     // what the derivative needs. `#states` is assigned once and never mutated,
     // and the state objects are shared between derivatives by design.
     if (only !== undefined) {
-      derived.#adopt(only.#states, only.#constrained, only.#restrictions);
+      derived.#adopt(only.#states, only.#constrained, only.#restrictions, only.#destinations);
       return derived;
     }
 
@@ -2457,10 +2509,15 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
    * is a function does not travel and cannot: such a value refuses to
    * serialize rather than arriving with half of its restriction enforced.
    *
+   * Destination bindings travel as well, and serializing is itself a reveal
+   * toward wherever the payload is going: a bound value serializes only under
+   * a context whose tags name a sink or host the binding allows.
+   *
    * @param ctx - Optional context for audit/permission checks
    * @throws ExpiredSensitiveValueError If the value has expired.
    * @throws RevokedSensitiveValueError If the value has been revoked.
    * @throws EnvironmentRestrictedError If this environment may not read the value.
+   * @throws DestinationRestrictedError If the context names no destination the value allows.
    * @throws UnserializableRestrictionError If the value carries a custom restriction.
    */
   serialize(ctx?: RevealContext): SerializedSensitiveString {
@@ -2501,6 +2558,10 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
 
     if (this.#restrictions.length !== 0) {
       serialized.restrictions = serializeRestrictions(this.#restrictions);
+    }
+
+    if (this.#destinations.length !== 0) {
+      serialized.destinations = serializeDestinations(this.#destinations);
     }
 
     return serialized;
@@ -2605,32 +2666,42 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
   /**
    * Rebuild the construction options carried by a serialized form.
    *
-   * The deadline and the environment restrictions cross, and nothing else.
-   * Both only ever narrow what the receiver may do. Renewal permission and
-   * renewal counts are decided locally, by the receiving process's policy:
-   * taking them from a payload would let a sender declare a credential
-   * renewable.
+   * The deadline, the environment restrictions and the destination bindings
+   * cross, and nothing else. All three only ever narrow what the receiver may
+   * do. Renewal permission and renewal counts are decided locally, by the
+   * receiving process's policy: taking them from a payload would let a sender
+   * declare a credential renewable.
    */
   static #deserializeOptions(serialized: object): SensitiveStringOptions | undefined {
+    const options: SensitiveStringOptions = {};
     const restrictions = deserializeRestrictions(serialized);
+    const destinations = deserializeDestinations(serialized);
 
-    if (!('expiresAt' in serialized) || serialized.expiresAt === undefined) {
-      return restrictions === undefined ? undefined : { restrictions };
+    if (restrictions !== undefined) {
+      options.restrictions = restrictions;
     }
 
-    if (typeof serialized.expiresAt !== 'string') {
-      throw new Error('Invalid SerializedSensitiveString: expiresAt must be an ISO 8601 string');
+    if (destinations !== undefined) {
+      options.destinations = destinations;
     }
 
-    const expiresAt = new Date(serialized.expiresAt);
+    if ('expiresAt' in serialized && serialized.expiresAt !== undefined) {
+      if (typeof serialized.expiresAt !== 'string') {
+        throw new Error('Invalid SerializedSensitiveString: expiresAt must be an ISO 8601 string');
+      }
 
-    if (Number.isNaN(expiresAt.getTime())) {
-      throw new Error(
-        `Invalid SerializedSensitiveString: expiresAt '${serialized.expiresAt}' is not a valid date`
-      );
+      const expiresAt = new Date(serialized.expiresAt);
+
+      if (Number.isNaN(expiresAt.getTime())) {
+        throw new Error(
+          `Invalid SerializedSensitiveString: expiresAt '${serialized.expiresAt}' is not a valid date`
+        );
+      }
+
+      options.expiresAt = expiresAt;
     }
 
-    return restrictions === undefined ? { expiresAt } : { expiresAt, restrictions };
+    return Object.keys(options).length === 0 ? undefined : options;
   }
 
   /**

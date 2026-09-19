@@ -317,10 +317,12 @@ two answer different questions: a retry re-sends the same request to the same ho
 it to a host the _server_ chose. Both write the value to a socket and both are audited, so without
 the second tag an audit log cannot tell one from the other.
 
-`tags.sink: 'http'` is set on every reveal. It costs nothing today and is the field a future
-`allowSendToExternal` enforcement will read. That flag is **not** enforced here: neither default
-policy sets it, so enforcing it would mean choosing between denying every outbound request and
-allowing every one, and neither choice carries information.
+`tags.sink: 'http'` and `tags.host` are set on every reveal, and core's destination binding reads
+both: a value constructed with `destinations: { hosts: ['api.example.com'] }` is revealed by this
+package toward that host and refused toward any other, with nothing configured here. The
+`allowSendToExternal` flag is **not** enforced here: neither default policy sets it, so enforcing it
+would mean choosing between denying every outbound request and allowing every one, and neither
+choice carries information.
 
 ## Open question: where the guard finally lives
 

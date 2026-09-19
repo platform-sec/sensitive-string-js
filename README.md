@@ -301,6 +301,7 @@ instead of writing to `tags`.
 |--------|---------|
 | Accidental logging | Automatic redaction in `toString()`, `toJSON()`, `inspect()` |
 | A value used in the wrong deployment or region | [Environment restrictions](#environment-restrictions) refuse the read, and travel with the value across a service boundary |
+| A credential revealed correctly and sent to the wrong host | [Destination binding](#destination-binding) refuses a reveal whose context names a sink or host the value does not allow, and travels with the value |
 | Casual inspection | Private fields (`#value`) inaccessible via reflection |
 | JSON serialization | `toJSON()` returns redacted value |
 | Template literals | `toString()` called, returns redacted value |
@@ -1266,6 +1267,102 @@ All five are configuration, never any part of the protected value, so the messag
 Workers have their own environment. `AsyncLocalStorage` is per isolate and so is this singleton, so
 a worker that reads a restricted value must call `setEnvironmentInfo()` itself. Until it does, it
 reports `unknown` with no region, which refuses every allowlist.
+
+### Destination Binding
+
+```typescript
+interface SensitiveStringOptions {
+  destinations?: DestinationBinding | readonly DestinationBinding[];
+}
+
+interface DestinationBinding {
+  sinks?: readonly string[];   // matched literally against the context's tags.sink
+  hosts?: readonly string[];   // matched against tags.host, as `new URL(url).host` spells it
+}
+```
+
+Every other check in the raw-value gate asks a question about the value or about the process. None
+of them asks where the plaintext is about to go, so a credential can be wrapped at entry, revealed
+at exactly the call site the design says, audited, and still written to the wrong host, because the
+reveal authorized a call site and not a recipient. The adoption corpus recorded that seven times,
+twice as the same substring host comparison written by two unrelated maintainers.
+
+A binding is the recipient half. Say where a value may go, and it is revealed only under a context
+whose tags say it is going there:
+
+```typescript
+const registryPassword = new SensitiveString(pw, 'credential', 'registry', {
+  destinations: { hosts: ['registry-1.docker.io'] },
+});
+
+registryPassword.reveal();                                   // throws DestinationRestrictedError
+registryPassword.reveal({ name: 'push', tags: { host: 'registry-1.docker.io.attacker.net' } });
+                                                             // throws DestinationRestrictedError
+registryPassword.reveal({ name: 'push', tags: { sink: 'http', host: 'registry-1.docker.io' } });
+                                                             // the password
+```
+
+The two tags are the ones the integrations already write on every reveal they perform: the HTTP
+clients set `tags.sink: 'http'` and `tags.host` from the request URL per attempt, the data layer
+sets `tags.sink` to its driver, and `sendToExternal` sets it to the sink name it was given. So a
+value bound to a host works unchanged through `sensitive-axios`, `sensitive-fetch` and the rest,
+and refuses through them when the URL the program computed points somewhere else. The one
+exception is `sensitive-fetch`'s standalone `sensitiveHeaders` helper, which takes no URL and so
+writes no host: a host-bound value refuses through it unless the caller passes a context that names
+the host.
+
+The host rule:
+
+| Entry | Matches |
+|---|---|
+| `api.example.com` | that host exactly, case-insensitively |
+| `api.example.com:8443` | that host on that port; an entry without a port does not match a tag with one |
+| `*.example.com` | every host at least one label below `example.com`, and not `example.com` itself; a port is part of the suffix, so this does not match `api.example.com:8443` and `*.example.com:8443` does |
+| `[::1]:8443` | that literal, as `URL.host` spells it |
+| `https://api.example.com`, `api.example.com/v1`, `user@host`, `*`, `api.*.com`, `bücher.example`, `api.example.com:443` | refused at construction: a URL, a wildcard anywhere else, or a host the URL parser would spell differently |
+
+Nothing else is normalized, and an entry has to be what `new URL(url).host` would hand back: the
+URL parser writes a Unicode domain in punycode and elides a scheme's default port, so an entry in
+either form could never equal a tag and is refused rather than left in the list matching nothing.
+A trailing dot on the tag is a different string and refuses. A sink is matched literally and takes
+no wildcard.
+
+**A context that states no destination is refused.** This is the allowlist rule the environment
+restrictions follow, and it is the whole point here: a reveal that does not say where the value is
+going is the reveal this option exists to stop. It applies to every operation that hands plaintext
+out of the library, `mask()`, `hash()`, `map()`, `serialize()` and the worker handoff included, so
+serializing a bound value is itself a reveal toward wherever the payload goes and needs a context
+that names it. `equals()` is the one exception: a comparison sends the value nowhere, and it is the
+operation the library wants used in place of a reveal.
+
+Derived values carry the binding, and a value derived from two bound values carries both, so it is
+at least as bound as each of them. Bindings cross `serialize()` and `toWorkerPayload()` as data,
+and like every other wire field they can only tighten: a deserialized value starts with none. An
+empty list, a binding that names nothing, and a host that is really a URL are refused at
+construction rather than read either way.
+
+```typescript
+try {
+  registryPassword.reveal(ctx);
+} catch (error) {
+  if (error instanceof DestinationRestrictedError) {
+    error.restriction;   // 'host' or 'sink'
+    error.currentValue;  // what the context stated, or undefined when it stated nothing
+    error.allowedValues; // ['registry-1.docker.io']
+    error.label;         // 'registry'
+  }
+}
+```
+
+All of that is configuration and none of it is any part of the protected value.
+
+What it does not do is the same thing nothing in the gate does: it does not protect against code in
+the process that writes the tag itself. That is inside the stated threat model, and it is also
+visible, because the audit record the lie has to be written into is the one an audit sink reads. Two
+further shapes the corpus recorded sit outside a host allowlist. A proxy setting changes the machine
+that receives the bytes without changing the URL, so a client integration that honours one must
+tag the proxy host rather than the URL's; and a destination decided by an asynchronous verification,
+an SSH host key against a known-hosts store, needs a reveal that waits, which this is not.
 
 ### Memory Hygiene
 

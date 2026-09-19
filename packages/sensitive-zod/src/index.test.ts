@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
+import { DestinationRestrictedError } from '@platform-sec/sensitive-string-core';
 import {
   zSensitiveString,
   zSensitive,
@@ -276,6 +277,25 @@ describe('Zod Integration', () => {
       // deadline, and an expiring token would arrive as one that never expires.
       expect(token.expiresAt).toEqual(expiresAt);
       expect(token.isExpired()).toBe(false);
+    });
+
+    it('test_serialized_carries_the_destination_binding', () => {
+      const schema = z.object({ token: zSensitiveDeserialize('credential') });
+      const toward = { name: 'push', tags: { sink: 'http', host: 'registry-1.docker.io' } };
+
+      const sent = new SensitiveString(CANARY, 'credential', 'registry', {
+        destinations: { hosts: ['registry-1.docker.io'] },
+      }).serialize(toward);
+      const { token } = schema.parse({ token: sent });
+
+      // An object schema strips what it does not declare. Losing this field
+      // would turn a value bound to one host into one that may go to any,
+      // which is the same fail-open shape as losing the deadline.
+      expect(() => token.reveal()).toThrow(DestinationRestrictedError);
+      expect(() =>
+        token.reveal({ name: 'push', tags: { sink: 'http', host: 'evil.example.net' } })
+      ).toThrow(DestinationRestrictedError);
+      expect(token.reveal(toward)).toBe(CANARY);
     });
 
     it('test_serialized_rejects_an_unknown_class', () => {

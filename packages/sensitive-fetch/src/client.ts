@@ -252,6 +252,11 @@ function outgoing(
  * better served by a helper that reveals and guards than by interpolation that
  * does neither. Whether it should exist at all is an open question in the
  * design; it is in, with this warning.
+ *
+ * It takes no URL, so the default context names the sink and no host. A value
+ * bound to a host with core's `destinations` refuses through it unless the
+ * caller passes a context whose `tags.host` names the request's host; the
+ * client above writes that tag itself and needs nothing from the caller.
  */
 export function sensitiveHeaders(record: SensitiveHeaders, context?: RevealContext): Headers {
   const ctx: RevealContext = context ?? { name: 'sensitiveHeaders', tags: { sink: 'http' } };

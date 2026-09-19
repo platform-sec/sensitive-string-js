@@ -37,10 +37,11 @@ export function buildAttemptContext(
     name: supplied?.name ?? `${request.method} ${request.url}`,
     tags: {
       ...(supplied?.tags ?? {}),
-      // Set on every reveal these packages perform. It costs nothing today and
-      // is the field the roadmap's `sendToExternal` enforcement will read when
-      // it lands, so adopting that later does not mean rewriting these reveal
-      // sites.
+      // Set on every reveal these packages perform, and read by core's
+      // destination binding: a value constructed with `destinations` is
+      // revealed only under a context whose `sink` and `host` it allows, so
+      // these two must describe the real destination of this attempt. `host`
+      // is `URL.host`, which is the form a binding's entries are written in.
       sink: 'http',
       host: request.host,
       client,

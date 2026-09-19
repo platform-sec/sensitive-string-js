@@ -179,10 +179,11 @@ export function zSensitiveOptional<C extends SensitivityClass>(
  * enforces exactly what the core wire format does: the sensitivity class must be
  * registered, a deadline carried by the payload is carried into the value, a
  * payload that marks the value revoked produces a revoked value, and environment
- * restrictions arrive with it. Rebuilding the value here instead would silently
- * drop all three, which fails open: an expiring token would arrive as one that
- * never expires, a revoked one as live, and one restricted to the EU as readable
- * anywhere.
+ * restrictions and destination bindings arrive with it. Rebuilding the value
+ * here instead would silently drop all four, which fails open: an expiring
+ * token would arrive as one that never expires, a revoked one as live, one
+ * restricted to the EU as readable anywhere, and one bound to a host as
+ * sendable to any.
  *
  * A class mismatch, an unregistered class, and a malformed payload are all
  * reported as Zod issues, so `safeParse` reports them rather than throwing.
@@ -216,6 +217,7 @@ export function zSensitiveDeserialize<C extends SensitivityClass>(
     revoked?: true | undefined;
     revocationReason?: string | undefined;
     restrictions?: unknown[] | undefined;
+    destinations?: unknown[] | undefined;
   }
 > {
   return withSensitiveMethods(
@@ -230,12 +232,14 @@ export function zSensitiveDeserialize<C extends SensitivityClass>(
         // `deserialize()` sees them. An unlisted key is dropped, and dropping
         // these would turn a payload that says "do not use this" into one that
         // says nothing, or a value restricted to the EU into one readable
-        // anywhere, which is the same fail-open shape as losing the deadline.
-        // Validating them is still core's job, so all three are accepted
-        // loosely here and rejected there.
+        // anywhere, or one bound to a single host into one that may go to any,
+        // which is the same fail-open shape as losing the deadline. Validating
+        // them is still core's job, so all four are accepted loosely here and
+        // rejected there.
         revoked: z.literal(true).optional(),
         revocationReason: z.string().optional(),
         restrictions: z.array(z.unknown()).optional(),
+        destinations: z.array(z.unknown()).optional(),
       })
       .transform((serialized, ctx): SensitiveString<C> => {
         // Reported as issues rather than thrown. A throw from inside a

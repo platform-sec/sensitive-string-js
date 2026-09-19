@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SensitiveString } from '@platform-sec/sensitive-string-core';
+import { DestinationRestrictedError, SensitiveString } from '@platform-sec/sensitive-string-core';
 
 import { InsecureTransportError, MarkerLeakError } from './errors.js';
 import { apiKey, basic, bearer } from './auth.js';
@@ -32,6 +32,43 @@ describe('prepareRequest', () => {
     expect(prepared.plan.headers).toEqual(['authorization']);
     expect(prepared.plan.queryKeys).toEqual(['token']);
     expect(prepared.plan.bodyPaths).toEqual(['card.number']);
+  });
+
+  it('reveals a host-bound credential toward its host and refuses it toward any other', () => {
+    // The `host` tag this package writes per attempt is what core's destination
+    // binding reads, so a value bound at construction works through every
+    // client built on this layer with nothing configured here, and refuses
+    // when the URL the program computed points somewhere else. The wrong host
+    // below is the corpus's shape: the right host as a prefix of an attacker's.
+    const bound = new SensitiveString(CANARY, 'credential', 'registry', {
+      destinations: { hosts: ['api.example.com'] },
+    });
+
+    const prepared = prepareRequest(
+      {
+        method: 'GET',
+        url: 'https://api.example.com/v2/',
+        headers: { Authorization: bearer(bound) },
+      },
+      base
+    );
+    expect(prepared.headers['Authorization']).toBe(`Bearer ${CANARY}`);
+
+    for (const url of [
+      'https://api.example.com.attacker.net/v2/',
+      'https://api.example.com:8443/v2/',
+      'https://other.example.com/v2/',
+    ]) {
+      let thrown: unknown;
+      try {
+        prepareRequest({ method: 'GET', url, headers: { Authorization: bearer(bound) } }, base);
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown, url).toBeInstanceOf(DestinationRestrictedError);
+      expect(String(thrown), url).not.toContain(CANARY);
+    }
   });
 
   it('builds a form body the guard can read in its percent encoding', () => {

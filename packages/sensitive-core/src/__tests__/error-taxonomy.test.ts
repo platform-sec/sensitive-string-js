@@ -87,6 +87,11 @@ const SAMPLES: readonly (readonly [string, SensitiveStringError, string])[] = [
   ],
   ['EnvironmentLockedError', new core.EnvironmentLockedError(), 'environment-locked'],
   [
+    'DestinationRestrictedError',
+    new core.DestinationRestrictedError('host', 'evil.example.net', ['api.example.com'], 'token'),
+    'destination-restricted',
+  ],
+  [
     'UnserializableRestrictionError',
     new core.UnserializableRestrictionError('eu_pii'),
     'unserializable-restriction',

@@ -62,6 +62,8 @@ export type {
   EnvironmentInfo,
   EnvironmentRestrictions,
   SerializedEnvironmentRestrictions,
+  DestinationBinding,
+  SerializedDestinationBinding,
   RevokeAuditDetails,
   WorkerHandoffAuditDetails,
   ISensitiveString,
@@ -112,6 +114,13 @@ export {
   UnserializableRestrictionError,
 } from './environment.js';
 export type { RestrictionKind } from './environment.js';
+
+// Destination binding: a value says which sinks and hosts it may be revealed
+// toward, and the gate checks the reveal context's `sink` and `host` tags. The
+// complement of the environment restrictions above: those ask where the
+// process is, this asks where the plaintext is going.
+export { DestinationRestrictedError } from './destination.js';
+export type { DestinationKind } from './destination.js';
 
 // Worker thread and child process handoff
 export {
