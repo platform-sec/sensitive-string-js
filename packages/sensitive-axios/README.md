@@ -99,6 +99,28 @@ it is told at compile time rather than at run time.
 have handed back the raw string. Silently handing a caller a raw secret as `response.data` is the
 failure this integration exists to stop.
 
+## The proxy
+
+axios routes through `config.proxy` when it is an object, through nothing when it is `false`, and
+otherwise through whatever `proxy-from-env` reads out of `https_proxy`, `http_proxy` or `all_proxy`
+under `no_proxy`. A proxy receives the bytes before the host does and leaves the URL untouched, so a
+host check alone passes it. The wrapper resolves the effective proxy the same way axios does,
+restating `proxy-from-env` 2.1.0's rules rather than importing axios's dependency, and tags it on
+every reveal as `tags.proxy`. A value bound to a host with core's `destinations` then refuses
+unless the proxy is a host its list names, before anything is revealed:
+
+```typescript
+const key = new SensitiveString(raw, 'credential', 'partner', {
+  destinations: { hosts: ['api.partner.example', 'egress.corp.example:3128'] },
+});
+```
+
+An agent on `httpAgent` or `httpsAgent` that exposes its `proxy` as a `URL` or a string, which is
+what `https-proxy-agent` does, is read as a proxy for that scheme. Any other agent is opaque: the
+wrapper cannot tell a keep-alive agent from a tunnelling one, reads nothing from it, and a bound
+value goes through it as though the request were direct. Name the proxy in `config.proxy` if the
+binding is meant to see it.
+
 ## Options the wrapper owns
 
 | Option | What happens |

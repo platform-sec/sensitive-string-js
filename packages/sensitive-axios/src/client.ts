@@ -19,6 +19,7 @@ import type {
 import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 
 import { scrubError, scrubResponse } from './scrub.js';
+import { resolveProxyHost } from './proxy.js';
 
 /**
  * The wrapper owns the call.
@@ -260,6 +261,11 @@ export function createSensitiveAxios(
           query: config.params,
           body,
           form,
+          // The machine that receives the bytes before the host does, when
+          // axios will route through one. Resolved per hop, since a redirect
+          // can change the scheme and with it which agent and which
+          // environment variable apply.
+          proxy: resolveProxyHost(new URL(url), config),
         },
         { ...options, client: 'axios', attempt: 1, hop: hop + 1 }
       );

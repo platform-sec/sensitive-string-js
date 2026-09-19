@@ -71,6 +71,69 @@ describe('prepareRequest', () => {
     }
   });
 
+  it('tags the proxy a client resolved, and a host-bound value refuses one the binding does not name', () => {
+    // axios/axios in the corpus: a proxy changes the machine that receives
+    // the bytes and leaves the URL untouched, so a host check alone passes.
+    const bound = new SensitiveString(CANARY, 'credential', 'registry', {
+      destinations: { hosts: ['api.example.com'] },
+    });
+    const seen: unknown[] = [];
+    const context = {
+      name: 'x',
+      auditReveal: (_v: unknown, _d: unknown, ctx: { tags?: unknown }) => seen.push(ctx.tags),
+    };
+
+    for (const proxy of [
+      'proxy.corp.example:3128',
+      'http://proxy.corp.example:3128',
+      new URL('http://proxy.corp.example:3128/'),
+    ]) {
+      let thrown: unknown;
+      try {
+        prepareRequest(
+          {
+            method: 'GET',
+            url: 'https://api.example.com/v2/',
+            headers: { Authorization: bearer(bound) },
+            proxy,
+          },
+          { ...base, context }
+        );
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown, String(proxy)).toBeInstanceOf(DestinationRestrictedError);
+      expect((thrown as DestinationRestrictedError).restriction).toBe('proxy');
+      expect(String(thrown)).not.toContain(CANARY);
+    }
+
+    const allowed = new SensitiveString(CANARY, 'credential', 'registry', {
+      destinations: { hosts: ['api.example.com', 'proxy.corp.example:3128'] },
+    });
+    const prepared = prepareRequest(
+      {
+        method: 'GET',
+        url: 'https://api.example.com/v2/',
+        headers: { Authorization: bearer(allowed) },
+        proxy: 'proxy.corp.example:3128',
+      },
+      { ...base, context }
+    );
+    expect(prepared.headers['Authorization']).toBe(`Bearer ${CANARY}`);
+    expect(seen.at(-1)).toMatchObject({
+      sink: 'http',
+      host: 'api.example.com',
+      proxy: 'proxy.corp.example:3128',
+    });
+
+    expect(() =>
+      prepareRequest(
+        { method: 'GET', url: 'https://api.example.com/', proxy: 'not a proxy at all' },
+        base
+      )
+    ).toThrow(TypeError);
+  });
+
   it('builds a form body the guard can read in its percent encoding', () => {
     const prepared = prepareRequest(
       { method: 'POST', url: 'https://api.example.com/t', form: { token: token(), grant: 'x' } },

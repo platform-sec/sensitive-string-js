@@ -44,6 +44,7 @@ export function buildAttemptContext(
       // is `URL.host`, which is the form a binding's entries are written in.
       sink: 'http',
       host: request.host,
+      ...(request.proxy === undefined ? {} : { proxy: request.proxy }),
       client,
       attempt: request.attempt,
       hop: request.hop,

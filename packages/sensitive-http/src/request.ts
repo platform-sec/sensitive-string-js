@@ -169,6 +169,37 @@ export interface PrepareOptions extends SensitiveClientOptions {
   readonly hop?: number;
 }
 
+/**
+ * The proxy's `host[:port]`, in the form a destination binding is written in.
+ *
+ * A bare `host:port` is read by prefixing a scheme, so a client that only
+ * knows the proxy's host and port need not invent one; the scheme is not
+ * part of what the binding compares.
+ *
+ * @throws TypeError If the value is not a URL or a host.
+ */
+function proxyHost(proxy: string | URL | undefined): string | undefined {
+  if (proxy === undefined) {
+    return undefined;
+  }
+
+  const spelled = proxy instanceof URL ? proxy.href : proxy;
+
+  try {
+    const parsed = new URL(spelled.includes('://') ? spelled : `http://${spelled}`);
+
+    if (parsed.host === '') {
+      throw new Error('no host');
+    }
+
+    return parsed.host;
+  } catch {
+    throw new TypeError(
+      `prepareRequest: proxy must be a URL or a host[:port]; the value given could not be parsed as either`
+    );
+  }
+}
+
 /** Steps 1 to 5. Throws before revealing anything when a check fails. */
 export function prepareRequest(
   incoming: OutgoingRequest,
@@ -190,10 +221,13 @@ export function prepareRequest(
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
 
+  const proxy = proxyHost(request.proxy);
+
   const descriptor: RequestDescriptor = {
     method,
     url: `${url.protocol}//${url.host}${url.pathname}`,
     host: url.host,
+    ...(proxy === undefined ? {} : { proxy }),
     attempt: options.attempt,
     hop: options.hop ?? 1,
   };

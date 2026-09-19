@@ -31,6 +31,13 @@ export interface RequestDescriptor {
   /** The full URL, with its query string removed. */
   readonly url: string;
   readonly host: string;
+  /**
+   * The proxy the request goes through, as `URL.host`, when the client
+   * resolved one. Absent for a direct request. Core's destination binding
+   * reads it as a second machine the bytes reach, which has to be a host the
+   * value allows.
+   */
+  readonly proxy?: string;
   /** 1 for the first send, 2 for the first retry, and so on. */
   readonly attempt: number;
   /**
@@ -184,4 +191,13 @@ export interface OutgoingRequest {
   readonly rawBody?: string | Uint8Array | undefined;
   /** Form-encoded body built by the wrapper after revealing. */
   readonly form?: SensitiveQuery | undefined;
+  /**
+   * The proxy the client will send this request through, as a URL or a
+   * `host[:port]`, when it knows of one. It is tagged on the reveal context
+   * as `proxy`, so a value bound to a host refuses when the bytes would reach
+   * a machine the binding does not name. A client that cannot see its proxy,
+   * because the transport is an opaque agent, leaves this unset and says so
+   * in its README.
+   */
+  readonly proxy?: string | URL | undefined;
 }

@@ -319,7 +319,11 @@ the second tag an audit log cannot tell one from the other.
 
 `tags.sink: 'http'` and `tags.host` are set on every reveal, and core's destination binding reads
 both: a value constructed with `destinations: { hosts: ['api.example.com'] }` is revealed by this
-package toward that host and refused toward any other, with nothing configured here. The
+package toward that host and refused toward any other, with nothing configured here. A client that
+knows the request will go through a proxy passes it as `proxy` on the outgoing request, a URL or a
+`host[:port]`, and it is tagged as `tags.proxy`, which the same binding reads as a second machine
+the bytes reach: a host-bound value refuses a proxy its list does not name. `sensitive-axios`
+resolves one the way axios does; the other clients honour no proxy option and pass none. The
 `allowSendToExternal` flag is **not** enforced here: neither default policy sets it, so enforcing it
 would mean choosing between denying every outbound request and allowing every one, and neither
 choice carries information.
