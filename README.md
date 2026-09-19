@@ -544,7 +544,7 @@ interface MaskOptions {
   showLast?: number;
   maskChar?: string;   // exactly one character, default '*'
   minMasked?: number;  // security floor: 4 for 'sensitive', 8 for 'credential'
-  strategy?: 'email' | 'phone' | 'card' | 'ssn' | 'uuid' | 'custom';
+  strategy?: 'email' | 'phone' | 'card' | 'ssn' | 'uuid' | 'url' | 'custom';
   customStrategy?: (value: string) => string;
 }
 ```
@@ -570,7 +570,18 @@ new SensitiveString('550e8400-e29b-41d4-a716-446655440000', 'sensitive', 'id').m
   strategy: 'uuid',
 });
 // '550e8400-****-****-****-************'
+new SensitiveString('https://x-access-token:ghp_abcdef123456@github.com/org/repo.git', 'sensitive', 'remote').mask({
+  strategy: 'url',
+});
+// 'https://***@github.com/org/repo.git'
 ```
+
+The `url` strategy keeps the scheme, host, port and path, which name the resource, and hides the
+userinfo, every query value and the fragment, which carry a credential when a URL carries one, at a
+fixed width so the rendering does not disclose the credential's length. The rendering is the parsed
+URL written back, so it is normalized. A URL with nothing to hide hides nothing, does not meet the
+floor, and redacts in full, which is deliberate: a caller who marked a URL sensitive and wants its
+bare form shown has marked the wrong thing. Wrap the credential and keep the URL.
 
 Masking is a partial reveal, not a redaction. It runs `checkRevealAllowed` and `auditReveal`
 exactly as `reveal()` does, and the audit record says which it was:
@@ -1276,8 +1287,10 @@ interface SensitiveStringOptions {
 }
 
 interface DestinationBinding {
-  sinks?: readonly string[];   // matched literally against the context's tags.sink
-  hosts?: readonly string[];   // matched against tags.host, as `new URL(url).host` spells it
+  sinks?: readonly string[];      // matched literally against the context's tags.sink
+  hosts?: readonly string[];      // matched against tags.host, as `new URL(url).host` spells it,
+                                  // and against tags.proxy when the context states one
+  principals?: readonly string[]; // matched literally against tags.principal
 }
 ```
 
@@ -1356,13 +1369,40 @@ try {
 
 All of that is configuration and none of it is any part of the protected value.
 
-What it does not do is the same thing nothing in the gate does: it does not protect against code in
-the process that writes the tag itself. That is inside the stated threat model, and it is also
-visible, because the audit record the lie has to be written into is the one an audit sink reads. Two
-further shapes the corpus recorded sit outside a host allowlist. A proxy setting changes the machine
-that receives the bytes without changing the URL, so a client integration that honours one must
-tag the proxy host rather than the URL's; and a destination decided by an asynchronous verification,
-an SSH host key against a known-hosts store, needs a reveal that waits, which this is not.
+Three more tags and one more option cover the shapes a host allowlist alone does not:
+
+- **A proxy.** A proxy setting changes the machine that receives the bytes and leaves the URL
+  untouched. When the context carries a `proxy` tag, that host has to match the same `hosts` list;
+  when it carries none, the request is read as direct. `sensitive-axios` resolves the proxy the way
+  axios does, from `config.proxy`, from an agent that exposes its `proxy`, or from the
+  `https_proxy`, `http_proxy` and `all_proxy` environment under `no_proxy`, and tags it; an opaque
+  agent reads as no proxy, and its README says so. The other clients honour no proxy option.
+- **A principal.** `principals` is matched literally against `tags.principal`, whatever identity
+  the application tags its reveals with. A credential fetched for one caller and handed out of a
+  shared cache to another refuses, which is a disclosure nothing writes and redaction cannot see.
+- **A verification.** `releasedBy: Promise<boolean>` holds every exposing read with
+  `UnreleasedSensitiveValueError` until the promise resolves `true`, and refuses for good when it
+  resolves anything else or rejects. It is for a credential whose destination is trusted only after
+  an asynchronous check has settled, an SSH host key against a known-hosts store, a certificate
+  against a pin. `equals()` is not held. The promise does not cross the wire and does not need to:
+  an unreleased value refuses to serialize and a released one has nothing to carry. A plain boolean
+  is refused at construction, so `releasedBy: verified` written with the result rather than the
+  promise cannot release a value nothing checked.
+
+```typescript
+const password = new SensitiveString(pw, 'credential', 'ssh', {
+  destinations: { hosts: [host] },
+  releasedBy: verifyHostKey(host, knownHosts),   // resolves true once the key matches
+});
+
+password.reveal(ctx);        // UnreleasedSensitiveValueError, status 'pending'
+await connection.ready;      // the verification has settled
+password.reveal(ctx);        // the password, or status 'refused' for good
+```
+
+What none of this does is the same thing nothing in the gate does: it does not protect against code
+in the process that writes the tag itself. That is inside the stated threat model, and it is also
+visible, because the audit record the lie has to be written into is the one an audit sink reads.
 
 ### Memory Hygiene
 

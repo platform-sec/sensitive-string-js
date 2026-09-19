@@ -265,12 +265,15 @@ environment does and does not protect.
 
 ## Destination binding
 
-`destinations` on the constructor options says where a value may go: the sinks
-and the hosts it may be revealed toward. It is checked in the same gate as the
-environment restrictions, against the `sink` and `host` tags of the reveal
-context the read runs under, which the HTTP clients, the data layer and the LLM
-package write on every reveal they perform. A context that states no
-destination refuses. `equals()` is not checked, because a comparison sends the
+`destinations` on the constructor options says where a value may go: the sinks,
+the hosts and the principals it may be revealed toward. It is checked in the
+same gate as the environment restrictions, against the `sink`, `host`, `proxy`
+and `principal` tags of the reveal context the read runs under, which the HTTP
+clients, the data layer and the LLM package write on every reveal they perform.
+A context that states no destination refuses; a `proxy` it states has to be a
+host the value allows. `releasedBy` beside it holds every exposing read until a
+promise of a boolean resolves `true`, for a credential whose recipient is
+trusted only after an asynchronous check. `equals()` is not checked, because a comparison sends the
 value nowhere; every other operation that hands plaintext out is, `hash()`,
 `serialize()` and the worker handoff included. Bindings cross the wire and the
 handoff as data, and a derived value carries the bindings of everything it came

@@ -24,7 +24,15 @@ export function minMaskedFloor(klass: SensitivityClass): number {
 }
 
 /** Recognized strategy names, in documentation order. */
-const STRATEGY_NAMES: readonly MaskStrategy[] = ['email', 'phone', 'card', 'ssn', 'uuid', 'custom'];
+const STRATEGY_NAMES: readonly MaskStrategy[] = [
+  'email',
+  'phone',
+  'card',
+  'ssn',
+  'uuid',
+  'url',
+  'custom',
+];
 
 /** Replacement character used when the caller does not choose one. */
 const DEFAULT_MASK_CHAR = '*';
@@ -54,6 +62,15 @@ const CARD_SHOW_LAST = 4;
 
 /** Code point counts of the five segments of a canonical UUID. */
 const UUID_SEGMENTS: readonly number[] = [8, 4, 4, 4, 12];
+
+/**
+ * What the url strategy writes in place of a userinfo, a query value or a
+ * fragment. A fixed width rather than one mask character per hidden
+ * character, so the rendering does not disclose the length of a credential
+ * the way the card and uuid renderings disclose the length of a value whose
+ * length is not secret.
+ */
+const URL_MASK_WIDTH = 3;
 
 /**
  * A validated set of mask options.
@@ -304,6 +321,61 @@ const BUILT_IN_STRATEGIES: Record<Exclude<MaskStrategy, 'custom'>, MaskStrategyF
 
   /** Hide every digit but the last four, keeping formatting. */
   ssn: (chars, plan) => maskDigitTail(chars, plan, 0),
+
+  /**
+   * Keep the scheme, the host, the port and the path, which name the resource,
+   * and hide the userinfo, every query value and the fragment, which carry a
+   * credential when a URL carries one. Query keys are kept: they name a
+   * parameter, and a rendering that lost them would say a token was present
+   * without saying which.
+   *
+   * The rendering is the parsed URL written back, so it is normalized: a host
+   * is lowercased, an empty path becomes `/`, and characters the parser
+   * percent-encodes appear encoded. What is hidden is counted on the parsed
+   * parts, so a credential the parser percent-encoded counts once.
+   *
+   * A value the parser rejects, or one with no host, is not a URL to this
+   * strategy and redacts, on the rule every format strategy follows. A URL
+   * with nothing to hide is one too: it hides zero characters, the floor is
+   * not met, and the whole value redacts. That is deliberate. A caller who
+   * marked a URL sensitive and wants its bare form shown has marked the wrong
+   * thing; wrap the credential and keep the URL.
+   */
+  url: (chars, plan) => {
+    let parsed: URL;
+
+    try {
+      parsed = new URL(chars.join(''));
+    } catch {
+      return STRATEGY_NOT_APPLICABLE;
+    }
+
+    if (parsed.host === '') {
+      return STRATEGY_NOT_APPLICABLE;
+    }
+
+    const mask = plan.maskChar.repeat(URL_MASK_WIDTH);
+    let hidden = [...parsed.username].length + [...parsed.password].length;
+    const userinfo = parsed.username !== '' || parsed.password !== '' ? `${mask}@` : '';
+
+    const query: string[] = [];
+    for (const [key, value] of parsed.searchParams) {
+      hidden += [...value].length;
+      query.push(`${encodeURIComponent(key)}=${mask}`);
+    }
+    const search = query.length === 0 ? '' : `?${query.join('&')}`;
+
+    let fragment = '';
+    if (parsed.hash !== '') {
+      hidden += [...parsed.hash.slice(1)].length;
+      fragment = `#${mask}`;
+    }
+
+    return {
+      masked: `${parsed.protocol}//${userinfo}${parsed.host}${parsed.pathname}${search}${fragment}`,
+      hidden,
+    };
+  },
 
   /** Show the first segment, which is enough to correlate log lines. */
   uuid: (chars, plan) => {

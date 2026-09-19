@@ -201,6 +201,90 @@ describe('destination binding', () => {
     });
   });
 
+  describe('the principal rule', () => {
+    it('matches a principal literally and refuses a silent context', () => {
+      // SAP/cloud-sdk-js: a credential fetched for one caller and returned from
+      // a process-lifetime cache to another. Nothing is written, so redaction
+      // cannot see it; the binding can.
+      const value = bound({ principals: ['tenant-a'] });
+
+      expect(value.reveal({ name: 'cache-get', tags: { principal: 'tenant-a' } })).toBe(VALUE);
+      expect(() => value.reveal({ name: 'cache-get', tags: { principal: 'tenant-b' } })).toThrow(
+        DestinationRestrictedError
+      );
+      expect(() => value.reveal({ name: 'cache-get', tags: { principal: 'Tenant-A' } })).toThrow(
+        DestinationRestrictedError
+      );
+      expect(() => value.reveal({ name: 'cache-get' })).toThrow(DestinationRestrictedError);
+    });
+
+    it('refuses a wildcard in a principal', () => {
+      expect(() => bound({ principals: ['tenant-*'] })).toThrow(RangeError);
+    });
+
+    it('carries principals across the wire', () => {
+      const value = bound({ principals: ['tenant-a'] });
+      const ctx = { name: 'x', tags: { principal: 'tenant-a' } };
+
+      const wire = value.serialize(ctx);
+      expect(wire.destinations).toEqual([{ principals: ['tenant-a'] }]);
+
+      const rebuilt = SensitiveString.deserialize<'credential'>(wire);
+      expect(() => rebuilt.reveal()).toThrow(DestinationRestrictedError);
+      expect(rebuilt.reveal(ctx)).toBe(VALUE);
+    });
+  });
+
+  describe('the proxy rule', () => {
+    it('requires a stated proxy to be a host the value allows', () => {
+      // axios/axios: a proxy setting changes the machine that receives the
+      // bytes and leaves the URL untouched, so the host check alone passes.
+      const value = bound({ hosts: ['api.example.com'] });
+      const direct = toward('api.example.com');
+
+      expect(value.reveal(direct)).toBe(VALUE);
+      expect(() =>
+        value.reveal({ ...direct, tags: { ...direct.tags, proxy: 'proxy.corp.example:3128' } })
+      ).toThrow(DestinationRestrictedError);
+
+      let thrown: unknown;
+      try {
+        value.reveal({ ...direct, tags: { ...direct.tags, proxy: 'proxy.corp.example:3128' } });
+      } catch (error) {
+        thrown = error;
+      }
+      expect((thrown as DestinationRestrictedError).restriction).toBe('proxy');
+      expect((thrown as DestinationRestrictedError).currentValue).toBe('proxy.corp.example:3128');
+      expect(String(thrown)).toContain('goes through proxy');
+    });
+
+    it('allows a proxy the host list names, literally or by wildcard', () => {
+      const value = bound({ hosts: ['api.example.com', '*.corp.example:3128'] });
+      const direct = toward('api.example.com');
+
+      expect(
+        value.reveal({ ...direct, tags: { ...direct.tags, proxy: 'egress.corp.example:3128' } })
+      ).toBe(VALUE);
+      expect(value.reveal({ ...direct, tags: { ...direct.tags, proxy: 'API.example.com' } })).toBe(
+        VALUE
+      );
+    });
+
+    it('reads an absent proxy tag as a direct request', () => {
+      const value = bound({ hosts: ['api.example.com'] });
+
+      expect(value.reveal(toward('api.example.com'))).toBe(VALUE);
+    });
+
+    it('does not consult a proxy for a binding with no hosts', () => {
+      const value = bound({ sinks: ['http'] });
+
+      expect(
+        value.reveal({ name: 'x', tags: { sink: 'http', proxy: 'proxy.corp.example:3128' } })
+      ).toBe(VALUE);
+    });
+  });
+
   describe('a context that states no destination', () => {
     it('refuses with no context at all', () => {
       const value = bound({ hosts: ['api.example.com'] });

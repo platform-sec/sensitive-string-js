@@ -45,6 +45,19 @@ is refused at construction, because an entry that can never equal a host tag sit
 matching nothing. `sensitive-fetch`'s standalone `sensitiveHeaders` helper takes no URL and writes
 no host, so a host-bound value refuses through it unless the caller's context names the host.
 
+Three additions on the same mechanism. `principals` is a third literal list, matched against
+`tags.principal`, whatever identity the application tags its reveals with, so a credential fetched
+for one caller and handed out of a shared cache to another refuses. A `proxy` tag is read the other
+way round: absent means the request goes to its host directly, present means a second machine
+receives the bytes first and has to match the same `hosts` list; `sensitive-http` tags it when a
+client resolves one. And `releasedBy: Promise<boolean>` holds every exposing read with
+`UnreleasedSensitiveValueError` (code `unreleased-value`, `status` `'pending'` or `'refused'`) until
+the promise resolves `true`, for good when it resolves anything else or rejects: a credential whose
+recipient is trusted only after an asynchronous check, an SSH host key against a known-hosts store,
+is constructed with the check in flight and cannot be sent until it says so. A plain boolean is
+refused at construction, `equals()` is not held, and the promise never crosses the wire because an
+unreleased value cannot be serialized and a released one has nothing to carry.
+
 `DestinationRestrictedError` extends `SensitiveStringError` with the code `destination-restricted`
 and names the tag that refused, what the context stated, and the allowed list, none of which is any
 part of the value. A process that binds nothing pays a length check on an empty frozen array.

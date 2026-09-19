@@ -87,6 +87,11 @@ const SAMPLES: readonly (readonly [string, SensitiveStringError, string])[] = [
   ],
   ['EnvironmentLockedError', new core.EnvironmentLockedError(), 'environment-locked'],
   [
+    'UnreleasedSensitiveValueError',
+    new core.UnreleasedSensitiveValueError('pending', 'ssh_password'),
+    'unreleased-value',
+  ],
+  [
     'DestinationRestrictedError',
     new core.DestinationRestrictedError('host', 'evil.example.net', ['api.example.com'], 'token'),
     'destination-restricted',

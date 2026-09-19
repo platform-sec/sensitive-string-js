@@ -401,7 +401,7 @@ describe('partial masking security', () => {
       // of the secret instead.
       const token = new SensitiveString(`${CANARY}a1b2c3d4e5f6a7b8`, 'sensitive', 'token');
 
-      for (const strategy of ['email', 'card', 'uuid'] as const) {
+      for (const strategy of ['email', 'card', 'uuid', 'url'] as const) {
         expect(token.mask({ strategy })).toBe('[REDACTED:sensitive]');
       }
     });
@@ -440,7 +440,7 @@ describe('partial masking security', () => {
       // occurs in the value as one the caller can read, which is exact only
       // while the mask character cannot come from the value itself.
       const alphabet = [...'abcxyz019-+@. \u00e9\u{1f512}'];
-      const strategies = [undefined, 'email', 'phone', 'card', 'ssn', 'uuid'] as const;
+      const strategies = [undefined, 'email', 'phone', 'card', 'ssn', 'uuid', 'url'] as const;
 
       for (let run = 0; run < 500; run += 1) {
         const length = Math.floor(random() * 24);

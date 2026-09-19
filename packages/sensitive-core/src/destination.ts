@@ -20,9 +20,9 @@ import { SensitiveStringError } from './errors.js';
  * substring host comparison written by two unrelated maintainers.
  *
  * This module is the recipient half. A value constructed with `destinations`
- * carries the sinks and the hosts it may be revealed toward, and every
- * exposing read is checked against the `sink` and `host` tags of the context
- * it runs under. Those two tags are the ones the integrations already write:
+ * carries the sinks, the hosts and the principals it may be revealed toward,
+ * and every exposing read is checked against the `sink`, `host`, `proxy` and
+ * `principal` tags of the context it runs under. Those two tags are the ones the integrations already write:
  * the HTTP clients set `tags.sink: 'http'` and `tags.host` from the request
  * URL on every reveal, the data layer sets `tags.sink` to its driver, and the
  * LLM package sets it to the sink name it was given. A context that states no
@@ -40,7 +40,7 @@ import { SensitiveStringError } from './errors.js';
  */
 
 /** Which half of a binding refused. */
-export type DestinationKind = 'sink' | 'host';
+export type DestinationKind = 'sink' | 'host' | 'principal' | 'proxy';
 
 /**
  * Raised when an operation needs the raw value of an instance the current
@@ -66,12 +66,16 @@ export class DestinationRestrictedError extends SensitiveStringError {
 
     super(
       `Sensitive value${named} cannot be revealed toward this destination: ` +
-        (currentValue === undefined
-          ? `the reveal context states no ${restriction} tag, and the value may only go to ` +
-            `${restriction} ${allowed}. Reveal it under a context whose tags name the ` +
-            `${restriction}, which the HTTP, data and LLM integrations do on every reveal.`
-          : `${restriction} is '${currentValue}', and the value may only go to ${restriction} ` +
-            `${allowed}`)
+        (restriction === 'proxy'
+          ? `the request goes through proxy '${currentValue ?? ''}', and the value may only go ` +
+            `to host ${allowed}. A proxy receives the bytes before the host does, so it has to ` +
+            'be a host the value allows.'
+          : currentValue === undefined
+            ? `the reveal context states no ${restriction} tag, and the value may only go to ` +
+              `${restriction} ${allowed}. Reveal it under a context whose tags name the ` +
+              `${restriction}, which the HTTP, data and LLM integrations do on every reveal.`
+            : `${restriction} is '${currentValue}', and the value may only go to ` +
+              `${restriction} ${allowed}`)
     );
   }
 }
@@ -92,13 +96,14 @@ function describeType(value: unknown): string {
 export interface ResolvedDestination {
   readonly sinks: readonly string[] | undefined;
   readonly hosts: readonly string[] | undefined;
+  readonly principals: readonly string[] | undefined;
 }
 
 /** The shared empty array a value with no binding points at. */
 export const NO_DESTINATIONS: readonly ResolvedDestination[] = Object.freeze([]);
 
 /** The two fields, in the order they are checked and serialized. */
-const LIST_FIELDS = ['sinks', 'hosts'] as const;
+const LIST_FIELDS = ['sinks', 'hosts', 'principals'] as const;
 
 /**
  * Characters that cannot appear in a host entry because they belong to some
@@ -135,7 +140,11 @@ function requireList(value: unknown, name: (typeof LIST_FIELDS)[number]): readon
         throw new RangeError(`SensitiveString: destinations.${name}[${index}] must not be empty`);
       }
 
-      return name === 'hosts' ? requireHost(entry, index) : requireSink(entry, index);
+      return name === 'hosts'
+        ? requireHost(entry, index)
+        : name === 'sinks'
+          ? requireSink(entry, index)
+          : requirePrincipal(entry, index);
     })
   );
 }
@@ -145,6 +154,21 @@ function requireList(value: unknown, name: (typeof LIST_FIELDS)[number]): readon
  * that write the tag write a fixed name, and a pattern over `'http'`,
  * `'prisma'` or `'anthropic'` has nothing to abbreviate.
  */
+/**
+ * A principal is whatever identity the application tags a reveal with, a user
+ * id, a service account, a tenant, matched literally. No wildcard: an
+ * identity is exact or it is not the identity.
+ */
+function requirePrincipal(entry: string, index: number): string {
+  if (entry.includes('*')) {
+    throw new RangeError(
+      `SensitiveString: destinations.principals[${index}] must be a literal identity with no wildcard.`
+    );
+  }
+
+  return entry;
+}
+
 function requireSink(entry: string, index: number): string {
   if (entry.includes('*') || /\s/.test(entry)) {
     throw new RangeError(
@@ -232,7 +256,11 @@ function resolveOne(binding: DestinationBinding, index: number): ResolvedDestina
     );
   }
 
-  const lists: { sinks?: readonly string[]; hosts?: readonly string[] } = {};
+  const lists: {
+    sinks?: readonly string[];
+    hosts?: readonly string[];
+    principals?: readonly string[];
+  } = {};
   let declared = false;
 
   for (const field of LIST_FIELDS) {
@@ -249,12 +277,12 @@ function resolveOne(binding: DestinationBinding, index: number): ResolvedDestina
     // something. Refusing it here is the same choice the empty list makes,
     // for the same reason.
     throw new Error(
-      'SensitiveString: destinations declares no destination. Give it sinks, hosts or both, ' +
-        'or omit the option.'
+      'SensitiveString: destinations declares no destination. Give it sinks, hosts, principals ' +
+        'or any of them together, or omit the option.'
     );
   }
 
-  return { sinks: lists.sinks, hosts: lists.hosts };
+  return { sinks: lists.sinks, hosts: lists.hosts, principals: lists.principals };
 }
 
 /**
@@ -349,10 +377,13 @@ function statedTag(
  * least as bound as each of them, which is rule R2's combination rule with
  * nothing to decide: an intersection is what sharing the state already gives.
  *
- * A context that states no `sink` or no `host` refuses a binding on that
- * field. This is the allowlist rule the environment restrictions follow, and
- * it is the whole point here: a reveal that does not say where the value is
- * going is the reveal this feature exists to refuse.
+ * A context that states no `sink`, no `host` or no `principal` refuses a
+ * binding on that field. This is the allowlist rule the environment
+ * restrictions follow, and it is the whole point here: a reveal that does not
+ * say where the value is going is the reveal this feature exists to refuse.
+ * A `proxy` tag is the one read the other way round: absent means the bytes
+ * go to the host directly, and present means a second machine receives them
+ * first and has to be allowed by the same host list.
  *
  * @throws DestinationRestrictedError If any binding refuses.
  */
@@ -363,6 +394,12 @@ export function checkDestinations(
 ): void {
   const sink = statedTag(ctx, 'sink');
   const host = statedTag(ctx, 'host')?.toLowerCase();
+  const principal = statedTag(ctx, 'principal');
+  // A proxy is a second machine the bytes reach, before the host, so when a
+  // context states one it has to be a host the value allows too. Absent is
+  // read as no proxy: the HTTP row writes the tag when it resolves one, and
+  // a context with no proxy tag is a request that goes to its host directly.
+  const proxy = statedTag(ctx, 'proxy')?.toLowerCase();
 
   for (const binding of destinations) {
     if (binding.sinks !== undefined && (sink === undefined || !binding.sinks.includes(sink))) {
@@ -374,6 +411,21 @@ export function checkDestinations(
       (host === undefined || !matchesAnyHost(host, binding.hosts))
     ) {
       throw new DestinationRestrictedError('host', host, binding.hosts, label);
+    }
+
+    if (
+      binding.hosts !== undefined &&
+      proxy !== undefined &&
+      !matchesAnyHost(proxy, binding.hosts)
+    ) {
+      throw new DestinationRestrictedError('proxy', proxy, binding.hosts, label);
+    }
+
+    if (
+      binding.principals !== undefined &&
+      (principal === undefined || !binding.principals.includes(principal))
+    ) {
+      throw new DestinationRestrictedError('principal', principal, binding.principals, label);
     }
   }
 }

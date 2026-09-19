@@ -122,6 +122,12 @@ export type { RestrictionKind } from './environment.js';
 export { DestinationRestrictedError } from './destination.js';
 export type { DestinationKind } from './destination.js';
 
+// A reveal that waits on a verification: the value is constructed with the
+// check in flight and refuses every exposing read until the check says yes,
+// for good if it says anything else.
+export { UnreleasedSensitiveValueError } from './release.js';
+export type { ReleaseStatus } from './release.js';
+
 // Worker thread and child process handoff
 export {
   toWorkerPayload,

@@ -125,6 +125,26 @@ export interface SensitiveStringOptions {
   destinations?: DestinationBinding | readonly DestinationBinding[];
 
   /**
+   * A verification this value waits for before it can be read.
+   *
+   * Every exposing read refuses with `UnreleasedSensitiveValueError` until the
+   * promise resolves `true`. Anything else it resolves to, or a rejection,
+   * refuses for good: a verification that did not answer yes has answered no,
+   * and a caller who wants to try again constructs a new value. A comparison
+   * is not held, because `equals()` sends the value nowhere.
+   *
+   * The case this exists for is a credential whose destination is trusted
+   * only after an asynchronous check has settled, an SSH host key against a
+   * known-hosts store, a certificate against a pin: the value is constructed
+   * with the check in flight and cannot be sent until the check says so.
+   *
+   * A promise is not data. It does not cross the wire or a worker handoff,
+   * and does not need to: an unreleased value refuses to serialize, and a
+   * released one has nothing left to carry.
+   */
+  releasedBy?: PromiseLike<boolean>;
+
+  /**
    * Hold the value as AES-256-GCM ciphertext in a `Buffer` rather than as a
    * JavaScript string.
    *
@@ -296,12 +316,22 @@ export interface DestinationBinding {
    * list matching nothing.
    */
   hosts?: readonly string[] | undefined;
+
+  /**
+   * Principals this value may be revealed for, matched literally against the
+   * context's `tags.principal`: whatever identity the application tags its
+   * reveals with, a user id, a service account, a tenant. A value fetched for
+   * one caller and handed out of a shared cache to another refuses, which is
+   * a disclosure a redaction model cannot see because nothing is written.
+   */
+  principals?: readonly string[] | undefined;
 }
 
-/** The wire form of a {@link DestinationBinding}: the same two lists. */
+/** The wire form of a {@link DestinationBinding}: the same three lists. */
 export interface SerializedDestinationBinding {
   sinks?: string[];
   hosts?: string[];
+  principals?: string[];
 }
 
 /**
@@ -354,7 +384,7 @@ export interface RenewalOptions {
  * Built-in masking strategies for well-known value formats, plus `custom` for a
  * caller-supplied one.
  */
-export type MaskStrategy = 'email' | 'phone' | 'card' | 'ssn' | 'uuid' | 'custom';
+export type MaskStrategy = 'email' | 'phone' | 'card' | 'ssn' | 'uuid' | 'url' | 'custom';
 
 /**
  * Options for `SensitiveString.mask()`.

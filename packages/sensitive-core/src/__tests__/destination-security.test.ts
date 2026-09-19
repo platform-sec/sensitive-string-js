@@ -422,10 +422,10 @@ describe('destination binding security', () => {
         __sensitive: true as const,
         klass: 'sensitive' as const,
         value: CANARY,
-        destinations: [{ hosts: [HOST], principals: ['alice'] }],
+        destinations: [{ hosts: [HOST], regions: ['eu-*'] }],
       };
 
-      expect(() => SensitiveString.deserialize(wire)).toThrow(/unknown key 'principals'/);
+      expect(() => SensitiveString.deserialize(wire)).toThrow(/unknown key 'regions'/);
     });
 
     it('rejects a payload binding the constructor would have refused', () => {

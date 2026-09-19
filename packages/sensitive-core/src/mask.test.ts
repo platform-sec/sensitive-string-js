@@ -219,6 +219,62 @@ describe('SensitiveString.mask', () => {
     });
   });
 
+  describe('the url strategy', () => {
+    it('keeps the resource and hides the userinfo, the query values and the fragment', () => {
+      // repomix: the clone message should keep which repository it names.
+      expect(
+        sensitive('https://x-access-token:ghp_abcdef123456@github.com/org/repo.git').mask({
+          strategy: 'url',
+        })
+      ).toBe('https://***@github.com/org/repo.git');
+
+      expect(
+        sensitive('https://api.example.com:8443/v1/items?token=abcdef&page=2#access_token=zz').mask(
+          { strategy: 'url' }
+        )
+      ).toBe(
+        'https://***@api.example.com:8443/v1/items?token=***&page=***#***'.replace('***@', '')
+      );
+    });
+
+    it('does not disclose the length of what it hides', () => {
+      const short = sensitive('https://u:abcdef@h.example/').mask({ strategy: 'url' });
+      const long = sensitive('https://u:abcdefghijklmnopqrstuvwxyz@h.example/').mask({
+        strategy: 'url',
+      });
+
+      expect(short).toBe(long);
+      expect(short).toBe('https://***@h.example/');
+    });
+
+    it('redacts a value that is not a URL, or has no host', () => {
+      expect(sensitive('not a url at all').mask({ strategy: 'url' })).toBe('[REDACTED:sensitive]');
+      expect(sensitive('mailto:someone@example.com').mask({ strategy: 'url' })).toBe(
+        '[REDACTED:sensitive]'
+      );
+    });
+
+    it('redacts a URL with nothing to hide, because the floor applies', () => {
+      // mcp-searxng's uncredentialed case. A caller who wants the bare URL
+      // shown has wrapped the wrong thing; the strategy hides zero characters
+      // and the floor turns that into full redaction.
+      expect(sensitive('https://searx.example/search').mask({ strategy: 'url' })).toBe(
+        '[REDACTED:sensitive]'
+      );
+      // Three characters of credential, the username counted, are under the
+      // floor of four too.
+      expect(sensitive('https://u:ab@h.example/').mask({ strategy: 'url' })).toBe(
+        '[REDACTED:sensitive]'
+      );
+    });
+
+    it('uses the caller’s mask character', () => {
+      expect(
+        sensitive('https://u:abcdef@h.example/?k=v').mask({ strategy: 'url', maskChar: '#' })
+      ).toBe('https://###@h.example/?k=###');
+    });
+  });
+
   describe('the custom strategy', () => {
     it('invokes the formatter with the raw value', () => {
       const customStrategy = vi.fn((value: string) => `${value.slice(0, 3)}...${value.slice(-3)}`);

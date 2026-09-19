@@ -75,6 +75,12 @@ import {
   serializeDestinations,
   type ResolvedDestination,
 } from './destination.js';
+import {
+  planRelease,
+  releaseInForce,
+  UnreleasedSensitiveValueError,
+  type ReleaseCell,
+} from './release.js';
 import { snapshotRegExp } from './regexp.js';
 import {
   additionalData,
@@ -232,6 +238,11 @@ interface SensitiveStringState {
    * read runs under.
    */
   readonly destinations: readonly ResolvedDestination[] | undefined;
+  /**
+   * The verification this value waits on, or `undefined` when it waits on
+   * nothing. Mutated by the promise's settlement and by nothing else.
+   */
+  readonly release: ReleaseCell | undefined;
   /**
    * When the value this state belongs to was destroyed, epoch milliseconds, or
    * `undefined` while it still exists.
@@ -639,6 +650,7 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
       revocation: planRevocation(options, label),
       restrictions: planRestrictions(options),
       destinations: planDestinations(options),
+      release: planRelease(options),
       clearedAt: undefined,
     };
 
@@ -1015,6 +1027,25 @@ export class SensitiveString<C extends SensitivityClass = 'sensitive'> {
     // toward a stated destination, hashing and a worker handoff included.
     if (access === 'expose' && this.#destinations.length !== 0) {
       checkDestinations(this.#destinations, effectiveCtx, this.label);
+    }
+
+    // After the destination, because it is the destination's own second
+    // question: not where the bytes may go, but whether the recipient has
+    // been checked yet. Exposing reads only, for the reason the destination
+    // check is: a comparison sends the value nowhere. A walk over `#states`
+    // rather than a flattened view, since a value that waits on nothing is
+    // the common case and the walk is one field read per state.
+    if (access === 'expose') {
+      const unreleased = releaseInForce(this.#states);
+
+      if (unreleased !== undefined) {
+        throw new UnreleasedSensitiveValueError(
+          unreleased.status === 'pending' ? 'pending' : 'refused',
+          this.label,
+          unreleased.detail,
+          unreleased.cause
+        );
+      }
     }
 
     // The same rule one step later, and the same reason the budget is decided
