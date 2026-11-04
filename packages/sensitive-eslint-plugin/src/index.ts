@@ -80,7 +80,7 @@ export const rules: Readonly<Record<string, RuleModule>> = {
  */
 export const meta = {
   name: '@platform-sec/eslint-plugin-sensitive-string',
-  version: '0.1.0',
+  version: '0.2.0',
 } as const;
 
 /**

@@ -1,6 +1,6 @@
 {
   "name": "@platform-sec/sensitive-string-secrets",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shared layer under the secrets manager integrations - the SecretSource interface, classification, the decode guard, the instance cache, and the write guard",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -40,7 +40,7 @@
     "node": ">=22.12.0"
   },
   "peerDependencies": {
-    "@platform-sec/sensitive-string-core": "^0.5.0"
+    "@platform-sec/sensitive-string-core": "^0.6.0"
   },
   "devDependencies": {
     "@platform-sec/sensitive-string-core": "workspace:*",

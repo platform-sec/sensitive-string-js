@@ -1,6 +1,6 @@
 {
   "name": "@platform-sec/sensitive-string-zod",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Zod integration for SensitiveString - parse input directly into sensitive types",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -31,7 +31,7 @@
     "node": ">=22.12.0"
   },
   "peerDependencies": {
-    "@platform-sec/sensitive-string-core": "^0.5.0",
+    "@platform-sec/sensitive-string-core": "^0.6.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
