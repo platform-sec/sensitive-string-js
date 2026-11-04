@@ -8,6 +8,7 @@ import {
 } from './redaction-marker.js';
 import { getPolicy, registerPolicy, resetPolicies } from './policy.js';
 import { SensitiveString } from './sensitive-string.js';
+import type { SensitivityClass } from './types.js';
 
 const CANARY = 'LEAKED_SECRET_abc123xyz';
 
@@ -127,7 +128,11 @@ describe('the memo', () => {
   });
 
   it('picks up a newly registered class', () => {
-    registerPolicy({ ...getPolicy('sensitive'), name: 'phi', redact: () => '<<phi>>' });
+    registerPolicy({
+      ...getPolicy('sensitive'),
+      name: 'phi' as SensitivityClass,
+      redact: () => '<<phi>>',
+    });
 
     expect(containsRedactionMarker('<<phi>>')).toBe(true);
   });

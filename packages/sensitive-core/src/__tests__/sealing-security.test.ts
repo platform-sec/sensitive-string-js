@@ -146,7 +146,7 @@ const RAW_VALUE_OPERATIONS: readonly [string, (value: Sensitive) => unknown][] =
   ['test', (v) => v.test(/SECRET/)],
   ['search', (v) => v.search(/SECRET/)],
   ['match', (v) => v.match(/SECRET/)?.map((m) => m.reveal())],
-  ['matchGroups', (v) => v.matchGroups(/(?<tag>SECRET)/)?.tag?.reveal()],
+  ['matchGroups', (v) => v.matchGroups(/(?<tag>SECRET)/)?.['tag']?.reveal()],
   ['matchAll', (v) => Array.from(v.matchAll(/SECRET/g)).flat().length],
   ['split', (v) => v.split('_').map((part) => part.reveal())],
   ['replace', (v) => v.replace('SECRET', 'x').reveal()],
@@ -436,7 +436,7 @@ describe('tampering with the box', () => {
 
     for (let at = 0; at < original.length; at++) {
       const damaged = Buffer.from(original);
-      damaged[at] ^= 0x01;
+      damaged[at] = damaged[at]! ^ 0x01;
 
       // Byte 0 to 3 is the generation index, so a flip there names a
       // generation the ring does not hold. Every other byte fails the tag.
@@ -497,7 +497,7 @@ describe('tampering with the box', () => {
 
   it('carries no part of the value in its refusal', () => {
     const damaged = box();
-    damaged[damaged.length - 1] ^= 0x80;
+    damaged[damaged.length - 1] = damaged.at(-1)! ^ 0x80;
 
     try {
       openBox(damaged, aad, 'canary');
@@ -732,7 +732,7 @@ describe('canaries in every path this feature adds', () => {
           const plain = Buffer.from(CANARY, 'utf8');
           const damaged = sealBytes(plain, aad, 'canary');
           plain.fill(0);
-          damaged[damaged.length - 1] ^= 0xff;
+          damaged[damaged.length - 1] = damaged.at(-1)! ^ 0xff;
           return openBox(damaged, aad, 'canary');
         },
       ],

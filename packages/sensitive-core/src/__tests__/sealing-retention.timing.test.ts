@@ -40,15 +40,23 @@ import {
   unlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { writeHeapSnapshot } from 'node:v8';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { resetSealing, SensitiveString, setSealing } from '../index.js';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const FIXTURE = join(HERE, 'fixtures', 'sealing-memory.mjs');
-const DIST = join(HERE, '..', '..', 'dist', 'index.js');
+/**
+ * This package's directory, from the working directory rather than from
+ * `import.meta.url`, because the root type-check compiles this file as
+ * CommonJS and rejects the meta-property there. The same anchor as
+ * `worker-boundary.test.ts`.
+ */
+const PACKAGE_DIR = existsSync(join(process.cwd(), 'packages', 'sensitive-core'))
+  ? join(process.cwd(), 'packages', 'sensitive-core')
+  : process.cwd();
+
+const FIXTURE = join(PACKAGE_DIR, 'src', '__tests__', 'fixtures', 'sealing-memory.mjs');
+const DIST = join(PACKAGE_DIR, 'dist', 'index.js');
 
 const HAS_GC = typeof global.gc === 'function';
 
@@ -247,8 +255,6 @@ async function scannerWorks(): Promise<boolean> {
   }
 }
 
-const CAN_SCAN = await scannerWorks();
-
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!HAS_GC)('what a heap snapshot holds', () => {
@@ -365,7 +371,20 @@ describe.skipIf(!HAS_GC)('what a heap snapshot holds', () => {
   });
 });
 
-describe.skipIf(!CAN_SCAN)('what a process dump holds', () => {
+describe('what a process dump holds', () => {
+  // Decided in a hook rather than by a top-level `await`, which the root
+  // type-check rejects in a file it compiles as CommonJS. Every case skips
+  // rather than returns, so a machine that cannot scan reports skips and never
+  // a pass for a measurement it did not take.
+  let canScan: boolean | undefined;
+
+  beforeEach(async (context) => {
+    canScan ??= await scannerWorks();
+    if (!canScan) {
+      context.skip();
+    }
+  });
+
   it('finds nothing in a child that built nothing', async () => {
     // The floor. Every count below is read against this, and a non-zero control
     // would mean the scanner is finding the needle where nobody put it.

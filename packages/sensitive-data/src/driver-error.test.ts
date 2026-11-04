@@ -74,7 +74,7 @@ describe('a structured-only error', () => {
 
     sanitizeQueryError(error, structuredOnly);
 
-    const driver = (error as { driverError: Record<string, unknown> }).driverError;
+    const driver = (error as unknown as { driverError: Record<string, unknown> }).driverError;
     expect(driver['parameters']).toEqual([CENSOR]);
     expect(driver['code']).toBe('23505');
     expect(driver['constraint']).toBe('users_email_key');

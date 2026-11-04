@@ -47,7 +47,7 @@ describe('the public surface', () => {
     expect(new index.DrizzleCacheRefusedError([], 'X').code).toBe('DRIZZLE_QUERY_CACHE');
     expect(new index.DrizzleDriftError([]).code).toBe('DRIZZLE_SCHEMA_DRIFT');
     expect(new index.DrizzleWriteRefusedError('p', 'x').code).toBe('DRIZZLE_WRITE_REFUSED');
-    expect(new index.DrizzleParameterRefusedError(0, 'instance', 's').code).toBe(
+    expect(new index.DrizzleParameterRefusedError('0', 'instance', 's').code).toBe(
       'DRIZZLE_SENSITIVE_PARAMETER'
     );
   });
