@@ -1,0 +1,9 @@
+{
+  "description": "Packages that may be published to npm. Cumulative: a package joins in the wave that first publishes it and is never removed. Anything not named is versioned but held. See RELEASING.md.",
+  "packages": [
+    "@platform-sec/sensitive-string-core",
+    "@platform-sec/sensitive-string-zod",
+    "@platform-sec/sensitive-string-testing",
+    "@platform-sec/eslint-plugin-sensitive-string"
+  ]
+}

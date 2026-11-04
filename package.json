@@ -33,6 +33,7 @@
     "release:status": "changeset status --verbose",
     "release:version": "changeset version && pnpm install --lockfile-only && pnpm release:check",
     "release:check": "node scripts/check-release-consistency.mjs",
+    "release:filter": "node scripts/filter-publish-plan.mjs",
     "release:pack": "node scripts/pack-release-plan.mjs",
     "clean": "rm -rf packages/*/dist packages/*/.turbo node_modules/.cache && find packages/*/src -name '*.js' -delete 2>/dev/null; find packages/*/src -name '*.d.ts' -delete 2>/dev/null; find packages/*/src -name '*.js.map' -delete 2>/dev/null; true",
     "codeql:download": "codeql pack download codeql/javascript-queries",

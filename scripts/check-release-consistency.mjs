@@ -2,8 +2,10 @@
 /**
  * Check the invariants that make independent package releases safe.
  *
- * With no arguments this checks package versions and every internal dependency
- * range. A release workflow can additionally pass a Changesets publish plan:
+ * With no arguments this checks package versions, every internal dependency
+ * range, and the release allowlist (`release-allowlist.json`, described in
+ * `release-allowlist.mjs`). A release workflow can additionally pass a
+ * Changesets publish plan, every entry of which must be allowlisted:
  *
  *   pnpm release:check -- --plan path/to/publish-plan.json --require-releases
  *   pnpm release:check -- --plan path/to/publish-plan.json --require-tarballs
@@ -14,6 +16,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import semver from 'semver';
+import { allowlistFilename, checkAllowlist, readAllowlist } from './release-allowlist.mjs';
 
 const repoRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const packagesDir = path.join(repoRoot, 'packages');
@@ -140,7 +143,13 @@ async function fileExists(filename) {
   }
 }
 
-async function checkPublishPlan(planFilename, packagesByName, requireReleases, requireTarballs) {
+async function checkPublishPlan(
+  planFilename,
+  packagesByName,
+  allowlisted,
+  requireReleases,
+  requireTarballs
+) {
   const problems = [];
   const absolutePlan = path.resolve(repoRoot, planFilename);
   const planDocument = JSON.parse(await readFile(absolutePlan, 'utf8'));
@@ -173,6 +182,10 @@ async function checkPublishPlan(planFilename, packagesByName, requireReleases, r
     if (pkg === undefined) {
       problems.push(`${key} is not a workspace package`);
       continue;
+    }
+
+    if (!allowlisted.has(entry.name)) {
+      problems.push(`${key} is in the publish plan but not in ${allowlistFilename}`);
     }
 
     if (pkg.manifest.version !== entry.version) {
@@ -223,6 +236,8 @@ async function main() {
   const options = parseArguments(process.argv.slice(2));
   const packages = await readPackages();
   const { packagesByName, problems } = checkPackageGraph(packages);
+  const allowlist = await readAllowlist(repoRoot);
+  problems.push(...checkAllowlist(allowlist, packagesByName));
   let releaseCount = null;
 
   if (options.requireNoChangesets) {
@@ -242,6 +257,7 @@ async function main() {
     const planResult = await checkPublishPlan(
       options.plan,
       packagesByName,
+      new Set(allowlist),
       options.requireReleases,
       options.requireTarballs
     );
@@ -256,7 +272,10 @@ async function main() {
   }
 
   const planResult = releaseCount === null ? '' : ` and ${releaseCount} planned release(s)`;
-  console.log(`ok    ${packages.length} package manifests${planResult} are release-consistent`);
+  console.log(
+    `ok    ${packages.length} package manifests${planResult} are release-consistent; ` +
+      `${allowlist.length} allowlisted for npm`
+  );
 }
 
 await main();

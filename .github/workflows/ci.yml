@@ -135,6 +135,9 @@ jobs:
       - name: Check package manifests
         run: pnpm check:packaging
 
+      - name: Check release consistency and allowlist
+        run: pnpm release:check
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         continue-on-error: true

@@ -120,7 +120,14 @@ jobs:
 
       - name: Create publish plan
         run: |
-          pnpm changeset publish-plan --output publish-plan.json
+          # Every committed version npm lacks, then only the allowlisted ones.
+          # release:check refuses a plan entry that is not allowlisted, so the
+          # filter is not the only thing keeping a held package off npm.
+          pnpm changeset publish-plan --output publish-plan.full.json
+          pnpm release:filter -- \
+            --plan publish-plan.full.json \
+            --output publish-plan.json \
+            --held held-releases.txt
           pnpm release:check -- \
             --plan publish-plan.json \
             --require-releases \
@@ -157,6 +164,14 @@ jobs:
             jq -r \
               '.plan | flatten | .[] | "- **\(.name)** \(.version) (kind \(.kind), tag \(.tag))"' \
               release-bundle/publish-plan.json
+            echo
+            echo '## Held by release-allowlist.json'
+            echo
+            if [[ -s held-releases.txt ]]; then
+              sed 's/^/- /' held-releases.txt
+            else
+              echo '- none'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload release bundle
