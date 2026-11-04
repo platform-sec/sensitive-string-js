@@ -264,7 +264,10 @@ export function createSensitiveGot(client: Got, options: SensitiveGotOptions = {
     } as unknown as StrictOptions & Record<string, unknown>;
 
     if (opts.responseFields !== undefined) {
-      out['responseType'] = 'json';
+      // Written through the plain record: got 16.2 declares `responseType` on
+      // `StrictOptions` as `undefined`, and the intersection keeps that over the
+      // index signature, so the direct write stops compiling there.
+      (out as Record<string, unknown>)['responseType'] = 'json';
     }
 
     if (prepared.formText !== undefined) {
