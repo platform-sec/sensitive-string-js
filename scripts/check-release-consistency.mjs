@@ -3,7 +3,8 @@
  * Check the invariants that make independent package releases safe.
  *
  * With no arguments this checks package versions, every internal dependency
- * range, and the release allowlist (`release-allowlist.json`, described in
+ * range, the versions written into source (`source-versions.mjs`), and the
+ * release allowlist (`release-allowlist.json`, described in
  * `release-allowlist.mjs`). A release workflow can additionally pass a
  * Changesets publish plan, every entry of which must be allowlisted:
  *
@@ -17,6 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import semver from 'semver';
 import { allowlistFilename, checkAllowlist, readAllowlist } from './release-allowlist.mjs';
+import { checkSourceVersions } from './source-versions.mjs';
 
 const repoRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const packagesDir = path.join(repoRoot, 'packages');
@@ -238,6 +240,7 @@ async function main() {
   const { packagesByName, problems } = checkPackageGraph(packages);
   const allowlist = await readAllowlist(repoRoot);
   problems.push(...checkAllowlist(allowlist, packagesByName));
+  problems.push(...(await checkSourceVersions(repoRoot)));
   let releaseCount = null;
 
   if (options.requireNoChangesets) {

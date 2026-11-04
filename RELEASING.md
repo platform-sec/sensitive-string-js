@@ -79,7 +79,8 @@ Enable **Settings > Actions > General > Allow GitHub Actions to create and appro
 for the repository; the workflow cannot create its branch and pull request without that setting.
 
 That command consumes the pending changesets and updates package manifests, package changelogs,
-internal ranges, and the lockfile. These files are reviewed and committed together. Do not manually
+internal ranges, the lockfile, and the ESLint plugin's hand-written `meta.version`
+(`scripts/source-versions.mjs`, which `pnpm release:check` also runs as a check). These files are reviewed and committed together. Do not manually
 edit a package version or a generated package changelog during normal release preparation.
 
 Review the pull request for:

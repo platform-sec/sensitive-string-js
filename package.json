@@ -31,7 +31,7 @@
     "check:packaging": "node scripts/check-packaging.mjs",
     "changeset": "changeset",
     "release:status": "changeset status --verbose",
-    "release:version": "changeset version && pnpm install --lockfile-only && pnpm release:check",
+    "release:version": "changeset version && node scripts/source-versions.mjs --write && pnpm install --lockfile-only && pnpm release:check",
     "release:check": "node scripts/check-release-consistency.mjs",
     "release:filter": "node scripts/filter-publish-plan.mjs",
     "release:pack": "node scripts/pack-release-plan.mjs",
