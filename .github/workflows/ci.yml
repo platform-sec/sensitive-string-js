@@ -628,8 +628,10 @@ jobs:
 
       - name: Verify lockfile integrity
         run: |
-          # Ensure lockfile is in sync with package.json
-          pnpm install --frozen-lockfile --dry-run
+          # Ensure lockfile is in sync with package.json. pnpm 9 has no
+          # `install --dry-run`. `--lockfile-only` resolves without touching
+          # node_modules, and `--frozen-lockfile` fails if that would change it.
+          pnpm install --frozen-lockfile --lockfile-only
           echo "✓ Lockfile integrity verified"
 
       - name: Check for known malicious packages
