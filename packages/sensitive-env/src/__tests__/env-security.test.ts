@@ -80,7 +80,17 @@ function file(name: string, content: string): string {
 
 describe('the canary and error sweep', () => {
   it('lets no canary reach a result or an error, on any entry point', async () => {
-    const badFile = file('bad.env', `A=1\n${CANARY}\nTOKEN="a=${CANARY}"\nK="${CANARY}\n`);
+    // Mangled by the parser before Node 22.16, and still hostile after it. A
+    // tab in a name is the one impossible name every supported parser
+    // produces, so the filter is swept wherever this runs. The rest is mangled
+    // only by the older parsers. The unterminated quote on the last line is
+    // dropped by some parsers and kept as a value by others, so its name has to
+    // be one the rules classify: under a plain name the canary is the plain
+    // value the caller asked for.
+    const badFile = file(
+      'bad.env',
+      `A=1\n${CANARY}\nTOKEN="a=${CANARY}"\nX\tLABEL=${CANARY}\nK_SECRET="${CANARY}\n`
+    );
     const goodFile = file('good.env', `DB_PASSWORD=${CANARY}\nPORT=3000\n`);
 
     const cases: readonly SweepCase[] = [

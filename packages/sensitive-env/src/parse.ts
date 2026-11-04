@@ -27,6 +27,19 @@ import type { DroppedLine } from './types.js';
  * | `A=b # c` as the last line | `{ A: 'b # c' }`, **the comment kept in the value** |
  * | Anything malformed | Never throws |
  *
+ * Node 22.16.0 rewrote the parser, and four rows above do not hold from that
+ * release on (measured on 22.16.0, 22.23.3 and 24.19.0): `KEY` followed by
+ * `B=2` gives `{ B: '2' }`, `K="unterminated` alone gives
+ * `{ K: '"unterminated' }`, `A="x=y"` gives `{ A: 'x=y' }` and nothing else,
+ * and a last-line comment is stripped.
+ *
+ * Before the rewrite the shape moved from release to release. 22.12.0 to
+ * 22.15.0 and 23.0.0 to 23.11.0 all swallow the next line's name, but which of
+ * them invent a name from `A="x=y"`, keep a last-line comment, or let a
+ * whitespace-only line swallow the next name differs between patch releases.
+ * The filter below does not depend on which: it drops any name no exporter
+ * could have set, and costs nothing on a parser that never produces one.
+ *
  * The fifth row is why the dropped-line report exists rather than being a nice
  * extra: a stray line with no `=` does not lose itself, it eats the name of the
  * variable on the next line, and the service starts with that variable absent.
@@ -144,7 +157,28 @@ function scanAssignments(content: string): {
  * @param file - The path, used only to label a report. Never read here.
  */
 export function parseEnvContent(content: string, file: string): ParsedEnvFile {
-  const parsed = parseEnv(content) as Record<string, string>;
+  return reportParsedEnv(parseEnv(content) as Record<string, string>, content, file);
+}
+
+/**
+ * Filter a parser's output and report what it did not turn into a variable.
+ *
+ * Split from {@link parseEnvContent} so the suite can hand it what an older
+ * `util.parseEnv` returned. The names this filter drops are produced only by
+ * the parsers before Node 22.16.0, and CI runs a newer one, so without this
+ * seam the filter would go untested on every runtime CI has. Not exported from
+ * the package entry point.
+ *
+ * @internal
+ * @param parsed - What `util.parseEnv` returned for `content`.
+ * @param content - The file's text, scanned for assignment-looking lines.
+ * @param file - The path, used only to label a report.
+ */
+export function reportParsedEnv(
+  parsed: Readonly<Record<string, string>>,
+  content: string,
+  file: string
+): ParsedEnvFile {
   const { assignments, notAssignments } = scanAssignments(content);
 
   // Drop the names that cannot have come from an assignment. This is not

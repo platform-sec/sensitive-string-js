@@ -265,6 +265,17 @@ hazard, and a worse one than it looks. Measured on Node 22.15.0:
 | `A="x=y"` | `{ A: 'x=y', '"x': 'y"' }`, **a second name invented from the value** |
 | `A=b # c` as the last line | `{ A: 'b # c' }`, **the comment kept in the value** |
 
+Node 22.16.0 rewrote the parser. From that release on (measured on 22.16.0, 22.23.3 and 24.19.0)
+`KEY` followed by `B=2` gives `{ B: '2' }`, `A="x=y"` gives `{ A: 'x=y' }` alone, a last-line comment
+is stripped, and an unterminated quote at end of file is kept as a value with the quote in it rather
+than dropped.
+
+Before the rewrite the table above is not one shape but several. Every release measured from 22.12.0
+to 22.15.0, and 23.0.0 to 23.11.0, lets a stray line eat the next variable's name. Whether a quoted
+`=` invents a second name, whether the last line keeps its comment, and whether a whitespace-only
+line also eats the next name all differ between patch releases. The package supports Node from
+22.12.0, so the handling below stays, and it does not depend on which of those a release does.
+
 Three consequences, and each is handled rather than documented away.
 
 **A stray line eats the next variable's name.** It does not lose itself, it folds itself into the
@@ -293,8 +304,9 @@ loadEnv(spec, {
 content, so it is safe to log in full. `unexpectedNames` is a **count** and never a list, because the
 extra name in the `A="x=y"` row is a slice of the value.
 
-**Keep comments on their own lines.** The last variable in a file keeps everything after a `#` in its
-value, which surfaces as an authentication error rather than a parse error.
+**Keep comments on their own lines.** On some releases before Node 22.16.0 the last variable in a file
+keeps everything after a `#` in its value, which surfaces as an authentication error rather than a
+parse error.
 
 ## dotenv
 

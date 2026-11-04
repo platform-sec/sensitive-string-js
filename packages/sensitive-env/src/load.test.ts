@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parseEnv } from 'node:util';
 
 import { SensitiveString } from '@platform-sec/sensitive-string-core';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -10,6 +11,9 @@ import { explainEnv, loadEnv } from './load.js';
 import type { EnvLoadEvent, EnvSpec } from './types.js';
 
 const CANARY = 'LEAKED_SECRET_abc123xyz';
+
+/** Whether `util.parseEnv` folds a stray line into the next name; see `parse.test.ts`. */
+const SWALLOWING_PARSER = !Object.hasOwn(parseEnv('KEY\nB=2\n'), 'B');
 
 const SPEC: EnvSpec = {
   fields: { DB_PASSWORD: 'credential', SUPPORT_EMAIL: 'sensitive' },
@@ -156,12 +160,15 @@ describe('the onLoad event', () => {
 
     const event = events[0]!;
     expect(event.files).toEqual([path]);
-    expect(event.droppedLines.map((d) => d.line)).toEqual([2, 3]);
+    // A swallowing parser also takes `B`, which is reported too.
+    expect(event.droppedLines.map((d) => d.line)).toEqual(SWALLOWING_PARSER ? [2, 3] : [2]);
     expect(JSON.stringify(event.droppedLines)).not.toContain(CANARY);
   });
 
-  it('reports a count for the names the parser invented', () => {
-    const path = file('invented.env', `TOKEN="a=${CANARY}"\n`);
+  it('reports a count for the names the parser produced that no exporter could set', () => {
+    // A tab in a name is produced by every supported parser, so this runs the
+    // count through the loader wherever the suite runs.
+    const path = file('invented.env', `A\tTOKEN=${CANARY}\n`);
     const events: EnvLoadEvent[] = [];
 
     loadEnv({ fallback: 'plain' }, { files: [path], source: {}, onLoad: (e) => events.push(e) });
