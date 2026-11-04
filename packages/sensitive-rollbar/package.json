@@ -1,6 +1,6 @@
 {
   "name": "@platform-sec/sensitive-string-rollbar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Rollbar integration for SensitiveString - composes transform and checkIgnore and extends the shipped scrub lists",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -32,8 +32,8 @@
     "node": ">=22.12.0"
   },
   "peerDependencies": {
-    "@platform-sec/sensitive-string-core": "^0.5.0",
-    "@platform-sec/sensitive-string-scrub": "^0.1.0",
+    "@platform-sec/sensitive-string-core": "^0.6.0",
+    "@platform-sec/sensitive-string-scrub": "^0.2.0",
     "rollbar": "^3.0.0"
   },
   "devDependencies": {

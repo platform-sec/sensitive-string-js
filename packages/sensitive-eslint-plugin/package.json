@@ -1,6 +1,6 @@
 {
   "name": "@platform-sec/eslint-plugin-sensitive-string",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "ESLint rules that catch the mistakes SensitiveString's type system cannot: logged reveals, timing-unsafe comparisons, and unaudited transmission",
   "main": "./dist/index.js",
   "module": "./dist/index.js",

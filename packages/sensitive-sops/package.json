@@ -1,6 +1,6 @@
 {
   "name": "@platform-sec/sensitive-string-sops",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "SOPS secret source - classification derived from the ciphertext, the age key kept out of the parent environment, plus in-process age decryption",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -36,8 +36,8 @@
     "node": ">=22.12.0"
   },
   "peerDependencies": {
-    "@platform-sec/sensitive-string-core": "^0.5.0",
-    "@platform-sec/sensitive-string-secrets": "^0.1.0",
+    "@platform-sec/sensitive-string-core": "^0.6.0",
+    "@platform-sec/sensitive-string-secrets": "^0.2.0",
     "age-encryption": "^0.3.0",
     "yaml": "^2.0.0"
   },
