@@ -14,9 +14,13 @@
   "engines": {
     "node": ">=22.12.0"
   },
+  "volta": {
+    "node": "22.23.4"
+  },
   "packageManager": "pnpm@9.0.0",
   "scripts": {
     "preinstall": "npx only-allow pnpm",
+    "prepare": "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git config core.hooksPath .githooks || true",
     "build": "pnpm -r build",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -26,6 +30,7 @@
     "lint": "NODE_OPTIONS=--max-old-space-size=6144 eslint packages examples --cache",
     "lint:fix": "NODE_OPTIONS=--max-old-space-size=6144 eslint packages examples --fix",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "verify": "bash scripts/verify.sh",
     "format": "prettier --write \"packages/*/src/**/*.ts\" \"examples/**/*.ts\"",
     "format:check": "prettier --check \"packages/*/src/**/*.ts\" \"examples/**/*.ts\"",
     "check:packaging": "node scripts/check-packaging.mjs",

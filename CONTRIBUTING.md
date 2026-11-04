@@ -5,7 +5,8 @@ Thank you for considering contributing to SensitiveString! This document outline
 ## Development Setup
 
 1. **Prerequisites**
-   - Node.js 22.12+
+   - Node.js 22.12+ to use the packages. To work on them, the version in `.nvmrc`, which is what
+     CI runs on push. Volta picks it up from `package.json` on its own.
    - pnpm 9+
 
 2. **Clone and Install**
@@ -14,6 +15,7 @@ Thank you for considering contributing to SensitiveString! This document outline
    cd sensitive-string-lib
    pnpm install
    ```
+   Installing also points `core.hooksPath` at `.githooks`, which adds a pre-push hook (step 5).
 
 3. **Build**
    ```bash
@@ -25,7 +27,17 @@ Thank you for considering contributing to SensitiveString! This document outline
    pnpm test
    ```
 
-5. **Packaging check** (after a build)
+5. **Verify before pushing**
+   ```bash
+   pnpm verify
+   ```
+   Runs every check CI gates a push on, with `CI=true` set as CI sets it: the lockfile, formatting,
+   release consistency, build, type-check, lint and tests. The pre-push hook runs it and refuses a
+   push whose commit is not the checked-out, clean working tree, since that is what it checked.
+   `git push --no-verify` skips it for one push. The audit and the latest-client and live-provider
+   runs are left to CI's nightly run, which also takes the newest Node rather than the pin.
+
+6. **Packaging check** (after a build)
    ```bash
    pnpm check:packaging
    ```
@@ -33,7 +45,7 @@ Thank you for considering contributing to SensitiveString! This document outline
    `import`. The unit suite imports by relative path, so nothing else in the
    repository exercises a package manifest.
 
-6. **Timing analysis** (optional, not part of `pnpm test`)
+7. **Timing analysis** (optional, not part of `pnpm test`)
    ```bash
    pnpm test:timing
    ```
@@ -63,7 +75,7 @@ This is a security-focused library. All contributions must:
 
 - TypeScript with `strict` mode
 - ESLint + Prettier for formatting
-- Run `pnpm lint` before committing
+- Run `pnpm lint` before committing, and `pnpm verify` before pushing
 
 ### Testing
 
