@@ -59,6 +59,20 @@ export function packageRoot(): string {
  */
 const TYPE_AWARE_FIXTURE = () => nodePath.join(packageRoot(), 'src', '__tests__', 'fixtures');
 
+/*
+ * Both type-aware configurations below set `disallowAutomaticSingleRunInference`.
+ *
+ * `@typescript-eslint/parser` switches to "single run" mode when `CI=true` is
+ * set, which every CI provider does. In that mode it builds the program once
+ * from the files on disk and never swaps in the source a test case lints, so
+ * each case is type-checked against the empty `file.ts` instead of its own
+ * declarations. A rule that walks a property type still finds something, but
+ * one that needs a lib type (an array, `Record`, `Partial`, a tuple) finds
+ * nothing and the case reports no error. Measured: the suite passes locally
+ * and 14 cases fail with `CI=true` and no other change.
+ * `@typescript-eslint/rule-tester` sets the same option for the same reason.
+ */
+
 /** The name the fixture project includes, and so the name a case must lint as. */
 const TYPE_AWARE_FILENAME = 'file.ts';
 
@@ -120,6 +134,7 @@ export function createTypeAwareTester(): RuleTester {
       parserOptions: {
         project: './tsconfig.json',
         tsconfigRootDir: TYPE_AWARE_FIXTURE(),
+        disallowAutomaticSingleRunInference: true,
       },
     },
   });
@@ -176,6 +191,7 @@ export function typeAwareLayer(): Record<string, unknown> {
       parserOptions: {
         project: './tsconfig.json',
         tsconfigRootDir: TYPE_AWARE_FIXTURE(),
+        disallowAutomaticSingleRunInference: true,
       },
     },
   };
