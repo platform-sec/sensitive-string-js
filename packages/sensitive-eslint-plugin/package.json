@@ -31,6 +31,11 @@
     "typescript"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/platform-sec/sensitive-string-js.git",
+    "directory": "packages/sensitive-eslint-plugin"
+  },
   "engines": {
     "node": ">=22.12.0"
   },

@@ -28,6 +28,11 @@
     "privacy"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/platform-sec/sensitive-string-js.git",
+    "directory": "packages/sensitive-core"
+  },
   "engines": {
     "node": ">=22.12.0"
   },

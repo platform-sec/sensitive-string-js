@@ -137,6 +137,63 @@ function checkPackageGraph(packages) {
   return { packagesByName, problems };
 }
 
+/**
+ * Every manifest must name the repository it is built from.
+ *
+ * npm rejects a provenance-signed publish whose `repository.url` does not
+ * match the repository the provenance names, and it does so per package, in
+ * the publish step, after the tarballs are packed and signed. The root
+ * manifest holds the one URL, every package must repeat it with its own
+ * `directory`. At release time in CI the URL must also name the repository
+ * running the job; that half is not checked on an ordinary push, so a fork's
+ * own CI still passes.
+ */
+function checkRepositoryFields(rootManifest, packages, releasing) {
+  const problems = [];
+  const rootUrl = rootManifest.repository?.url;
+
+  if (typeof rootUrl !== 'string' || rootUrl.length === 0) {
+    return ['the root package.json has no repository.url for the packages to repeat'];
+  }
+
+  const slug = process.env.GITHUB_REPOSITORY;
+  if (releasing && slug !== undefined && slug.length > 0) {
+    const expected = `git+https://github.com/${slug}.git`;
+    if (rootUrl !== expected) {
+      problems.push(
+        `the root repository.url is ${rootUrl}, but this job runs in ${slug}; ` +
+          `npm provenance would reject every package for it`
+      );
+    }
+  }
+
+  for (const pkg of packages) {
+    const name = pkg.manifest.name ?? path.relative(repoRoot, pkg.manifestPath);
+    const repository = pkg.manifest.repository;
+    const directory = path.relative(repoRoot, pkg.dir).split(path.sep).join('/');
+
+    if (repository === null || typeof repository !== 'object') {
+      problems.push(`${name} has no repository field, which npm provenance requires`);
+      continue;
+    }
+
+    if (repository.type !== 'git' || repository.url !== rootUrl) {
+      problems.push(
+        `${name} declares repository ${JSON.stringify(repository.url)}, not the root ${rootUrl}`
+      );
+    }
+
+    if (repository.directory !== directory) {
+      problems.push(
+        `${name} declares repository.directory ${JSON.stringify(repository.directory)}, ` +
+          `not ${directory}`
+      );
+    }
+  }
+
+  return problems;
+}
+
 async function fileExists(filename) {
   try {
     return (await stat(filename)).isFile();
@@ -238,6 +295,9 @@ async function main() {
   const options = parseArguments(process.argv.slice(2));
   const packages = await readPackages();
   const { packagesByName, problems } = checkPackageGraph(packages);
+  const rootManifest = JSON.parse(await readFile(path.join(repoRoot, 'package.json'), 'utf8'));
+  const releasing = options.requireNoChangesets || options.plan !== null;
+  problems.push(...checkRepositoryFields(rootManifest, packages, releasing));
   const allowlist = await readAllowlist(repoRoot);
   problems.push(...checkAllowlist(allowlist, packagesByName));
   problems.push(...(await checkSourceVersions(repoRoot)));
